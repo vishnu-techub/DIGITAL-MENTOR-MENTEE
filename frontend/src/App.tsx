@@ -54,6 +54,8 @@ export const App: React.FC = () => {
     return <LoginPage />;
   }
 
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
+
   // Student First Login Check
   const isStudent = user?.role === 'STUDENT';
   const isProfileIncomplete = isStudent && !user?.profileCompleted && user?.student?.profile_completed !== 1;
@@ -97,9 +99,17 @@ export const App: React.FC = () => {
 
   return (
     <div className="app-container" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-      <Navbar />
-      <div style={{ display: 'flex', flex: 1 }}>
-        <Sidebar currentTab={currentTab} onSelectTab={setCurrentTab} />
+      <Navbar
+        onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+        isSidebarOpen={isSidebarOpen}
+      />
+      <div style={{ display: 'flex', flex: 1, position: 'relative' }}>
+        <Sidebar
+          currentTab={currentTab}
+          onSelectTab={setCurrentTab}
+          isOpen={isSidebarOpen}
+          onClose={() => setIsSidebarOpen(false)}
+        />
         <main className="main-content">
           <div className="page-body">
             {renderDashboardByRole()}

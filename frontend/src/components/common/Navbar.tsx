@@ -1,9 +1,14 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotifications } from '../../context/NotificationContext';
-import { Bell, User, LogOut, CheckCheck, Calendar, Shield } from 'lucide-react';
+import { Bell, User, LogOut, CheckCheck, Calendar, Shield, Menu, X } from 'lucide-react';
 
-export const Navbar: React.FC = () => {
+interface NavbarProps {
+  onToggleSidebar?: () => void;
+  isSidebarOpen?: boolean;
+}
+
+export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }) => {
   const { user, logout } = useAuth();
   const { notifications, unreadCount, markAsRead, triggerSaturdayReminders } = useNotifications();
   const [showNotifications, setShowNotifications] = useState(false);
@@ -27,15 +32,38 @@ export const Navbar: React.FC = () => {
 
   return (
     <header className="ksrce-header">
-      <div className="ksrce-brand">
-        <img
-          src="/ksrce-logo.png"
-          alt="K.S.R. College of Engineering"
-          className="ksrce-logo-img"
-        />
-        <div className="ksrce-brand-text">
-          <h1>K.S.R. COLLEGE OF ENGINEERING (Autonomous)</h1>
-          <p>DIGITAL MENTOR–MENTEE MANAGEMENT SYSTEM • TIRUCHENGODE</p>
+      <div style={{ display: 'flex', alignItems: 'center' }}>
+        {onToggleSidebar && (
+          <button
+            onClick={onToggleSidebar}
+            className="btn-hamburger"
+            aria-label="Toggle Navigation Drawer"
+            style={{
+              background: 'rgba(255, 255, 255, 0.12)',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '0.45rem',
+              color: '#ffffff',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              marginRight: '0.75rem',
+            }}
+          >
+            {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
+        )}
+
+        <div className="ksrce-brand">
+          <img
+            src="/ksrce-logo.png"
+            alt="K.S.R. College of Engineering"
+            className="ksrce-logo-img"
+          />
+          <div className="ksrce-brand-text">
+            <h1>K.S.R. COLLEGE OF ENGINEERING (Autonomous)</h1>
+            <p>DIGITAL MENTOR–MENTEE MANAGEMENT SYSTEM • TIRUCHENGODE</p>
+          </div>
         </div>
       </div>
 

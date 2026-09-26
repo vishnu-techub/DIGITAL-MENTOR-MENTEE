@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { StudentDocumentsManager } from '../../components/documents/StudentDocumentsManager';
+import { EmptyState } from '../../components/common/EmptyState';
+import { Skeleton } from '../../components/common/Skeleton';
 import {
   GraduationCap,
   CalendarCheck2,
@@ -106,21 +108,30 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
 
   if (loading) {
     return (
-      <div style={{ textAlign: 'center', padding: '4rem', color: '#64748B' }}>
-        Loading your institutional student dossier...
+      <div style={{ padding: '1rem 0' }}>
+        <Skeleton variant="card" height="130px" style={{ marginBottom: '1.5rem', borderRadius: '16px' }} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+          <Skeleton variant="card" height="85px" />
+          <Skeleton variant="card" height="85px" />
+          <Skeleton variant="card" height="85px" />
+          <Skeleton variant="card" height="85px" />
+        </div>
+        <Skeleton variant="table" rows={6} />
       </div>
     );
   }
 
   if (!profile) {
     return (
-      <div style={{ textAlign: 'center', padding: '4rem', color: '#64748B' }}>
-        <h3 style={{ color: '#0B2545', marginBottom: '0.5rem' }}>Unable to load student profile</h3>
-        <p style={{ marginBottom: '1.5rem' }}>Please try refreshing or contact administration.</p>
-        <button className="btn btn-primary" onClick={loadData}>
-          Reload Profile
-        </button>
-      </div>
+      <EmptyState
+        title="Unable to Load Student Profile"
+        description="We couldn't retrieve your student records from the institutional database. Please click below to reload."
+        action={
+          <button className="btn btn-primary" onClick={loadData}>
+            Reload Profile
+          </button>
+        }
+      />
     );
   }
 

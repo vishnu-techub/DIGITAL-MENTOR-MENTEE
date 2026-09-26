@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { Modal } from '../../components/common/Modal';
+import { EmptyState } from '../../components/common/EmptyState';
+import { Skeleton } from '../../components/common/Skeleton';
 import { StudentDocumentsManager } from '../../components/documents/StudentDocumentsManager';
 import {
   FileText,
@@ -357,24 +359,33 @@ export const StudentDetailsView: React.FC<StudentDetailsViewProps> = ({ studentI
 
   if (loading) {
     return (
-      <div style={{ textAlign: 'center', padding: '4rem', color: '#64748B' }}>
-        Loading institutional student record book...
+      <div style={{ padding: '1rem 0' }}>
+        <Skeleton variant="card" height="130px" style={{ marginBottom: '1.5rem', borderRadius: '16px' }} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+          <Skeleton variant="card" height="80px" />
+          <Skeleton variant="card" height="80px" />
+          <Skeleton variant="card" height="80px" />
+          <Skeleton variant="card" height="80px" />
+        </div>
+        <Skeleton variant="table" rows={6} />
       </div>
     );
   }
 
   if (error || !student) {
     return (
-      <div style={{ padding: '2rem', textAlign: 'center' }}>
-        <div style={{ color: '#DC2626', fontWeight: 700, marginBottom: '1rem' }}>
-          {error || 'Student record not found.'}
-        </div>
-        {onBack && (
-          <button className="btn btn-secondary" onClick={onBack}>
-            <ArrowLeft size={16} /> Back to Directory
-          </button>
-        )}
-      </div>
+      <EmptyState
+        icon={<AlertCircle size={32} color="#DC2626" />}
+        title="Student Record Unavailable"
+        description={error || "We could not find the requested student dossier in the institutional database."}
+        action={
+          onBack && (
+            <button className="btn btn-primary" onClick={onBack}>
+              <ArrowLeft size={16} /> Back to Directory
+            </button>
+          )
+        }
+      />
     );
   }
 

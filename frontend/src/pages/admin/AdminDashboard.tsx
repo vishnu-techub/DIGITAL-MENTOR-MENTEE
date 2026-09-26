@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../../api/client';
 import { Modal } from '../../components/common/Modal';
+import { EmptyState } from '../../components/common/EmptyState';
+import { Skeleton } from '../../components/common/Skeleton';
 import { StudentDetailsView } from '../common/StudentDetailsView';
 import {
   Users,
@@ -633,8 +635,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 <tbody>
                   {filteredStudents.length === 0 ? (
                     <tr>
-                      <td colSpan={9} style={{ textAlign: 'center', padding: '2.5rem', color: '#64748B' }}>
-                        No student records available.
+                      <td colSpan={9} style={{ padding: '1.5rem', border: 'none' }}>
+                        <EmptyState
+                          icon={<GraduationCap size={28} />}
+                          title="No Students Found"
+                          description={searchQuery ? "No student records matched your search query or filters." : "No student records currently enrolled."}
+                          compact
+                        />
                       </td>
                     </tr>
                   ) : (

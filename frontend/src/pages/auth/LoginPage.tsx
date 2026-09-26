@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Shield, KeyRound, User, School, ArrowRight, Lock } from 'lucide-react';
+import { Shield, User, ArrowRight, Lock, Eye, EyeOff } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
   const { login } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,20 +37,20 @@ export const LoginPage: React.FC = () => {
     >
       <div
         style={{
-          maxWidth: '480px',
+          maxWidth: '460px',
           width: '100%',
           backgroundColor: '#ffffff',
-          borderRadius: '18px',
+          borderRadius: '20px',
           boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.45)',
           overflow: 'hidden',
-          border: '1px solid rgba(255,255,255,0.2)',
+          border: '1px solid rgba(255, 255, 255, 0.15)',
         }}
       >
         {/* Institutional Crest Header */}
         <div
           style={{
             backgroundColor: '#0B2545',
-            padding: '2rem 1.5rem 1.5rem',
+            padding: '2.25rem 1.5rem 1.75rem',
             textAlign: 'center',
             color: '#ffffff',
             borderBottom: '4px solid #C59B27',
@@ -81,20 +82,19 @@ export const LoginPage: React.FC = () => {
             style={{
               display: 'inline-block',
               marginTop: '10px',
-              padding: '3px 12px',
-              backgroundColor: 'rgba(255, 255, 255, 0.1)',
+              padding: '4px 14px',
+              backgroundColor: 'rgba(255, 255, 255, 0.12)',
               borderRadius: '9999px',
               fontSize: '0.75rem',
-              fontWeight: 600,
-              letterSpacing: '0.5px',
+              fontWeight: 700,
+              letterSpacing: '0.6px',
             }}
           >
             DIGITAL MENTOR–MENTEE PORTAL
           </div>
         </div>
 
-        <div style={{ padding: '2rem 2rem 2.25rem' }}>
-
+        <div style={{ padding: '2rem' }}>
           {error && (
             <div
               style={{
@@ -118,58 +118,90 @@ export const LoginPage: React.FC = () => {
               alignItems: 'center',
               gap: '0.6rem',
               padding: '0.65rem 0.85rem',
-              backgroundColor: '#eff6ff',
+              backgroundColor: '#EFF6FF',
               borderRadius: '8px',
-              border: '1px solid #bfdbfe',
+              border: '1px solid #BFDBFE',
               marginBottom: '1.25rem',
             }}
           >
-            <Shield size={16} color="#1d4ed8" />
-            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#1e40af' }}>
-              Institutional Portal Access • Secured by Bcrypt & Role-Based Access Control
+            <Shield size={16} color="#1D4ED8" style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#1E40AF' }}>
+              Institutional Portal Access • Role-Based Authentication
             </span>
           </div>
 
           <form onSubmit={handleSubmit}>
             <div className="form-group">
-              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <User size={14} /> Institutional Username / Register Number
+              <label className="form-label">
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <User size={14} color="#64748B" /> Username or Register Number
+                </span>
+                <span className="required-star">*</span>
               </label>
               <input
                 type="text"
                 className="form-control"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="e.g. admin or 731522104001"
+                placeholder="e.g. Ksrce@admin or 731522104001"
                 required
+                autoComplete="username"
               />
             </div>
 
             <div className="form-group">
-              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <Lock size={14} /> Password
+              <label className="form-label">
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <Lock size={14} color="#64748B" /> Password
+                </span>
+                <span className="required-star">*</span>
               </label>
-              <input
-                type="password"
-                className="form-control"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter account password"
-                required
-              />
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  className="form-control"
+                  style={{ paddingRight: '2.5rem' }}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter your account password"
+                  required
+                  autoComplete="current-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  style={{
+                    position: 'absolute',
+                    right: '0.75rem',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#64748B',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    padding: '2px',
+                  }}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
             </div>
 
             <button
               type="submit"
               className="btn btn-primary"
-              style={{ width: '100%', marginTop: '0.5rem', padding: '0.75rem' }}
+              style={{ width: '100%', marginTop: '0.75rem', padding: '0.75rem', fontSize: '0.9rem' }}
               disabled={loading}
             >
               {loading ? 'Authenticating...' : 'Sign In to Portal'} <ArrowRight size={16} />
             </button>
           </form>
 
-          <div style={{ marginTop: '1.5rem', textAlign: 'center', fontSize: '0.75rem', color: '#94A3B8' }}>
+          <div style={{ marginTop: '1.75rem', textAlign: 'center', fontSize: '0.75rem', color: '#94A3B8' }}>
             Permanent Academic Records System • Secured Institutional Access
           </div>
         </div>

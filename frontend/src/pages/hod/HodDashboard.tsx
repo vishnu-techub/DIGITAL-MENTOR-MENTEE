@@ -3,6 +3,8 @@ import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { StudentDetailsView } from '../common/StudentDetailsView';
 import { Modal } from '../../components/common/Modal';
+import { EmptyState } from '../../components/common/EmptyState';
+import { Skeleton } from '../../components/common/Skeleton';
 import {
   Users,
   GraduationCap,

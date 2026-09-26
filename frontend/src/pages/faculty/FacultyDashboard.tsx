@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { StudentDetailsView } from '../common/StudentDetailsView';
+import { EmptyState } from '../../components/common/EmptyState';
+import { Skeleton } from '../../components/common/Skeleton';
 import {
   Users,
   CalendarCheck2,
@@ -260,23 +262,11 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
           </div>
 
           {filteredMentees.length === 0 ? (
-            <div
-              className="card"
-              style={{
-                textAlign: 'center',
-                padding: '3.5rem 1.5rem',
-                backgroundColor: '#F8FAFC',
-                border: '2px dashed #CBD5E1',
-              }}
-            >
-              <Users size={48} style={{ color: '#94A3B8', margin: '0 auto 1rem' }} />
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#1E293B', marginBottom: '0.25rem' }}>
-                No students have been assigned yet.
-              </h3>
-              <p style={{ fontSize: '0.85rem', color: '#64748B', maxWidth: '420px', margin: '0 auto' }}>
-                When the administrator or HOD allocates mentees to your profile, their student cards and academic dossiers will appear here.
-              </p>
-            </div>
+            <EmptyState
+              icon={<Users size={32} />}
+              title={searchQuery ? "No Mentees Found" : "No Mentees Assigned Yet"}
+              description={searchQuery ? "No assigned mentees match your search filter." : "When the administrator or HOD allocates mentees to your profile, their student cards and academic dossiers will appear here."}
+            />
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '1.5rem' }}>
               {filteredMentees.map((m) => {
