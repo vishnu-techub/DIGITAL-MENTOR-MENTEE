@@ -1,7 +1,15 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
+import dns from 'dns';
 
 dotenv.config();
+
+// Ensure SRV DNS resolution works reliably for MongoDB Atlas on Windows/local networks
+try {
+  dns.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);
+} catch {
+  // fallback to system default
+}
 
 let mongoMemoryServerInstance: any = null;
 
