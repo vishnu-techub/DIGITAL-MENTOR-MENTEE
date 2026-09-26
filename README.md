@@ -1,4 +1,4 @@
-# K.S.R. COLLEGE OF ENGINEERING (Autonomous)
+
 ## Centralized Digital Mentor–Mentee Management System
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
