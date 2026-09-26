@@ -1,0 +1,83 @@
+import mongoose, { Schema, Document } from 'mongoose';
+
+export interface IClearedSubject {
+  subjectCode: string;
+  clearedInSemester: number;
+  originalSemester?: number;
+  clearedDate?: string;
+  remarks?: string;
+}
+
+export interface IAcademicRecord extends Document {
+  student: mongoose.Types.ObjectId;
+  semesterNumber: number;
+  cgpa: number;
+  sgpa: number;
+  arrearsCount: number;
+  arrearsSubjects: string;
+  clearedSubjects?: IClearedSubject[];
+  remarks?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const AcademicRecordSchema = new Schema<IAcademicRecord>(
+  {
+    student: {
+      type: Schema.Types.ObjectId,
+      ref: 'Student',
+      required: true,
+      index: true,
+    },
+    semesterNumber: {
+      type: Number,
+      required: true,
+      min: 1,
+      max: 8,
+    },
+    cgpa: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 10,
+    },
+    sgpa: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 10,
+    },
+    arrearsCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    arrearsSubjects: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    clearedSubjects: [
+      {
+        subjectCode: { type: String, trim: true, uppercase: true },
+        clearedInSemester: { type: Number, min: 1, max: 8 },
+        originalSemester: { type: Number, min: 1, max: 8 },
+        clearedDate: { type: String },
+        remarks: { type: String, trim: true },
+      },
+    ],
+    remarks: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+  },
+  {
+    timestamps: true,
+  }
+);
+
+// Compound unique index ensuring one record per student per semester
+AcademicRecordSchema.index({ student: 1, semesterNumber: 1 }, { unique: true });
+
+export const AcademicRecord = mongoose.model<IAcademicRecord>('AcademicRecord', AcademicRecordSchema);

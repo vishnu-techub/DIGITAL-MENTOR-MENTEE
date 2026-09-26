@@ -1,0 +1,21 @@
+{
+  "name": "ksrce-mentor-mentee-system",
+  "version": "1.0.0",
+  "description": "KSRCE Digital Mentor-Mentee Management System for K.S.R. College of Engineering",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "build": "npm --prefix backend run build && npm --prefix frontend run build",
+    "start": "npm --prefix backend run start",
+    "test:critical": "npm --prefix backend run test:critical"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

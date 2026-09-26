@@ -1,0 +1,10 @@
+.env
+.env.local
+*.env
+!*.env.example
+.mongo-data/
+node_modules/
+dist/
+uploads/documents/*
+!uploads/documents/.gitkeep
+*.log
