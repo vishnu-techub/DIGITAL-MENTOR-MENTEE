@@ -16,6 +16,11 @@
     "test:critical": "npm --prefix backend run test:critical"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.3",
     "concurrently": "^9.1.2"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
   }
 }
