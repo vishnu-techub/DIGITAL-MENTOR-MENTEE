@@ -1198,7 +1198,7 @@ input, select, textarea {
   margin-bottom: 1rem;
 }
 
-.school-mark-col {}   /* intrinsic sizing via grid */
+/* .school-mark-col has intrinsic sizing via grid */
 .school-dropdown-col { min-width: 0; }
 
 @media (max-width: 640px) {
