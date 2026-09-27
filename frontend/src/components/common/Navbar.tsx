@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotifications } from '../../context/NotificationContext';
 import { usePwa } from '../../context/PwaContext';
-import { Bell, User, LogOut, CheckCheck, Calendar, Shield, Menu, X, Download } from 'lucide-react';
+import { Bell, User, LogOut, CheckCheck, Calendar, Shield, Menu, X, Download, CheckCircle2 } from 'lucide-react';
 
 interface NavbarProps {
   onToggleSidebar?: () => void;
@@ -70,8 +70,8 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
-        {/* PWA Download / Install App Button */}
-        {!isInstalled && (
+        {/* PWA Download / Install App Button or Installed Badge */}
+        {!isInstalled ? (
           <button
             onClick={promptInstall}
             className="btn-download-app"
@@ -93,8 +93,28 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
             title="Download & Install KSRCE Web App"
           >
             <Download size={15} />
-            <span>Download App</span>
+            <span className="download-app-text">Download App</span>
           </button>
+        ) : (
+          <span
+            className="badge-app-installed"
+            style={{
+              backgroundColor: 'rgba(16, 185, 129, 0.18)',
+              color: '#34D399',
+              border: '1px solid rgba(52, 211, 153, 0.4)',
+              borderRadius: '8px',
+              padding: '0.38rem 0.65rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.35rem',
+              fontSize: '0.74rem',
+              fontWeight: 700,
+            }}
+            title="KSRCE Mentoring App is installed"
+          >
+            <CheckCircle2 size={14} />
+            <span className="download-app-text">App Installed</span>
+          </span>
         )}
 
         {/* Notifications Bell */}

@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Shield, User, ArrowRight, Lock, Eye, EyeOff } from 'lucide-react';
+import { usePwa } from '../../context/PwaContext';
+import { Shield, User, ArrowRight, Lock, Eye, EyeOff, Download } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
   const { login } = useAuth();
+  const { isInstalled, promptInstall } = usePwa();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -201,7 +203,35 @@ export const LoginPage: React.FC = () => {
             </button>
           </form>
 
-          <div style={{ marginTop: '1.75rem', textAlign: 'center', fontSize: '0.75rem', color: '#94A3B8' }}>
+          {!isInstalled && (
+            <div style={{ marginTop: '1.25rem', textAlign: 'center' }}>
+              <button
+                type="button"
+                onClick={promptInstall}
+                style={{
+                  background: 'linear-gradient(135deg, #0B2545 0%, #133E68 100%)',
+                  color: '#ffffff',
+                  border: '1px solid rgba(255, 215, 0, 0.45)',
+                  borderRadius: '10px',
+                  padding: '0.55rem 1rem',
+                  fontSize: '0.8rem',
+                  fontWeight: 700,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.45rem',
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 12px rgba(11, 37, 69, 0.15)',
+                  transition: 'transform 0.15s ease',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.transform = 'translateY(-1px)')}
+                onMouseLeave={(e) => (e.currentTarget.style.transform = 'translateY(0)')}
+              >
+                <Download size={14} color="#FDE047" /> Download / Install KSRCE Web App
+              </button>
+            </div>
+          )}
+
+          <div style={{ marginTop: '1.5rem', textAlign: 'center', fontSize: '0.75rem', color: '#94A3B8' }}>
             Permanent Academic Records System • Secured Institutional Access
           </div>
         </div>

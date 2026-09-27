@@ -1,353 +1,460 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { usePwa } from '../../context/PwaContext';
-import { Download, X, Smartphone, Share, PlusSquare, Check } from 'lucide-react';
+import {
+  X,
+  Smartphone,
+  Share,
+  PlusSquare,
+  Check,
+  CheckCircle2,
+  MoreVertical,
+  Laptop,
+  Download,
+} from 'lucide-react';
 
 export const PwaInstallBanner: React.FC = () => {
   const {
     isInstalled,
-    isBannerDismissed,
-    showIosInstructions,
-    setShowIosInstructions,
-    promptInstall,
-    dismissBanner,
+    showInstructionsModal,
+    setShowInstructionsModal,
+    isIos,
   } = usePwa();
 
-  // If already installed in standalone mode, do not display the banner
-  if (isInstalled) return null;
+  const [activeInstructionTab, setActiveInstructionTab] = useState<'android' | 'ios' | 'desktop'>(
+    isIos ? 'ios' : 'android'
+  );
+
+  // If the instructions modal is not requested by the user, don't show anything (Requirement 7)
+  if (!showInstructionsModal) return null;
 
   return (
-    <>
-      {/* 1. Main Install Notification Banner */}
-      {!isBannerDismissed && (
-        <div
-          role="region"
-          aria-label="App Installation Notification"
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="PWA Installation Instructions"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 10000,
+        backgroundColor: 'rgba(11, 37, 69, 0.78)',
+        backdropFilter: 'blur(5px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '1rem',
+        animation: 'fadeInPwa 0.2s ease-out',
+      }}
+      onClick={() => setShowInstructionsModal(false)}
+    >
+      <div
+        style={{
+          backgroundColor: '#ffffff',
+          borderRadius: '20px',
+          maxWidth: '500px',
+          width: '100%',
+          padding: '1.75rem',
+          color: '#0F172A',
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)',
+          position: 'relative',
+          maxHeight: '90vh',
+          overflowY: 'auto',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Close Button */}
+        <button
+          onClick={() => setShowInstructionsModal(false)}
+          aria-label="Close installation instructions"
           style={{
-            position: 'fixed',
-            bottom: '1.25rem',
+            position: 'absolute',
+            top: '1.25rem',
             right: '1.25rem',
-            zIndex: 9999,
-            maxWidth: '430px',
-            width: 'calc(100vw - 2.5rem)',
-            background: 'linear-gradient(135deg, #0B2545 0%, #133E68 100%)',
-            color: '#ffffff',
-            borderRadius: '16px',
-            padding: '1.15rem 1.25rem',
-            boxShadow: '0 16px 36px rgba(11, 37, 69, 0.45), 0 4px 12px rgba(0, 0, 0, 0.15)',
-            border: '1px solid rgba(255, 215, 0, 0.35)',
-            animation: 'slideUpPwa 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.85rem' }}>
-            <div
-              style={{
-                width: '46px',
-                height: '46px',
-                borderRadius: '12px',
-                backgroundColor: '#ffffff',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-                boxShadow: '0 4px 8px rgba(0,0,0,0.2)',
-                padding: '4px',
-              }}
-            >
-              <img
-                src="/ksrce-logo.png"
-                alt="KSRCE Logo"
-                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-              />
-            </div>
-
-            <div style={{ flex: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span
-                  style={{
-                    fontSize: '0.72rem',
-                    fontWeight: 700,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.75px',
-                    color: '#FDE047',
-                  }}
-                >
-                  Autonomous Web App
-                </span>
-                <button
-                  onClick={dismissBanner}
-                  aria-label="Dismiss app install notification"
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    color: 'rgba(255, 255, 255, 0.7)',
-                    cursor: 'pointer',
-                    padding: '2px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                  title="Dismiss notification"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-
-              <h4
-                style={{
-                  fontSize: '0.98rem',
-                  fontWeight: 800,
-                  margin: '3px 0 4px',
-                  color: '#ffffff',
-                  letterSpacing: '0.2px',
-                }}
-              >
-                Download KSRCE Mentoring App
-              </h4>
-
-              <p
-                style={{
-                  fontSize: '0.8rem',
-                  color: '#CBD5E1',
-                  margin: '0 0 0.85rem',
-                  lineHeight: 1.45,
-                }}
-              >
-                Install as a mobile or desktop app for quick one-tap access, full screen, and offline support.
-              </p>
-
-              <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
-                <button
-                  onClick={promptInstall}
-                  style={{
-                    background: 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: '8px',
-                    padding: '0.5rem 1rem',
-                    fontWeight: 700,
-                    fontSize: '0.82rem',
-                    cursor: 'pointer',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '0.4rem',
-                    boxShadow: '0 4px 10px rgba(217, 119, 6, 0.4)',
-                    transition: 'transform 0.15s ease, box-shadow 0.15s ease',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = 'translateY(-1px)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = 'translateY(0)';
-                  }}
-                >
-                  <Download size={15} /> Download / Install App
-                </button>
-
-                <button
-                  onClick={dismissBanner}
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.12)',
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: '8px',
-                    padding: '0.5rem 0.75rem',
-                    fontWeight: 600,
-                    fontSize: '0.8rem',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Later
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 2. iOS Installation Guided Modal */}
-      {showIosInstructions && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 10000,
-            backgroundColor: 'rgba(15, 23, 42, 0.75)',
+            background: '#F1F5F9',
+            border: 'none',
+            borderRadius: '50%',
+            width: '34px',
+            height: '34px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            padding: '1rem',
-            backdropFilter: 'blur(4px)',
+            cursor: 'pointer',
+            color: '#475569',
+            transition: 'background 0.15s ease',
           }}
-          onClick={() => setShowIosInstructions(false)}
+          onMouseEnter={(e) => (e.currentTarget.style.background = '#E2E8F0')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = '#F1F5F9')}
         >
+          <X size={18} />
+        </button>
+
+        {/* Modal Header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', marginBottom: '1.25rem' }}>
           <div
             style={{
-              backgroundColor: '#ffffff',
-              borderRadius: '20px',
-              maxWidth: '440px',
-              width: '100%',
-              padding: '1.75rem',
-              color: '#0F172A',
-              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-              position: 'relative',
+              width: '46px',
+              height: '46px',
+              borderRadius: '12px',
+              backgroundColor: '#0B2545',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              boxShadow: '0 4px 8px rgba(11, 37, 69, 0.25)',
+              padding: '6px',
             }}
-            onClick={(e) => e.stopPropagation()}
           >
-            <button
-              onClick={() => setShowIosInstructions(false)}
-              style={{
-                position: 'absolute',
-                top: '1.25rem',
-                right: '1.25rem',
-                background: '#F1F5F9',
-                border: 'none',
-                borderRadius: '50%',
-                width: '32px',
-                height: '32px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                color: '#475569',
-              }}
-            >
-              <X size={18} />
-            </button>
+            <img
+              src="/ksrce-logo.png"
+              alt="KSRCE Logo"
+              style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+            />
+          </div>
+          <div>
+            <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
+              Install KSRCE Mentoring App
+            </h3>
+            <p style={{ fontSize: '0.8rem', color: '#64748B', margin: '2px 0 0' }}>
+              Progressive Web App • No App Store required
+            </p>
+          </div>
+        </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
+        {/* Tab Selectors (Android / iOS / Desktop) */}
+        <div
+          style={{
+            display: 'flex',
+            gap: '0.35rem',
+            backgroundColor: '#F1F5F9',
+            padding: '4px',
+            borderRadius: '10px',
+            marginBottom: '1.25rem',
+          }}
+        >
+          <button
+            onClick={() => setActiveInstructionTab('android')}
+            style={{
+              flex: 1,
+              padding: '0.45rem',
+              borderRadius: '8px',
+              border: 'none',
+              fontSize: '0.8rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.35rem',
+              backgroundColor: activeInstructionTab === 'android' ? '#0B2545' : 'transparent',
+              color: activeInstructionTab === 'android' ? '#ffffff' : '#64748B',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <Smartphone size={14} /> Android Chrome
+          </button>
+          <button
+            onClick={() => setActiveInstructionTab('ios')}
+            style={{
+              flex: 1,
+              padding: '0.45rem',
+              borderRadius: '8px',
+              border: 'none',
+              fontSize: '0.8rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.35rem',
+              backgroundColor: activeInstructionTab === 'ios' ? '#0B2545' : 'transparent',
+              color: activeInstructionTab === 'ios' ? '#ffffff' : '#64748B',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <Share size={14} /> iPhone Safari
+          </button>
+          <button
+            onClick={() => setActiveInstructionTab('desktop')}
+            style={{
+              flex: 1,
+              padding: '0.45rem',
+              borderRadius: '8px',
+              border: 'none',
+              fontSize: '0.8rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.35rem',
+              backgroundColor: activeInstructionTab === 'desktop' ? '#0B2545' : 'transparent',
+              color: activeInstructionTab === 'desktop' ? '#ffffff' : '#64748B',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <Laptop size={14} /> Desktop (PC/Mac)
+          </button>
+        </div>
+
+        {/* Tab 1: Android Chrome Instructions */}
+        {activeInstructionTab === 'android' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.95rem', marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
               <div
                 style={{
-                  width: '42px',
-                  height: '42px',
-                  borderRadius: '10px',
-                  backgroundColor: '#0B2545',
-                  color: '#ffffff',
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '50%',
+                  backgroundColor: '#EFF6FF',
+                  color: '#1D4ED8',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
+                  fontWeight: 800,
+                  fontSize: '0.85rem',
+                  flexShrink: 0,
                 }}
               >
-                <Smartphone size={22} />
+                1
               </div>
               <div>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
-                  Install on iOS (iPhone / iPad)
-                </h3>
-                <span style={{ fontSize: '0.78rem', color: '#64748B' }}>
-                  KSRCE Digital Mentor-Mentee Portal
-                </span>
-              </div>
-            </div>
-
-            <p style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '1.25rem', lineHeight: 1.5 }}>
-              Follow these simple steps in <strong>Safari</strong> to install the portal to your home screen:
-            </p>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-                <div
-                  style={{
-                    width: '28px',
-                    height: '28px',
-                    borderRadius: '50%',
-                    backgroundColor: '#EFF6FF',
-                    color: '#1D4ED8',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 700,
-                    fontSize: '0.85rem',
-                    flexShrink: 0,
-                  }}
-                >
-                  1
+                <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1E293B', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  Tap the Chrome menu <MoreVertical size={16} color="#0B2545" />
                 </div>
-                <div>
-                  <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#1E293B', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                    Tap the Share Button <Share size={16} color="#0284C7" />
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: '#64748B' }}>
-                    Located in the bottom navigation bar of Safari on iPhone (or top bar on iPad).
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-                <div
-                  style={{
-                    width: '28px',
-                    height: '28px',
-                    borderRadius: '50%',
-                    backgroundColor: '#EFF6FF',
-                    color: '#1D4ED8',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 700,
-                    fontSize: '0.85rem',
-                    flexShrink: 0,
-                  }}
-                >
-                  2
-                </div>
-                <div>
-                  <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#1E293B', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                    Tap "Add to Home Screen" <PlusSquare size={16} color="#0284C7" />
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: '#64748B' }}>
-                    Scroll down through the share options and tap <strong>Add to Home Screen</strong>.
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-                <div
-                  style={{
-                    width: '28px',
-                    height: '28px',
-                    borderRadius: '50%',
-                    backgroundColor: '#EFF6FF',
-                    color: '#1D4ED8',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 700,
-                    fontSize: '0.85rem',
-                    flexShrink: 0,
-                  }}
-                >
-                  3
-                </div>
-                <div>
-                  <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#1E293B', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                    Confirm "Add" <Check size={16} color="#16A34A" />
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: '#64748B' }}>
-                    Tap <strong>Add</strong> in the top-right corner to launch with full-screen experience.
-                  </div>
+                <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '2px' }}>
+                  Tap the three vertical dots (<strong>⋮</strong>) in the top-right corner of Chrome.
                 </div>
               </div>
             </div>
 
-            <button
-              onClick={() => setShowIosInstructions(false)}
-              style={{
-                width: '100%',
-                backgroundColor: '#0B2545',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '10px',
-                padding: '0.75rem',
-                fontWeight: 700,
-                fontSize: '0.9rem',
-                cursor: 'pointer',
-              }}
-            >
-              Got It
-            </button>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+              <div
+                style={{
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '50%',
+                  backgroundColor: '#EFF6FF',
+                  color: '#1D4ED8',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 800,
+                  fontSize: '0.85rem',
+                  flexShrink: 0,
+                }}
+              >
+                2
+              </div>
+              <div>
+                <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1E293B', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  Tap "Install app" or "Add to Home screen" <Download size={15} color="#0B2545" />
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '2px' }}>
+                  Select <strong>Install app</strong> (or <strong>Add to Home screen</strong>) from the menu list.
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+              <div
+                style={{
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '50%',
+                  backgroundColor: '#EFF6FF',
+                  color: '#1D4ED8',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 800,
+                  fontSize: '0.85rem',
+                  flexShrink: 0,
+                }}
+              >
+                3
+              </div>
+              <div>
+                <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1E293B', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  Confirm "Install" <Check size={16} color="#16A34A" />
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '2px' }}>
+                  The KSRCE Mentoring App icon will be added to your mobile home screen with full offline support.
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-      )}
-    </>
+        )}
+
+        {/* Tab 2: iPhone / iPad Safari Instructions */}
+        {activeInstructionTab === 'ios' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.95rem', marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+              <div
+                style={{
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '50%',
+                  backgroundColor: '#EFF6FF',
+                  color: '#1D4ED8',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 800,
+                  fontSize: '0.85rem',
+                  flexShrink: 0,
+                }}
+              >
+                1
+              </div>
+              <div>
+                <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1E293B', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  Tap the Safari Share button <Share size={16} color="#0284C7" />
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '2px' }}>
+                  Located in the bottom toolbar of Safari on iPhone (or top right on iPad).
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+              <div
+                style={{
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '50%',
+                  backgroundColor: '#EFF6FF',
+                  color: '#1D4ED8',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 800,
+                  fontSize: '0.85rem',
+                  flexShrink: 0,
+                }}
+              >
+                2
+              </div>
+              <div>
+                <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1E293B', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  Scroll down & tap "Add to Home Screen" <PlusSquare size={16} color="#0284C7" />
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '2px' }}>
+                  Tap the <strong>Add to Home Screen</strong> action in the share sheet.
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+              <div
+                style={{
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '50%',
+                  backgroundColor: '#EFF6FF',
+                  color: '#1D4ED8',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 800,
+                  fontSize: '0.85rem',
+                  flexShrink: 0,
+                }}
+              >
+                3
+              </div>
+              <div>
+                <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1E293B', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  Tap "Add" <Check size={16} color="#16A34A" />
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '2px' }}>
+                  Tap <strong>Add</strong> in the top-right corner to install on your iOS device.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 3: Desktop Chrome / Edge Instructions */}
+        {activeInstructionTab === 'desktop' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.95rem', marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+              <div
+                style={{
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '50%',
+                  backgroundColor: '#EFF6FF',
+                  color: '#1D4ED8',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 800,
+                  fontSize: '0.85rem',
+                  flexShrink: 0,
+                }}
+              >
+                1
+              </div>
+              <div>
+                <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1E293B' }}>
+                  Check the Browser Address Bar
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '2px' }}>
+                  Look at the right side of the address bar for the <strong>Install</strong> icon (💻 or ⊕).
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+              <div
+                style={{
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '50%',
+                  backgroundColor: '#EFF6FF',
+                  color: '#1D4ED8',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 800,
+                  fontSize: '0.85rem',
+                  flexShrink: 0,
+                }}
+              >
+                2
+              </div>
+              <div>
+                <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#1E293B' }}>
+                  Or use the Browser Menu
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '2px' }}>
+                  Click the three dots (<strong>⋮</strong>) in Chrome/Edge &gt; <strong>Save and share</strong> &gt; <strong>Install KSRCE Mentoring</strong>.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Dismiss Button */}
+        <button
+          onClick={() => setShowInstructionsModal(false)}
+          style={{
+            width: '100%',
+            backgroundColor: '#0B2545',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '10px',
+            padding: '0.75rem',
+            fontWeight: 700,
+            fontSize: '0.9rem',
+            cursor: 'pointer',
+            transition: 'background 0.15s ease',
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#133E68')}
+          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#0B2545')}
+        >
+          Got It
+        </button>
+      </div>
+    </div>
   );
 };

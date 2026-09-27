@@ -3,19 +3,35 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/png" href="/ksrce-logo.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/pwa-192x192.png" />
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#0B2545" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="KSRCE Mentoring" />
-    <link rel="apple-touch-icon" href="/ksrce-logo.png" />
-    <title>KSRCE Digital Mentor–Mentee Management System | K.S.R. College of Engineering</title>
-    <meta name="description" content="Centralized Institutional Digital Mentor-Mentee Management and Academic Counseling System for K.S.R. College of Engineering (Autonomous), Tiruchengode." />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <title>KSRCE Mentoring | K.S.R. College of Engineering</title>
+    <meta name="description" content="K.S.R. College of Engineering (Autonomous) Centralized Digital Mentor–Mentee Management System" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Cinzel:wght@600;700&display=swap" rel="stylesheet">
+    <script>
+      // Capture beforeinstallprompt immediately on page load so React never misses it
+      window.deferredPrompt = null;
+      window.addEventListener('beforeinstallprompt', function(e) {
+        e.preventDefault();
+        window.deferredPrompt = e;
+        window.dispatchEvent(new CustomEvent('pwa-prompt-ready'));
+        console.log('✓ KSRCE PWA beforeinstallprompt captured early in window.');
+      });
+      window.addEventListener('appinstalled', function() {
+        window.deferredPrompt = null;
+        window.dispatchEvent(new CustomEvent('pwa-installed'));
+        console.log('✓ KSRCE PWA appinstalled captured.');
+      });
+    </script>
   </head>
   <body>
     <div id="root"></div>
