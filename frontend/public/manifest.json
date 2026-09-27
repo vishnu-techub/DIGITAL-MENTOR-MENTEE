@@ -1,0 +1,20 @@
+{
+  "short_name": "KSRCE Mentoring",
+  "name": "KSRCE Digital Mentor–Mentee Management System",
+  "description": "Autonomous Institutional Digital Mentor-Mentee Management and Academic Counseling Portal for K.S.R. College of Engineering (Autonomous), Tiruchengode.",
+  "icons": [
+    {
+      "src": "/ksrce-logo.png",
+      "sizes": "192x192 512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "scope": "/",
+  "background_color": "#0B2545",
+  "theme_color": "#0B2545",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "categories": ["education", "productivity"]
+}

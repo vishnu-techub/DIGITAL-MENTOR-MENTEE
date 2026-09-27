@@ -1440,3 +1440,27 @@ html, body {
   .card-header { flex-wrap: wrap; gap: 0.5rem; }
 }
 
+/* PWA Install Notification Animation & Responsive Styles */
+@keyframes slideUpPwa {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.btn-download-app:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+@media (max-width: 640px) {
+  .download-app-text {
+    display: none;
+  }
+}
+
+

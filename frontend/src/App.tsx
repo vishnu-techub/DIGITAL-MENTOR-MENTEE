@@ -8,6 +8,7 @@ import { HodDashboard } from './pages/hod/HodDashboard';
 import { FacultyDashboard } from './pages/faculty/FacultyDashboard';
 import { StudentDashboard } from './pages/student/StudentDashboard';
 import { CompleteProfileWizard } from './pages/student/CompleteProfileWizard';
+import { PwaInstallBanner } from './components/common/PwaInstallBanner';
 
 export const App: React.FC = () => {
   const { user, isAuthenticated, isLoading, refreshUser } = useAuth();
@@ -52,7 +53,12 @@ export const App: React.FC = () => {
   }
 
   if (!isAuthenticated) {
-    return <LoginPage />;
+    return (
+      <>
+        <LoginPage />
+        <PwaInstallBanner />
+      </>
+    );
   }
 
   // Student First Login Check
@@ -71,6 +77,7 @@ export const App: React.FC = () => {
             }}
           />
         </main>
+        <PwaInstallBanner />
       </div>
     );
   }
@@ -115,6 +122,7 @@ export const App: React.FC = () => {
           </div>
         </main>
       </div>
+      <PwaInstallBanner />
     </div>
   );
 };

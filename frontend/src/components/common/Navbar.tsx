@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotifications } from '../../context/NotificationContext';
-import { Bell, User, LogOut, CheckCheck, Calendar, Shield, Menu, X } from 'lucide-react';
+import { usePwa } from '../../context/PwaContext';
+import { Bell, User, LogOut, CheckCheck, Calendar, Shield, Menu, X, Download } from 'lucide-react';
 
 interface NavbarProps {
   onToggleSidebar?: () => void;
@@ -11,6 +12,7 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }) => {
   const { user, logout } = useAuth();
   const { notifications, unreadCount, markAsRead, triggerSaturdayReminders } = useNotifications();
+  const { isInstalled, promptInstall } = usePwa();
   const [showNotifications, setShowNotifications] = useState(false);
   const [isTriggering, setIsTriggering] = useState(false);
 
@@ -67,9 +69,33 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-
-
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+        {/* PWA Download / Install App Button */}
+        {!isInstalled && (
+          <button
+            onClick={promptInstall}
+            className="btn-download-app"
+            style={{
+              background: 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '0.42rem 0.85rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+              fontWeight: 700,
+              fontSize: '0.78rem',
+              cursor: 'pointer',
+              boxShadow: '0 2px 6px rgba(217, 119, 6, 0.35)',
+              transition: 'all 0.15s ease',
+            }}
+            title="Download & Install KSRCE Web App"
+          >
+            <Download size={15} />
+            <span>Download App</span>
+          </button>
+        )}
 
         {/* Notifications Bell */}
         <div style={{ position: 'relative' }}>
