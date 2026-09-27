@@ -27,6 +27,16 @@ export interface ISchoolDetails {
   scholarshipDetails?: string;
 }
 
+export interface IArrearHistoryItem {
+  subjectCode: string;
+  originalSemester: number;
+  attempt?: number;
+  clearedInSemester?: number;
+  clearedDate?: string;
+  status: 'ACTIVE' | 'CLEARED';
+  remarks?: string;
+}
+
 export interface IStudent extends Document {
   user: mongoose.Types.ObjectId;
   registerNumber: string;
@@ -49,6 +59,7 @@ export interface IStudent extends Document {
     clearedDate?: string;
     remarks?: string;
   }[];
+  arrearHistory?: IArrearHistoryItem[];
   profileCompleted: boolean;
   profileCompletedAt?: Date;
   isActive: boolean;
@@ -154,6 +165,17 @@ const StudentSchema = new Schema<IStudent>(
         clearedInSemester: { type: Number, min: 1, max: 8 },
         originalSemester: { type: Number, min: 1, max: 8 },
         clearedDate: { type: String },
+        remarks: { type: String, trim: true },
+      },
+    ],
+    arrearHistory: [
+      {
+        subjectCode: { type: String, trim: true, uppercase: true, required: true },
+        originalSemester: { type: Number, required: true, min: 1, max: 8 },
+        attempt: { type: Number, default: 1 },
+        clearedInSemester: { type: Number, min: 1, max: 8 },
+        clearedDate: { type: String },
+        status: { type: String, enum: ['ACTIVE', 'CLEARED'], default: 'ACTIVE' },
         remarks: { type: String, trim: true },
       },
     ],

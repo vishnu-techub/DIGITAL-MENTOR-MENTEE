@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { StudentDocumentsManager } from '../../components/documents/StudentDocumentsManager';
 import { EmptyState } from '../../components/common/EmptyState';
 import { Skeleton } from '../../components/common/Skeleton';
+import { Modal } from '../../components/common/Modal';
 import {
   GraduationCap,
   CalendarCheck2,
@@ -35,6 +36,19 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
   const [showSuccessBanner, setShowSuccessBanner] = useState<boolean>(!!justCompleted);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
+
+  // Arrear Clearance State & Validation
+  const [showClearArrearModal, setShowClearArrearModal] = useState(false);
+  const [clearingArrear, setClearingArrear] = useState(false);
+  const [clearArrearError, setClearArrearError] = useState<string | null>(null);
+  const [clearArrearForm, setClearArrearForm] = useState({
+    subjectCode: '',
+    originalSemester: 1,
+    clearedInSemester: 1,
+    clearedDate: new Date().toISOString().split('T')[0],
+    remarks: '',
+    attempt: 1,
+  });
 
   // Profile Edit State
   const [editForm, setEditForm] = useState({
@@ -103,6 +117,71 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
       alert('Error downloading PDF: ' + err.message);
     } finally {
       setPdfDownloading(false);
+    }
+  };
+
+  const handleClearArrearSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setClearArrearError(null);
+
+    if (!profile) return;
+    const cleanSubject = clearArrearForm.subjectCode.trim().toUpperCase();
+    if (!cleanSubject) {
+      setClearArrearError('Subject Code is required.');
+      return;
+    }
+
+    const semCleared = Number(clearArrearForm.clearedInSemester);
+    const origSem = Number(clearArrearForm.originalSemester);
+
+    if (isNaN(semCleared) || semCleared < 1 || semCleared > 8) {
+      setClearArrearError('Cleared Semester must be between 1 and 8.');
+      return;
+    }
+
+    if (isNaN(origSem) || origSem < 1 || origSem > 8) {
+      setClearArrearError('Original Semester must be between 1 and 8.');
+      return;
+    }
+
+    if (semCleared < origSem) {
+      setClearArrearError(
+        `Cleared Semester (Semester 0${semCleared}) cannot be earlier than Original Semester (Semester 0${origSem}).`
+      );
+      return;
+    }
+
+    if (!clearArrearForm.clearedDate) {
+      setClearArrearError('Clearance date is required.');
+      return;
+    }
+
+    if (!clearArrearForm.remarks.trim()) {
+      setClearArrearError('Clearance remarks are required.');
+      return;
+    }
+
+    setClearingArrear(true);
+    try {
+      const res = await api.students.clearArrear(profile.id, {
+        subjectCode: cleanSubject,
+        originalSemester: origSem,
+        clearedInSemester: semCleared,
+        clearedDate: clearArrearForm.clearedDate,
+        remarks: clearArrearForm.remarks.trim(),
+        attempt: clearArrearForm.attempt || 1,
+      });
+
+      if (res.success) {
+        setShowClearArrearModal(false);
+        await loadData();
+      } else {
+        setClearArrearError(res.message || 'Failed to record clearance.');
+      }
+    } catch (err: any) {
+      setClearArrearError(err.message || 'Error recording clearance.');
+    } finally {
+      setClearingArrear(false);
     }
   };
 
@@ -264,7 +343,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
           </div>
 
           {/* Quick Metrics */}
-          <div className="grid-cols-4" style={{ marginBottom: '1.5rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
             <div className="stat-card">
               <div className="stat-icon" style={{ backgroundColor: '#EEF2F6', color: '#0B2545' }}>
                 <GraduationCap size={24} />
@@ -280,23 +359,43 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
                 <Clock size={24} />
               </div>
               <div className="stat-info">
-                <h3>Arrears Status</h3>
-                <div className="stat-value" style={{ fontSize: '1.05rem', color: activeArrears > 0 ? '#DC2626' : '#059669' }}>
-                  {activeArrears === 0 ? '🟢 No Active Arrears' : `🔴 ${activeArrears} Active`}
+                <h3>Current Active Arrears</h3>
+                <div className="stat-value" style={{ color: activeArrears > 0 ? '#DC2626' : '#059669' }}>
+                  {activeArrears}
                 </div>
                 <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '2px' }}>
-                  Historical: {historicalArrears} • Cleared: {clearedArrears}
+                  {activeArrears === 0 ? '🟢 No Active Arrears' : '🔴 Uncleared Subjects'}
+                </div>
+              </div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-icon" style={{ backgroundColor: '#F1F5F9', color: '#334155' }}>
+                <BookOpen size={24} />
+              </div>
+              <div className="stat-info">
+                <h3>Total Arrear History</h3>
+                <div className="stat-value" style={{ color: '#1E293B' }}>
+                  {historicalArrears}
+                </div>
+                <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '2px' }}>
+                  Preserved Records
                 </div>
               </div>
             </div>
 
             <div className="stat-card">
               <div className="stat-icon" style={{ backgroundColor: '#ECFDF5', color: '#059669' }}>
-                <CalendarCheck2 size={24} />
+                <CheckCircle2 size={24} />
               </div>
               <div className="stat-info">
-                <h3>Saturday Sessions</h3>
-                <div className="stat-value">{profile?.meetings?.length || 0}</div>
+                <h3>Cleared Arrears</h3>
+                <div className="stat-value" style={{ color: '#059669' }}>
+                  {clearedArrears}
+                </div>
+                <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '2px' }}>
+                  Successfully Cleared
+                </div>
               </div>
             </div>
 
@@ -731,8 +830,24 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
                   {[1, 2, 3, 4, 5, 6, 7, 8].map((sem) => {
                     const s = profile?.semesters?.find((x: any) => x.semester_number === sem);
                     const arrearsCount = s ? Number(s.arrears_count || 0) : 0;
-                    const clearedInLater = s?.cleared_in_later_semesters || [];
-                    const clearedHere = s?.cleared_subjects || [];
+                    const subjects = s ? (s.arrears_subjects || '—') : '—';
+                    const hasActive = arrearsCount > 0;
+                    const isCleared = !hasActive && (
+                      s?.status === 'Cleared' ||
+                      (s?.historical_arrears_count && s.historical_arrears_count > 0) ||
+                      (s?.cleared_in_later_semesters && s.cleared_in_later_semesters.length > 0)
+                    );
+
+                    let clearanceStatus = 'Clear / Regular';
+                    if (hasActive) {
+                      clearanceStatus = 'Active Arrear';
+                    } else if (isCleared) {
+                      clearanceStatus = s?.clearance_remarks || (s?.cleared_in_later_semesters?.[0]?.subjectCode ? `${s.cleared_in_later_semesters[0].subjectCode} Cleared` : 'Cleared');
+                    } else if (s?.cleared_subjects && s.cleared_subjects.length > 0) {
+                      clearanceStatus = s.cleared_subjects.map((c: any) => `${c.subjectCode} Cleared`).join(', ') + ' / Clear';
+                    } else if (s?.remarks) {
+                      clearanceStatus = s.remarks;
+                    }
 
                     return (
                       <tr key={sem}>
@@ -740,41 +855,27 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
                         <td>{s && Number(s.cgpa) > 0 ? <strong>{Number(s.cgpa).toFixed(2)}</strong> : '-'}</td>
                         <td>{s && Number(s.sgpa) > 0 ? Number(s.sgpa).toFixed(2) : '-'}</td>
                         <td>
-                          <span className={`badge ${arrearsCount > 0 ? 'badge-danger' : 'badge-success'}`}>
-                            {arrearsCount > 0 ? `${arrearsCount} Arrear${arrearsCount > 1 ? 's' : ''}` : '0'}
+                          <span className={`badge ${hasActive ? 'badge-danger' : 'badge-success'}`}>
+                            {hasActive ? `${arrearsCount} Arrear${arrearsCount > 1 ? 's' : ''}` : '0'}
                           </span>
                         </td>
                         <td>
-                          {s?.arrears_subjects ? (
-                            <strong style={{ color: arrearsCount > 0 ? '#DC2626' : '#1E293B' }}>
-                              {s.arrears_subjects}
-                            </strong>
+                          {hasActive && subjects !== '—' ? (
+                            <strong style={{ color: '#DC2626' }}>{subjects}</strong>
                           ) : (
                             <span style={{ color: '#94A3B8' }}>—</span>
                           )}
                         </td>
                         <td>
-                          {clearedInLater.length > 0 && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                              {clearedInLater.map((c: any, cIdx: number) => (
-                                <span key={cIdx} className="badge badge-success" style={{ alignSelf: 'flex-start' }}>
-                                  ✓ {c.subjectCode} Cleared in Sem 0{c.clearedInSemester}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                          {clearedHere.length > 0 && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                              {clearedHere.map((c: any, cIdx: number) => (
-                                <span key={cIdx} className="badge badge-success" style={{ alignSelf: 'flex-start' }}>
-                                  ★ {c.subjectCode} Cleared / Clear
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                          {clearedInLater.length === 0 && clearedHere.length === 0 && (
-                            <span style={{ color: arrearsCount > 0 ? '#DC2626' : '#059669', fontSize: '0.85rem' }}>
-                              {s?.remarks || (arrearsCount > 0 ? 'Active Arrear' : 'Clear / Regular')}
+                          {hasActive ? (
+                            <span className="badge badge-danger">Active Arrear</span>
+                          ) : isCleared ? (
+                            <span className="badge badge-success" style={{ fontWeight: 600 }}>
+                              ✓ {clearanceStatus}
+                            </span>
+                          ) : (
+                            <span style={{ color: '#059669', fontSize: '0.85rem' }}>
+                              {clearanceStatus}
                             </span>
                           )}
                         </td>
@@ -784,6 +885,111 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
                 </tbody>
               </table>
             </div>
+          </div>
+
+          {/* ARREAR HISTORY (Preserved Records) */}
+          <div className="card" style={{ marginTop: '1.5rem' }}>
+            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <h3 className="card-title"><Clock size={18} /> ARREAR HISTORY (Preserved Records)</h3>
+                <span style={{ fontSize: '0.8rem', color: '#64748B' }}>
+                  Current Active: {activeArrears} • Total History: {historicalArrears} • Cleared: {clearedArrears}
+                </span>
+              </div>
+              {activeArrears > 0 && (
+                <button
+                  className="btn btn-sm"
+                  onClick={() => {
+                    const firstActive = profile?.active_arrear_subjects?.[0] || '';
+                    setClearArrearForm({
+                      subjectCode: firstActive,
+                      originalSemester: 1,
+                      clearedInSemester: 1,
+                      clearedDate: new Date().toISOString().split('T')[0],
+                      remarks: firstActive ? `${firstActive} Cleared` : '',
+                      attempt: 1,
+                    });
+                    setClearArrearError(null);
+                    setShowClearArrearModal(true);
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    backgroundColor: '#ECFDF5',
+                    color: '#047857',
+                    border: '1px solid #10B981',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <CheckCircle2 size={15} /> Record Arrear Clearance
+                </button>
+              )}
+            </div>
+            {(!profile?.arrear_history || profile.arrear_history.length === 0) ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#64748B' }}>
+                <CheckCircle2 size={36} color="#10B981" style={{ margin: '0 auto 8px' }} />
+                <div style={{ fontWeight: 600, color: '#1E293B' }}>Clean Academic Record</div>
+                <div style={{ fontSize: '0.85rem' }}>No arrears recorded across all semesters.</div>
+              </div>
+            ) : (
+              <div className="table-responsive">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Subject Code</th>
+                      <th>Original Semester</th>
+                      <th>Attempt</th>
+                      <th>Status</th>
+                      <th>Cleared In</th>
+                      <th>Clearance Date</th>
+                      <th>Ledger Remarks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {profile.arrear_history.map((h: any, idx: number) => {
+                      const isCleared = h.status === 'CLEARED';
+                      return (
+                        <tr key={idx}>
+                          <td>
+                            <strong style={{ color: isCleared ? '#1E293B' : '#DC2626' }}>
+                              {h.subjectCode}
+                            </strong>
+                          </td>
+                          <td>Semester 0{h.originalSemester}</td>
+                          <td>
+                            <span className="badge badge-secondary">Attempt {h.attempt || 1}</span>
+                          </td>
+                          <td>
+                            <span className={`badge ${isCleared ? 'badge-success' : 'badge-danger'}`}>
+                              {isCleared ? 'CLEARED' : 'ACTIVE ARREAR'}
+                            </span>
+                          </td>
+                          <td>
+                            {isCleared && h.clearedInSemester ? (
+                              <span className="badge badge-success">Semester 0{h.clearedInSemester}</span>
+                            ) : (
+                              <span style={{ color: '#94A3B8' }}>—</span>
+                            )}
+                          </td>
+                          <td>
+                            {h.clearedDate ? (
+                              <span style={{ fontSize: '0.85rem' }}>{h.clearedDate}</span>
+                            ) : (
+                              <span style={{ color: '#94A3B8' }}>—</span>
+                            )}
+                          </td>
+                          <td style={{ fontSize: '0.85rem', color: '#475569' }}>
+                            {h.remarks || (isCleared ? 'Cleared' : 'Pending Clearance')}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -961,6 +1167,133 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
           </div>
         </div>
       )}
+
+      {/* MODAL: Record Arrear Clearance with Validation */}
+      <Modal
+        isOpen={showClearArrearModal}
+        onClose={() => setShowClearArrearModal(false)}
+        title="Record Arrear Clearance"
+        maxWidth="560px"
+      >
+        <form onSubmit={handleClearArrearSubmit}>
+          <div style={{ backgroundColor: '#F0FDF4', border: '1px solid #BBF7D0', padding: '0.85rem 1rem', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.85rem', color: '#166534' }}>
+            <strong>Academic History Integrity:</strong><br />
+            Original semester records are permanently preserved. Clearing an arrear updates the latest status to CLEARED, sets the current semester arrears to 0, and records clearance details.
+          </div>
+
+          {clearArrearError && (
+            <div style={{ backgroundColor: '#FEF2F2', border: '1px solid #FECACA', padding: '0.75rem', borderRadius: '6px', marginBottom: '1rem', color: '#DC2626', fontSize: '0.85rem' }}>
+              {clearArrearError}
+            </div>
+          )}
+
+          <div style={{ marginBottom: '1rem' }}>
+            <label className="form-label">Subject Code *</label>
+            <input
+              type="text"
+              className="form-control"
+              placeholder="e.g. 24ITT36"
+              value={clearArrearForm.subjectCode}
+              onChange={(e) => setClearArrearForm({ ...clearArrearForm, subjectCode: e.target.value.toUpperCase() })}
+              required
+              style={{ textTransform: 'uppercase', fontWeight: 600 }}
+            />
+            {profile?.active_arrear_subjects && profile.active_arrear_subjects.length > 0 && (
+              <div style={{ marginTop: '6px', fontSize: '0.8rem', color: '#64748B' }}>
+                Active uncleared subjects detected:{' '}
+                {profile.active_arrear_subjects.map((sub: string) => (
+                  <button
+                    key={sub}
+                    type="button"
+                    className="badge badge-warning"
+                    style={{ marginRight: '6px', cursor: 'pointer', border: 'none' }}
+                    onClick={() => setClearArrearForm({ ...clearArrearForm, subjectCode: sub, remarks: `${sub} Cleared` })}
+                  >
+                    Select {sub}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+            <div>
+              <label className="form-label">Original Semester Incurred *</label>
+              <select
+                className="form-control"
+                value={clearArrearForm.originalSemester}
+                onChange={(e) => setClearArrearForm({ ...clearArrearForm, originalSemester: parseInt(e.target.value, 10) })}
+              >
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((sem) => (
+                  <option key={sem} value={sem}>Semester 0{sem}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="form-label">Cleared in Semester *</label>
+              <select
+                className="form-control"
+                value={clearArrearForm.clearedInSemester}
+                onChange={(e) => setClearArrearForm({ ...clearArrearForm, clearedInSemester: parseInt(e.target.value, 10) })}
+              >
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((sem) => (
+                  <option key={sem} value={sem}>Semester 0{sem}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+            <div>
+              <label className="form-label">Clearance Date *</label>
+              <input
+                type="date"
+                className="form-control"
+                value={clearArrearForm.clearedDate}
+                onChange={(e) => setClearArrearForm({ ...clearArrearForm, clearedDate: e.target.value })}
+                required
+              />
+            </div>
+            <div>
+              <label className="form-label">Attempt Number</label>
+              <input
+                type="number"
+                min="1"
+                max="10"
+                className="form-control"
+                value={clearArrearForm.attempt}
+                onChange={(e) => setClearArrearForm({ ...clearArrearForm, attempt: parseInt(e.target.value, 10) || 1 })}
+              />
+            </div>
+          </div>
+
+          <div style={{ marginBottom: '1.25rem' }}>
+            <label className="form-label">Clearance Remarks *</label>
+            <input
+              type="text"
+              className="form-control"
+              placeholder="e.g. 24ITT36 Cleared in Semester 04"
+              value={clearArrearForm.remarks}
+              onChange={(e) => setClearArrearForm({ ...clearArrearForm, remarks: e.target.value })}
+              required
+            />
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+            <button type="button" className="btn btn-secondary" onClick={() => setShowClearArrearModal(false)}>
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={clearingArrear}
+              style={{ backgroundColor: '#059669', borderColor: '#059669' }}
+            >
+              {clearingArrear ? 'Recording...' : 'Confirm & Save Clearance'}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 };

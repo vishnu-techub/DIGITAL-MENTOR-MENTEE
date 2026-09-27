@@ -126,7 +126,7 @@ export const api = {
       request(`/students/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     updateAcademics: (id: string, data: any) =>
       request(`/students/${id}/academics`, { method: 'PUT', body: JSON.stringify(data) }),
-    clearArrear: (id: string, data: { subjectCode: string; clearedInSemester: number; originalSemester?: number; remarks?: string }) =>
+    clearArrear: (id: string, data: { subjectCode: string; clearedInSemester: number; originalSemester?: number; clearedDate?: string; remarks?: string; attempt?: number }) =>
       request(`/students/${id}/clear-arrear`, { method: 'POST', body: JSON.stringify(data) }),
     completeProfile: (data: any) =>
       request('/students/complete-profile', { method: 'POST', body: JSON.stringify(data) }),

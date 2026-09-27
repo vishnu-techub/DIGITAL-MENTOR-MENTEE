@@ -84,7 +84,11 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
 
   // 5. Fetch Semesters 1 to 8
   const semesterDocs = await AcademicRecord.find({ student: studentDoc._id }).sort({ semesterNumber: 1 });
-  const arrearStats = calculateArrearStatistics(semesterDocs, studentDoc.clearedSubjects || []);
+  const arrearStats = calculateArrearStatistics(
+    semesterDocs,
+    studentDoc.clearedSubjects || [],
+    studentDoc.arrearHistory || []
+  );
   const semesters = arrearStats.formattedSemesters;
 
   // 6. Current Mentor
@@ -340,25 +344,17 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
   // SECTION 3: SEMESTER ACADEMIC PERFORMANCE (Semesters 1 - 8)
   const semesterRows = [1, 2, 3, 4, 5, 6, 7, 8].map((num) => {
     const s = semesters.find((x: any) => x.semester_number === num);
-    let subjectStatus = 'Clear / Regular';
-    if (s) {
-      if (s.arrears_count > 0) {
-        const clearedNote = s.cleared_in_later_semesters && s.cleared_in_later_semesters.length > 0
-          ? ` (Cleared in Sem 0${s.cleared_in_later_semesters[0].clearedInSemester})`
-          : ' [Active Arrear]';
-        subjectStatus = (s.arrears_subjects || 'Arrear') + clearedNote;
-      } else if (s.cleared_subjects && s.cleared_subjects.length > 0) {
-        subjectStatus = s.cleared_subjects.map((c: any) => `${c.subjectCode} Cleared`).join(', ') + ' / Clear';
-      } else if (s.remarks) {
-        subjectStatus = s.remarks;
-      }
-    }
+    const arrearsCountDisplay = s ? `${s.arrears_count}` : '0';
+    const subjectsDisplay = s ? (s.arrears_subjects || '—') : '—';
+    const statusDisplay = s ? (s.clearance_remarks || s.status_label || 'Clear / Regular') : 'Clear / Regular';
+
     return [
       `Semester 0${num}`,
       s && s.cgpa > 0 ? s.cgpa.toFixed(2) : '-',
       s && s.sgpa > 0 ? s.sgpa.toFixed(2) : '-',
-      s ? `${s.arrears_count}` : '0',
-      subjectStatus,
+      arrearsCountDisplay,
+      subjectsDisplay,
+      statusDisplay,
     ];
   });
 
@@ -367,22 +363,68 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
     margin: { left: margin, right: margin },
     theme: 'grid',
     head: [
-      [{ content: `3. SEMESTER ACADEMIC PERFORMANCE (SEMESTERS 1 TO 8) — ${arrearStats.statusLabel} (Historical: ${arrearStats.historicalArrearsCount}, Cleared: ${arrearStats.clearedCount})`, colSpan: 5, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }],
-      ['Semester', 'Cumulative CGPA', 'Semester SGPA', 'Semester Arrears', 'Subjects / Clearance Remarks'],
+      [{
+        content: `3. SEMESTER ACADEMIC PERFORMANCE (SEMESTERS 1 TO 8) — Active: ${arrearStats.activeArrearsCount} | Total History: ${arrearStats.historicalArrearsCount} | Cleared: ${arrearStats.clearedCount}`,
+        colSpan: 6,
+        styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' },
+      }],
+      ['Semester', 'CGPA', 'SGPA', 'Semester Arrears', 'Arrear Subjects', 'Clearance Remarks & Status'],
     ],
     body: semesterRows,
     headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold', halign: 'center' },
     styles: { fontSize: 8, cellPadding: 1.8, halign: 'center' },
     columnStyles: {
-      0: { fontStyle: 'bold', halign: 'left', cellWidth: 30 },
-      1: { cellWidth: 32 },
-      2: { cellWidth: 32 },
-      3: { cellWidth: 26 },
-      4: { halign: 'left' },
+      0: { fontStyle: 'bold', halign: 'left', cellWidth: 26 },
+      1: { cellWidth: 18 },
+      2: { cellWidth: 18 },
+      3: { cellWidth: 28 },
+      4: { halign: 'left', cellWidth: 32 },
+      5: { halign: 'left' },
     },
   });
 
   currentY = (doc as any).lastAutoTable.finalY + 6;
+
+  // SECTION 3B: ARREAR HISTORY (If any history exists)
+  if (arrearStats.arrearHistory && arrearStats.arrearHistory.length > 0) {
+    const arrearHistoryRows = arrearStats.arrearHistory.map((h: any) => [
+      h.subjectCode,
+      `Semester 0${h.originalSemester}`,
+      `Attempt ${h.attempt || 1}`,
+      h.status === 'CLEARED' ? (h.clearedInSemester ? `Semester 0${h.clearedInSemester}` : 'Cleared') : '—',
+      h.clearedDate || '—',
+      h.status === 'CLEARED' ? 'CLEARED' : 'ACTIVE ARREAR',
+      h.remarks || '—',
+    ]);
+
+    autoTable(doc, {
+      startY: currentY,
+      margin: { left: margin, right: margin },
+      theme: 'grid',
+      head: [
+        [{
+          content: `ARREAR HISTORY (Preserved Records) — Current Active: ${arrearStats.activeArrearsCount} | Total History: ${arrearStats.historicalArrearsCount} | Cleared: ${arrearStats.clearedCount}`,
+          colSpan: 7,
+          styles: { fillColor: [70, 80, 95], textColor: [255, 255, 255], fontStyle: 'bold' },
+        }],
+        ['Subject Code', 'Original Semester', 'Attempt', 'Cleared In', 'Cleared Date', 'Status', 'Remarks'],
+      ],
+      body: arrearHistoryRows,
+      headStyles: { fillColor: [55, 65, 80], textColor: [255, 255, 255], fontSize: 7.5, fontStyle: 'bold', halign: 'center' },
+      styles: { fontSize: 7.5, cellPadding: 1.6, halign: 'center' },
+      columnStyles: {
+        0: { fontStyle: 'bold', halign: 'left', cellWidth: 26 },
+        1: { cellWidth: 28 },
+        2: { cellWidth: 20 },
+        3: { cellWidth: 24 },
+        4: { cellWidth: 24 },
+        5: { fontStyle: 'bold', cellWidth: 28 },
+        6: { halign: 'left' },
+      },
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 6;
+  }
 
   // SECTION 4: MENTOR ASSIGNMENT & REASSIGNMENT HISTORY (Immutable Lineage)
   const mentorHistoryRows = mentorHistory.length > 0

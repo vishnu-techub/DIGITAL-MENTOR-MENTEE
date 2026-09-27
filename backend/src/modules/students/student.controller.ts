@@ -19,7 +19,7 @@ import { sendSuccess, sendError } from '../../utils/response.js';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
 import { ROLES } from '../../config/constants.js';
-import { calculateArrearStatistics } from '../../utils/arrears.util.js';
+import { calculateArrearStatistics, parseSubjectCodes } from '../../utils/arrears.util.js';
 
 // Helper: Resolve student from id, registerNumber, or user ID
 async function findStudentByIdOrReg(idOrReg: string) {
@@ -128,7 +128,11 @@ export async function getStudents(req: AuthRequest, res: Response) {
           Meeting.findOne({ student: s._id }).sort({ meetingDate: -1 }),
         ]);
 
-        const arrearStats = calculateArrearStatistics(academicRecords, s.clearedSubjects || []);
+        const arrearStats = calculateArrearStatistics(
+          academicRecords,
+          s.clearedSubjects || [],
+          s.arrearHistory || []
+        );
         const totalArrears = arrearStats.activeArrearsCount;
         const latestWithCgpa = academicRecords.find((r) => (r.cgpa || 0) > 0);
         const currentCgpa = latestWithCgpa ? latestWithCgpa.cgpa : 0.0;
@@ -269,7 +273,11 @@ export async function getStudentById(req: AuthRequest, res: Response) {
       };
     });
 
-    const arrearStats = calculateArrearStatistics(semesters, student.clearedSubjects || []);
+    const arrearStats = calculateArrearStatistics(
+      semesters,
+      student.clearedSubjects || [],
+      student.arrearHistory || []
+    );
     const formattedSemesters = arrearStats.formattedSemesters;
 
     const formattedMeetings = meetings.map((m) => ({
@@ -360,6 +368,7 @@ export async function getStudentById(req: AuthRequest, res: Response) {
       },
       semesters: formattedSemesters,
       cleared_subjects: arrearStats.clearedSubjects,
+      arrear_history: arrearStats.arrearHistory,
       active_arrears_count: arrearStats.activeArrearsCount,
       historical_arrears_count: arrearStats.historicalArrearsCount,
       cleared_arrears_count: arrearStats.clearedCount,
@@ -906,9 +915,28 @@ export async function updateStudentAcademics(req: AuthRequest, res: Response) {
     }
 
     if (Array.isArray(semesters)) {
+      if (!student.arrearHistory) {
+        student.arrearHistory = [];
+      }
       for (const sem of semesters) {
         const semNum = parseInt(sem.semesterNumber || sem.semester_number, 10);
         if (semNum >= 1 && semNum <= 8) {
+          const subjects = parseSubjectCodes(sem.arrearsSubjects ?? sem.arrears_subjects);
+          subjects.forEach((code) => {
+            const exists = student.arrearHistory!.some(
+              (h) => h.subjectCode.toUpperCase() === code
+            );
+            if (!exists) {
+              student.arrearHistory!.push({
+                subjectCode: code,
+                originalSemester: semNum,
+                attempt: 1,
+                status: 'ACTIVE',
+                remarks: 'Active Arrear',
+              });
+            }
+          });
+
           const existing = await AcademicRecord.findOne({ student: student._id, semesterNumber: semNum });
           await AcademicRecord.findOneAndUpdate(
             { student: student._id, semesterNumber: semNum },
@@ -928,6 +956,7 @@ export async function updateStudentAcademics(req: AuthRequest, res: Response) {
           );
         }
       }
+      await student.save();
     }
 
     await logAudit({
@@ -948,20 +977,38 @@ export async function updateStudentAcademics(req: AuthRequest, res: Response) {
 // Clear an arrear in a specific semester while strictly preserving historical semester records
 export async function clearArrear(req: AuthRequest, res: Response) {
   const id = req.params.id as string;
-  const { subjectCode, clearedInSemester, originalSemester, remarks } = req.body;
+  const { subjectCode, clearedInSemester, originalSemester, remarks, clearedDate, attempt } = req.body;
 
-  if (!subjectCode || !clearedInSemester) {
-    return sendError(res, 'Subject Code and Cleared In Semester number are mandatory.', 400);
+  if (!subjectCode || !clearedInSemester || originalSemester === undefined || originalSemester === null) {
+    return sendError(res, 'Subject Code, Original Semester, and Cleared In Semester number are mandatory.', 400);
   }
 
   const semCleared = parseInt(clearedInSemester, 10);
+  const origSem = parseInt(originalSemester, 10);
+
   if (isNaN(semCleared) || semCleared < 1 || semCleared > 8) {
     return sendError(res, 'Cleared semester must be a valid number between 1 and 8.', 400);
   }
 
+  if (isNaN(origSem) || origSem < 1 || origSem > 8) {
+    return sendError(res, 'Original semester must be a valid number between 1 and 8.', 400);
+  }
+
+  if (semCleared < origSem) {
+    return sendError(
+      res,
+      `Cleared semester (Semester 0${semCleared}) cannot be earlier than original semester (Semester 0${origSem}).`,
+      400
+    );
+  }
+
   const cleanSubjectCode = subjectCode.trim().toUpperCase();
-  const origSem = originalSemester ? parseInt(originalSemester, 10) : undefined;
-  const clearanceRemark = remarks && remarks.trim() ? remarks.trim() : `${cleanSubjectCode} Cleared`;
+  const clearanceDate = clearedDate && String(clearedDate).trim()
+    ? String(clearedDate).trim()
+    : new Date().toISOString().split('T')[0];
+  const clearanceRemark = remarks && remarks.trim()
+    ? remarks.trim()
+    : `${cleanSubjectCode} Cleared in Semester 0${semCleared}`;
 
   try {
     const student = await findStudentByIdOrReg(id);
@@ -973,8 +1020,9 @@ export async function clearArrear(req: AuthRequest, res: Response) {
       subjectCode: cleanSubjectCode,
       clearedInSemester: semCleared,
       originalSemester: origSem,
-      clearedDate: new Date().toISOString().split('T')[0],
+      clearedDate: clearanceDate,
       remarks: clearanceRemark,
+      attempt: attempt ? parseInt(attempt, 10) : 1,
     };
 
     // 1. Record cleared subject in student master document
@@ -989,10 +1037,37 @@ export async function clearArrear(req: AuthRequest, res: Response) {
     } else {
       student.clearedSubjects.push(clearanceEntry);
     }
+
+    // 2. Update/create Arrear History record on student document
+    if (!student.arrearHistory) {
+      student.arrearHistory = [];
+    }
+    const histIndex = student.arrearHistory.findIndex(
+      (h) => h.subjectCode.toUpperCase() === cleanSubjectCode
+    );
+    if (histIndex >= 0) {
+      student.arrearHistory[histIndex].status = 'CLEARED';
+      student.arrearHistory[histIndex].clearedInSemester = semCleared;
+      student.arrearHistory[histIndex].clearedDate = clearanceDate;
+      student.arrearHistory[histIndex].remarks = clearanceRemark;
+      if (attempt) {
+        student.arrearHistory[histIndex].attempt = parseInt(attempt, 10);
+      }
+    } else {
+      student.arrearHistory.push({
+        subjectCode: cleanSubjectCode,
+        originalSemester: origSem,
+        attempt: attempt ? parseInt(attempt, 10) : 1,
+        clearedInSemester: semCleared,
+        clearedDate: clearanceDate,
+        status: 'CLEARED',
+        remarks: clearanceRemark,
+      });
+    }
+
     await student.save();
 
-    // 2. Update the semester in which it was cleared (e.g. Semester 05)
-    // CRITICAL: Do NOT alter originalSemester (e.g. Semester 04) - its historical arrearsCount and subjects must remain intact!
+    // 3. Update the semester in which it was cleared (e.g. Semester 04)
     let clearedSemRecord = await AcademicRecord.findOne({
       student: student._id,
       semesterNumber: semCleared,
@@ -1007,7 +1082,7 @@ export async function clearArrear(req: AuthRequest, res: Response) {
         arrearsCount: 0,
         arrearsSubjects: '',
         clearedSubjects: [clearanceEntry],
-        remarks: clearanceRemark.includes('Clear') ? clearanceRemark : `${clearanceRemark} / Clear`,
+        remarks: clearanceRemark,
       });
     } else {
       if (!clearedSemRecord.clearedSubjects) {
@@ -1022,7 +1097,6 @@ export async function clearArrear(req: AuthRequest, res: Response) {
         clearedSemRecord.clearedSubjects.push(clearanceEntry);
       }
 
-      // Update semester remarks if appropriate
       const currentRemarks = clearedSemRecord.remarks?.trim() || '';
       if (!currentRemarks || currentRemarks === 'Clear / Regular' || currentRemarks === 'None / Clear') {
         clearedSemRecord.remarks = `${clearanceRemark} / Clear`;
@@ -1041,13 +1115,15 @@ export async function clearArrear(req: AuthRequest, res: Response) {
         subjectCode: cleanSubjectCode,
         clearedInSemester: semCleared,
         originalSemester: origSem,
+        clearedDate: clearanceDate,
+        remarks: clearanceRemark,
       },
       req,
     });
 
     // Re-fetch all semesters and calculate updated statistics
     const allSemesters = await AcademicRecord.find({ student: student._id }).sort({ semesterNumber: 1 });
-    const stats = calculateArrearStatistics(allSemesters, student.clearedSubjects || []);
+    const stats = calculateArrearStatistics(allSemesters, student.clearedSubjects || [], student.arrearHistory || []);
 
     return sendSuccess(
       res,
