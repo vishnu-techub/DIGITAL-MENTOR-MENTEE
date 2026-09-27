@@ -245,7 +245,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
         </div>
 
         {/* User Profile Info - Desktop Only */}
-        <div className="desktop-only" style={{ alignItems: 'center', gap: '0.75rem' }}>
+        <div className="desktop-only" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#ffffff' }}>
               {user?.fullName}
