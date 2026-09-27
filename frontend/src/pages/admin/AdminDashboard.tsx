@@ -26,6 +26,7 @@ import {
   Check,
   UserPlus,
   Eye,
+  Edit,
   X,
   Trash2,
   School,
@@ -108,6 +109,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
   const [resetPasswordModalData, setResetPasswordModalData] = useState<{ studentId: string; registerNumber: string; studentName: string } | null>(null);
   const [tempNewPassword, setTempNewPassword] = useState('Password@123');
   const [showResetPasswordModal, setShowResetPasswordModal] = useState(false);
+
+  // Edit Student Modal state
+  const [editStudentTarget, setEditStudentTarget] = useState<any | null>(null);
+  const [savingStudent, setSavingStudent] = useState(false);
+  const [editStudentForm, setEditStudentForm] = useState({
+    fullName: '',
+    registerNumber: '',
+    departmentId: '',
+    batchId: '',
+    mobileNumber: '',
+    email: '',
+    residentialType: 'DAY_SCHOLAR',
+    bloodGroup: '',
+    dob: '',
+    address: '',
+    fatherName: '',
+    fatherContact: '',
+    motherName: '',
+    motherContact: '',
+    isActive: 1,
+    newPassword: '',
+  });
 
   // Delete Confirmation Modals state
   const [deleteStudentTarget, setDeleteStudentTarget] = useState<any | null>(null);
@@ -255,6 +278,47 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       }
     } catch (err: any) {
       toast.error('Error resetting password: ' + err.message);
+    }
+  };
+
+  // Handle Save (Edit) Student
+  const handleSaveStudent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editStudentTarget) return;
+    setSavingStudent(true);
+    try {
+      const payload: any = {
+        fullName: editStudentForm.fullName,
+        mobileNumber: editStudentForm.mobileNumber,
+        email: editStudentForm.email,
+        residentialType: editStudentForm.residentialType,
+        bloodGroup: editStudentForm.bloodGroup,
+        dob: editStudentForm.dob,
+        address: editStudentForm.address,
+        fatherName: editStudentForm.fatherName,
+        fatherContact: editStudentForm.fatherContact,
+        motherName: editStudentForm.motherName,
+        motherContact: editStudentForm.motherContact,
+        registerNumber: editStudentForm.registerNumber,
+        departmentId: editStudentForm.departmentId,
+        batchId: editStudentForm.batchId,
+        isActive: editStudentForm.isActive,
+      };
+      if (editStudentForm.newPassword.trim()) {
+        payload.newPassword = editStudentForm.newPassword.trim();
+      }
+      const res = await api.students.update(editStudentTarget.id, payload);
+      if (res.success) {
+        toast.success(`Student "${editStudentForm.fullName}" updated successfully.`);
+        setEditStudentTarget(null);
+        loadData();
+      } else {
+        toast.error(res.message || 'Failed to update student.');
+      }
+    } catch (err: any) {
+      toast.error('Error updating student: ' + err.message);
+    } finally {
+      setSavingStudent(false);
     }
   };
 
@@ -703,6 +767,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                           </button>
                           <button
                             className="btn btn-secondary btn-sm"
+                            title="Edit Student Profile"
+                            style={{ backgroundColor: '#EFF6FF', color: '#2563EB', border: '1px solid #BFDBFE' }}
+                            onClick={() => {
+                              setEditStudentTarget(s);
+                              setEditStudentForm({
+                                fullName: s.full_name || '',
+                                registerNumber: s.register_number || '',
+                                departmentId: s.department_id || '',
+                                batchId: s.batch_id || '',
+                                mobileNumber: s.mobile_number || '',
+                                email: s.email || '',
+                                residentialType: s.residential_type || 'DAY_SCHOLAR',
+                                bloodGroup: s.blood_group || '',
+                                dob: s.dob ? s.dob.split('T')[0] : '',
+                                address: s.address || '',
+                                fatherName: s.father_name || '',
+                                fatherContact: s.father_contact || '',
+                                motherName: s.mother_name || '',
+                                motherContact: s.mother_contact || '',
+                                isActive: s.is_active ?? 1,
+                                newPassword: '',
+                              });
+                            }}
+                          >
+                            <Edit size={13} />
+                          </button>
+                          <button
+                            className="btn btn-secondary btn-sm"
                             title="Reset Student Password"
                             onClick={() => {
                               setResetPasswordModalData({
@@ -812,14 +904,52 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                         onClick={() => setSelectedStudentId(s.id)}
                         style={{ minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontWeight: 600 }}
                       >
-                        <Eye size={15} /> View Dossier
+                        <Eye size={15} /> View
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => {
+                          setEditStudentTarget(s);
+                          setEditStudentForm({
+                            fullName: s.full_name || '',
+                            registerNumber: s.register_number || '',
+                            departmentId: s.department_id || '',
+                            batchId: s.batch_id || '',
+                            mobileNumber: s.mobile_number || '',
+                            email: s.email || '',
+                            residentialType: s.residential_type || 'DAY_SCHOLAR',
+                            bloodGroup: s.blood_group || '',
+                            dob: s.dob ? s.dob.split('T')[0] : '',
+                            address: s.address || '',
+                            fatherName: s.father_name || '',
+                            fatherContact: s.father_contact || '',
+                            motherName: s.mother_name || '',
+                            motherContact: s.mother_contact || '',
+                            isActive: s.is_active ?? 1,
+                            newPassword: '',
+                          });
+                        }}
+                        style={{ minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontWeight: 600, backgroundColor: '#EFF6FF', color: '#2563EB', border: '1px solid #BFDBFE', borderRadius: '8px' }}
+                      >
+                        <Edit size={15} /> Edit
                       </button>
                       <button
                         className="btn btn-pdf btn-sm"
                         onClick={() => api.pdf.downloadStudentPdf(s.id, `KSRCE_Mentee_${s.register_number}_Dossier.pdf`)}
                         style={{ minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontWeight: 600 }}
                       >
-                        <FileText size={15} /> Download PDF
+                        <FileText size={15} /> PDF
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => {
+                          setResetPasswordModalData({ studentId: s.id, registerNumber: s.register_number, studentName: s.full_name });
+                          setTempNewPassword('Password@123');
+                          setShowResetPasswordModal(true);
+                        }}
+                        style={{ minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontWeight: 600, backgroundColor: '#F8FAFC', color: '#475569', border: '1px solid #E2E8F0', borderRadius: '8px' }}
+                      >
+                        <Key size={15} /> Reset Pwd
                       </button>
                     </div>
                   </div>
@@ -2203,6 +2333,207 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
               </button>
               <button type="submit" className="btn btn-primary">
                 Update Password
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      {/* MODAL: Edit Student */}
+      <Modal
+        isOpen={!!editStudentTarget}
+        onClose={() => setEditStudentTarget(null)}
+        title={`Edit Student — ${editStudentTarget?.full_name || ''}`}
+      >
+        {editStudentTarget && (
+          <form onSubmit={handleSaveStudent}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+
+              {/* Identity Fields */}
+              <div className="form-group">
+                <label className="form-label">Full Name *</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={editStudentForm.fullName}
+                  onChange={(e) => setEditStudentForm({ ...editStudentForm, fullName: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Register Number *</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={editStudentForm.registerNumber}
+                  onChange={(e) => setEditStudentForm({ ...editStudentForm, registerNumber: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Department *</label>
+                <select
+                  className="form-control"
+                  value={editStudentForm.departmentId}
+                  onChange={(e) => setEditStudentForm({ ...editStudentForm, departmentId: e.target.value })}
+                  required
+                >
+                  <option value="">-- Select Department --</option>
+                  {departments.map((d) => (
+                    <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Batch *</label>
+                <select
+                  className="form-control"
+                  value={editStudentForm.batchId}
+                  onChange={(e) => setEditStudentForm({ ...editStudentForm, batchId: e.target.value })}
+                  required
+                >
+                  <option value="">-- Select Batch --</option>
+                  {batches.map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Contact Details */}
+              <div className="form-group">
+                <label className="form-label">Mobile Number</label>
+                <input
+                  type="tel"
+                  className="form-control"
+                  value={editStudentForm.mobileNumber}
+                  onChange={(e) => setEditStudentForm({ ...editStudentForm, mobileNumber: e.target.value })}
+                  placeholder="9876543210"
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Email</label>
+                <input
+                  type="email"
+                  className="form-control"
+                  value={editStudentForm.email}
+                  onChange={(e) => setEditStudentForm({ ...editStudentForm, email: e.target.value })}
+                  placeholder="student@ksrce.ac.in"
+                />
+              </div>
+
+              {/* Personal Details */}
+              <div className="form-group">
+                <label className="form-label">Date of Birth</label>
+                <input
+                  type="date"
+                  className="form-control"
+                  value={editStudentForm.dob}
+                  onChange={(e) => setEditStudentForm({ ...editStudentForm, dob: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Blood Group</label>
+                <select
+                  className="form-control"
+                  value={editStudentForm.bloodGroup}
+                  onChange={(e) => setEditStudentForm({ ...editStudentForm, bloodGroup: e.target.value })}
+                >
+                  <option value="">-- Select --</option>
+                  {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((bg) => (
+                    <option key={bg} value={bg}>{bg}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Residential Type</label>
+                <select
+                  className="form-control"
+                  value={editStudentForm.residentialType}
+                  onChange={(e) => setEditStudentForm({ ...editStudentForm, residentialType: e.target.value })}
+                >
+                  <option value="DAY_SCHOLAR">Day Scholar</option>
+                  <option value="HOSTELLER">Hosteller</option>
+                </select>
+              </div>
+              <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                <label className="form-label">Address</label>
+                <textarea
+                  className="form-control"
+                  value={editStudentForm.address}
+                  onChange={(e) => setEditStudentForm({ ...editStudentForm, address: e.target.value })}
+                  rows={2}
+                  placeholder="Door No, Street, City, District - Pincode"
+                />
+              </div>
+
+              {/* Parent Details */}
+              <div className="form-group">
+                <label className="form-label">Father's Name</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={editStudentForm.fatherName}
+                  onChange={(e) => setEditStudentForm({ ...editStudentForm, fatherName: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Father's Contact</label>
+                <input
+                  type="tel"
+                  className="form-control"
+                  value={editStudentForm.fatherContact}
+                  onChange={(e) => setEditStudentForm({ ...editStudentForm, fatherContact: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Mother's Name</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={editStudentForm.motherName}
+                  onChange={(e) => setEditStudentForm({ ...editStudentForm, motherName: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Mother's Contact</label>
+                <input
+                  type="tel"
+                  className="form-control"
+                  value={editStudentForm.motherContact}
+                  onChange={(e) => setEditStudentForm({ ...editStudentForm, motherContact: e.target.value })}
+                />
+              </div>
+
+              {/* Account Settings */}
+              <div className="form-group">
+                <label className="form-label">Account Status</label>
+                <select
+                  className="form-control"
+                  value={editStudentForm.isActive}
+                  onChange={(e) => setEditStudentForm({ ...editStudentForm, isActive: Number(e.target.value) })}
+                >
+                  <option value={1}>Active</option>
+                  <option value={0}>Inactive</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">New Password <span style={{ color: '#94A3B8', fontSize: '0.75rem' }}>(leave blank to keep current)</span></label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={editStudentForm.newPassword}
+                  onChange={(e) => setEditStudentForm({ ...editStudentForm, newPassword: e.target.value })}
+                  placeholder="Optional — e.g. NewPass@456"
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem', borderTop: '1px solid #E2E8F0', paddingTop: '1rem' }}>
+              <button type="button" className="btn btn-secondary" onClick={() => setEditStudentTarget(null)} disabled={savingStudent}>
+                Cancel
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={savingStudent}>
+                {savingStudent ? 'Saving…' : 'Save Changes'}
               </button>
             </div>
           </form>

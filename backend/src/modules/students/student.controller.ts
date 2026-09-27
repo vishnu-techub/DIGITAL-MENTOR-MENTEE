@@ -826,7 +826,10 @@ export async function updateStudent(req: AuthRequest, res: Response) {
     if (bloodGroup) student.bloodGroup = bloodGroup;
     if (residentialType) student.residentialType = residentialType;
     if (mobileNumber) student.mobileNumber = mobileNumber;
-    if (email) student.email = email;
+    if (email) {
+      student.email = email;
+      await User.findByIdAndUpdate(student.user, { email });
+    }
     if (address) student.address = address;
 
     if (fatherName || fatherContact || fatherOccupation || motherName || motherContact || motherOccupation) {
@@ -840,7 +843,32 @@ export async function updateStudent(req: AuthRequest, res: Response) {
       };
     }
 
-    if (fullName && req.user?.role !== ROLES.STUDENT) {
+    if (req.user?.role === ROLES.ADMIN) {
+      if (fullName) {
+        student.fullName = fullName;
+        await User.findByIdAndUpdate(student.user, { fullName });
+      }
+      if (req.body.registerNumber || req.body.register_number) {
+        const newReg = (req.body.registerNumber || req.body.register_number).trim().toUpperCase();
+        student.registerNumber = newReg;
+        await User.findByIdAndUpdate(student.user, { username: newReg });
+      }
+      if (req.body.departmentId) {
+        student.department = req.body.departmentId;
+      }
+      if (req.body.batchId) {
+        student.batch = req.body.batchId;
+      }
+      if (req.body.isActive !== undefined) {
+        const activeBool = req.body.isActive === true || req.body.isActive === 1 || req.body.isActive === '1';
+        student.isActive = activeBool;
+        await User.findByIdAndUpdate(student.user, { isActive: activeBool });
+      }
+      if (req.body.newPassword && req.body.newPassword.trim()) {
+        const passwordHash = await bcrypt.hash(req.body.newPassword.trim(), 10);
+        await User.findByIdAndUpdate(student.user, { passwordHash });
+      }
+    } else if (fullName && req.user?.role !== ROLES.STUDENT) {
       student.fullName = fullName;
       await User.findByIdAndUpdate(student.user, { fullName });
     }
