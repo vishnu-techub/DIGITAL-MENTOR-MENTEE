@@ -13,6 +13,7 @@ export const App: React.FC = () => {
   const { user, isAuthenticated, isLoading, refreshUser } = useAuth();
   const [currentTab, setCurrentTab] = useState<string>('overview');
   const [justCompletedProfile, setJustCompletedProfile] = useState<boolean>(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
 
   if (isLoading) {
     return (
@@ -53,8 +54,6 @@ export const App: React.FC = () => {
   if (!isAuthenticated) {
     return <LoginPage />;
   }
-
-  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
 
   // Student First Login Check
   const isStudent = user?.role === 'STUDENT';
