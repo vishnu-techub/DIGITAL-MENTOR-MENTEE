@@ -379,6 +379,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
     );
   };
 
+  // Reset student details view when sidebar tab changes
+  useEffect(() => {
+    setSelectedStudentId(null);
+  }, [currentTab]);
+
   if (selectedStudentId) {
     return (
       <StudentDetailsView

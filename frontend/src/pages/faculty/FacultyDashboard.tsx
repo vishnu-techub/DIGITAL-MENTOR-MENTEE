@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
-import { StudentDetailsView } from '../common/StudentDetailsView';
+import { StudentDetailsView, StudentDetailsTab } from '../common/StudentDetailsView';
 import { EmptyState } from '../../components/common/EmptyState';
 import { Skeleton } from '../../components/common/Skeleton';
 import {
@@ -30,6 +30,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const [studentInitialTab, setStudentInitialTab] = useState<StudentDetailsTab>('overview');
 
   const loadData = async () => {
     setLoading(true);
@@ -54,11 +55,31 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
     loadData();
   }, [user]);
 
+  // Sync sidebar tab navigation with student view tabs or return to list
+  useEffect(() => {
+    if (selectedStudentId) {
+      if (currentTab === 'counselling') {
+        setStudentInitialTab('counselling');
+      } else if (currentTab === 'meetings') {
+        setStudentInitialTab('meeting');
+      } else if (currentTab === 'progress') {
+        setStudentInitialTab('progress');
+      } else if (currentTab === 'mentees' || currentTab === 'overview') {
+        setSelectedStudentId(null);
+        setStudentInitialTab('overview');
+      }
+    }
+  }, [currentTab]);
+
   if (selectedStudentId) {
     return (
       <StudentDetailsView
         studentId={selectedStudentId}
-        onBack={() => setSelectedStudentId(null)}
+        initialTab={studentInitialTab}
+        onBack={() => {
+          setSelectedStudentId(null);
+          setStudentInitialTab('overview');
+        }}
       />
     );
   }
@@ -218,7 +239,10 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                           <div style={{ display: 'flex', gap: '0.4rem' }}>
                             <button
                               className="btn btn-primary btn-sm"
-                              onClick={() => setSelectedStudentId(m.id)}
+                              onClick={() => {
+                                setStudentInitialTab('overview');
+                                setSelectedStudentId(m.id);
+                              }}
                             >
                               Open Record Book <ArrowRight size={13} />
                             </button>
@@ -470,7 +494,10 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                         gap: '0.4rem',
                         letterSpacing: '0.3px',
                       }}
-                      onClick={() => setSelectedStudentId(m.id || m._id)}
+                      onClick={() => {
+                        setStudentInitialTab('overview');
+                        setSelectedStudentId(m.id || m._id);
+                      }}
                     >
                       VIEW DETAILS <ArrowRight size={15} />
                     </button>
@@ -560,7 +587,10 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                         <td>
                           <button
                             className="btn btn-secondary btn-sm"
-                            onClick={() => setSelectedStudentId(meet.student_id)}
+                            onClick={() => {
+                              setStudentInitialTab('meeting');
+                              setSelectedStudentId(meet.student_id);
+                            }}
                           >
                             View Student
                           </button>
@@ -630,7 +660,10 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                         <td>
                           <button
                             className="btn btn-secondary btn-sm"
-                            onClick={() => setSelectedStudentId(m.id)}
+                            onClick={() => {
+                              setStudentInitialTab('counselling');
+                              setSelectedStudentId(m.id);
+                            }}
                           >
                             Open Counselling Desk
                           </button>
@@ -702,7 +735,10 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                         <td>
                           <button
                             className="btn btn-secondary btn-sm"
-                            onClick={() => setSelectedStudentId(m.id)}
+                            onClick={() => {
+                              setStudentInitialTab('progress');
+                              setSelectedStudentId(m.id);
+                            }}
                           >
                             Record / View Monthly Progress
                           </button>

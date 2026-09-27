@@ -35,6 +35,7 @@ import {
 interface StudentDetailsViewProps {
   studentId: string;
   onBack?: () => void;
+  initialTab?: StudentDetailsTab;
 }
 
 export type StudentDetailsTab =
@@ -52,13 +53,19 @@ export type StudentDetailsTab =
   | 'pdf'
   | 'timeline';
 
-export const StudentDetailsView: React.FC<StudentDetailsViewProps> = ({ studentId, onBack }) => {
+export const StudentDetailsView: React.FC<StudentDetailsViewProps> = ({ studentId, onBack, initialTab }) => {
   const { user } = useAuth();
   const [student, setStudent] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [pdfDownloading, setPdfDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<StudentDetailsTab>('overview');
+  const [activeTab, setActiveTab] = useState<StudentDetailsTab>(initialTab || 'overview');
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   // AI Counselling Assistant State
   const [aiPrompt, setAiPrompt] = useState('');
@@ -469,19 +476,26 @@ export const StudentDetailsView: React.FC<StudentDetailsViewProps> = ({ studentI
             <>
               <button
                 className="btn btn-primary btn-sm"
-                onClick={() => setShowMeetingModal(true)}
+                onClick={() => {
+                  setActiveTab('meeting');
+                  setShowMeetingModal(true);
+                }}
               >
                 <CalendarCheck2 size={16} /> Log Saturday Meeting
               </button>
               <button
                 className="btn btn-secondary btn-sm"
-                onClick={() => setShowCounsellingModal(true)}
+                onClick={() => {
+                  setActiveTab('counselling');
+                }}
               >
                 <BookOpen size={16} /> 5-Domain Counselling
               </button>
               <button
                 className="btn btn-secondary btn-sm"
-                onClick={() => setShowProgressModal(true)}
+                onClick={() => {
+                  setActiveTab('progress');
+                }}
               >
                 <Award size={16} /> Monthly Progress
               </button>

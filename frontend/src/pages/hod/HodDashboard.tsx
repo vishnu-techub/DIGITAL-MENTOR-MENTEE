@@ -76,6 +76,11 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
     }
   };
 
+  // Reset student view when switching sidebar tabs
+  useEffect(() => {
+    setSelectedStudentId(null);
+  }, [currentTab]);
+
   if (selectedStudentId) {
     return (
       <StudentDetailsView
