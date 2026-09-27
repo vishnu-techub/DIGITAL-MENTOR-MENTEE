@@ -62,19 +62,23 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
             alt="K.S.R. College of Engineering"
             className="ksrce-logo-img"
           />
-          <div className="ksrce-brand-text">
+          <div className="ksrce-brand-text desktop-only">
             <h1>K.S.R. COLLEGE OF ENGINEERING (Autonomous)</h1>
             <p>DIGITAL MENTOR–MENTEE MANAGEMENT SYSTEM • TIRUCHENGODE</p>
+          </div>
+          <div className="mobile-brand-text mobile-only">
+            <h1>KSRCE Mentoring</h1>
+            <p>Digital Portal</p>
           </div>
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
         {/* PWA Download / Install App Button or Installed Badge */}
         {!isInstalled ? (
           <button
             onClick={promptInstall}
-            className="btn-download-app"
+            className="btn-download-app desktop-only"
             style={{
               background: 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
               color: '#ffffff',
@@ -158,11 +162,12 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
           {/* Notifications Dropdown */}
           {showNotifications && (
             <div
+              className="notification-dropdown"
               style={{
                 position: 'absolute',
                 right: 0,
-                top: '42px',
-                width: '340px',
+                top: '46px',
+                width: 'min(340px, calc(100vw - 24px))',
                 backgroundColor: '#ffffff',
                 borderRadius: '12px',
                 boxShadow: '0 10px 25px rgba(0,0,0,0.15)',
@@ -196,6 +201,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
                       display: 'flex',
                       alignItems: 'center',
                       gap: '0.25rem',
+                      cursor: 'pointer',
                     }}
                   >
                     <CheckCheck size={14} /> Mark all read
@@ -238,8 +244,8 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
           )}
         </div>
 
-        {/* User Profile Info */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        {/* User Profile Info - Desktop Only */}
+        <div className="desktop-only" style={{ alignItems: 'center', gap: '0.75rem' }}>
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#ffffff' }}>
               {user?.fullName}

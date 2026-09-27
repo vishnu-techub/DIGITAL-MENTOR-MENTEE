@@ -140,13 +140,19 @@ input, select, textarea {
   box-shadow: var(--shadow-md);
   position: sticky;
   top: 0;
-  z-index: 40;
+  z-index: 1000;
+}
+
+@media (max-width: 768px) {
+  .ksrce-header {
+    padding: 0.65rem 1rem;
+  }
 }
 
 .ksrce-brand {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.75rem;
 }
 
 .ksrce-logo-badge {
@@ -178,6 +184,13 @@ input, select, textarea {
   flex-shrink: 0;
 }
 
+@media (max-width: 768px) {
+  .ksrce-logo-img {
+    width: 38px;
+    height: 38px;
+  }
+}
+
 .ksrce-brand-text h1 {
   font-size: 1.05rem;
   font-weight: 700;
@@ -191,6 +204,46 @@ input, select, textarea {
   color: var(--gold-400);
   font-weight: 500;
   letter-spacing: 0.4px;
+}
+
+.mobile-brand-text h1 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #ffffff;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.mobile-brand-text p {
+  font-size: 0.65rem;
+  color: var(--gold-400);
+  margin: 0;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Responsive Visibility Helpers */
+.desktop-only {
+  display: flex !important;
+}
+div.desktop-only.table-responsive {
+  display: block !important;
+}
+.mobile-only {
+  display: none !important;
+}
+
+@media (max-width: 768px) {
+  .desktop-only {
+    display: none !important;
+  }
+  .mobile-only {
+    display: flex !important;
+  }
+  div.mobile-only {
+    display: flex !important;
+  }
 }
 
 /* Sidebar */
@@ -1473,6 +1526,93 @@ html, body {
     transform: scale(1);
   }
 }
+
+/* Toast Animation */
+@keyframes slideInToast {
+  from {
+    opacity: 0;
+    transform: translateY(-16px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Minimum 44px Touch Targets on Mobile (< 768px) */
+@media (max-width: 768px) {
+  .btn,
+  .form-control,
+  select,
+  .nav-item,
+  .btn-hamburger,
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="date"],
+  input[type="tel"] {
+    min-height: 44px;
+    font-size: 16px; /* Prevents auto-zoom in iOS Safari */
+    box-sizing: border-box;
+  }
+
+  .nav-item {
+    padding: 0.75rem 1rem;
+    font-size: 0.95rem;
+  }
+
+  /* Single Column Mobile Forms */
+  .grid-cols-2,
+  .grid-cols-3,
+  .grid-cols-4,
+  .form-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Form inputs take full width on mobile */
+  .form-group input,
+  .form-group select,
+  .form-group textarea {
+    width: 100% !important;
+  }
+
+  /* School Selection Bottom Sheet on Mobile */
+  .school-mobile-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(3px);
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    animation: fadeInPwa 0.2s ease;
+  }
+
+  .school-mobile-bottom-sheet {
+    background: #ffffff;
+    border-radius: 20px 20px 0 0 !important;
+    width: 100% !important;
+    max-height: 85vh !important;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.2);
+    animation: slideUpPwa 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
+/* Zero unwanted horizontal scroll across 320px–1440px+ */
+* {
+  max-width: 100%;
+}
+.app-container, .main-content, .page-body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: clip;
+}
+
 
 
 

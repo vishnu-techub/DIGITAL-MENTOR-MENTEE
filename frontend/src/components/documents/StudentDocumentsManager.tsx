@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
+import { useToast } from '../../context/ToastContext';
 import { Modal } from '../common/Modal';
 import {
   FileText,
@@ -43,6 +44,7 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
   readOnly = false,
   canVerify = false,
 }) => {
+  const toast = useToast();
   const [documents, setDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -189,11 +191,12 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
       const res = await api.documents.delete(docId);
       if (res.success) {
         setDocuments((prev) => prev.filter((d) => d.id !== docId && d._id !== docId));
+        toast.success('Document deleted successfully.');
       } else {
-        alert(res.message || 'Failed to delete document.');
+        toast.error(res.message || 'Failed to delete document.');
       }
     } catch (err: any) {
-      alert('Error deleting document: ' + err.message);
+      toast.error('Error deleting document: ' + err.message);
     }
   };
 
@@ -202,7 +205,7 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
     if (!selectedDocForVerify) return;
 
     if (verifyAction === 'Rejected' && !rejectionReason.trim()) {
-      alert('Please provide a reason for rejecting this document.');
+      toast.warning('Please provide a reason for rejecting this document.');
       return;
     }
 
@@ -216,12 +219,13 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
       if (res.success) {
         setSelectedDocForVerify(null);
         setRejectionReason('');
+        toast.success('Document verification status updated.');
         fetchDocuments();
       } else {
-        alert(res.message || 'Verification update failed.');
+        toast.error(res.message || 'Verification update failed.');
       }
     } catch (err: any) {
-      alert('Error during verification: ' + err.message);
+      toast.error('Error during verification: ' + err.message);
     } finally {
       setVerifying(false);
     }

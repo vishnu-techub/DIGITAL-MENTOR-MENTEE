@@ -18,6 +18,8 @@ import {
   FileCheck,
   School,
   Download,
+  LogOut,
+  X,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -28,7 +30,7 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, isOpen = false, onClose }) => {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
 
   const handleSelect = (tab: string) => {
     onSelectTab(tab);
@@ -274,18 +276,74 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, isOpe
     <>
       {isOpen && <div className="sidebar-backdrop" onClick={onClose} aria-label="Close Sidebar" />}
       <aside className={`sidebar ${isOpen ? 'open' : ''}`}>
-        <div style={{ padding: '1.25rem 1rem 0.5rem', borderBottom: '1px solid #F1F5F9' }}>
-          <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.75px', color: '#64748B', fontWeight: 700 }}>
-            {user?.role} PORTAL
+        <div style={{ padding: '1.25rem 1rem 0.5rem', borderBottom: '1px solid #F1F5F9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.75px', color: '#64748B', fontWeight: 700 }}>
+              {user?.role} PORTAL
+            </div>
+            <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#0B2545', marginTop: '2px' }}>
+              {user?.departmentId ? `${user.dept_code || 'CSE'} Department` : 'Central Administration'}
+            </div>
           </div>
-          <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#0B2545', marginTop: '2px' }}>
-            {user?.departmentId ? `${user.dept_code || 'CSE'} Department` : 'Central Administration'}
-          </div>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="mobile-only"
+              aria-label="Close drawer"
+              style={{
+                background: '#F1F5F9',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '8px',
+                color: '#475569',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                minWidth: '40px',
+                minHeight: '40px',
+              }}
+            >
+              <X size={18} />
+            </button>
+          )}
         </div>
         <nav className="sidebar-nav">
           {renderNavItems()}
         </nav>
-        <div style={{ padding: '1rem', borderTop: '1px solid #F1F5F9', fontSize: '0.75rem', color: '#94A3B8' }}>
+        {/* Mobile Drawer User Details & Logout */}
+        <div className="mobile-only" style={{ padding: '1rem', borderTop: '1px solid #F1F5F9', backgroundColor: '#F8FAFC' }}>
+          <div style={{ marginBottom: '0.75rem' }}>
+            <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#0B2545' }}>
+              {user?.fullName}
+            </div>
+            <div style={{ fontSize: '0.75rem', color: '#64748B' }}>
+              {user?.role} • {user?.dept_code || 'KSRCE'}
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              if (onClose) onClose();
+              logout();
+            }}
+            className="btn btn-secondary btn-sm"
+            style={{
+              width: '100%',
+              minHeight: '44px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.5rem',
+              fontWeight: 600,
+              backgroundColor: '#FEE2E2',
+              color: '#DC2626',
+              border: '1px solid #FECACA',
+            }}
+          >
+            <LogOut size={16} /> Logout
+          </button>
+        </div>
+        <div className="desktop-only" style={{ padding: '1rem', borderTop: '1px solid #F1F5F9', fontSize: '0.75rem', color: '#94A3B8' }}>
           KSRCE Mentoring v1.0<br />Autonomous Institutional Build
         </div>
       </aside>

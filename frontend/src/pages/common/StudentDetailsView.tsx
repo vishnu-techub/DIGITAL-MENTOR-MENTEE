@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 import { Modal } from '../../components/common/Modal';
 import { EmptyState } from '../../components/common/EmptyState';
 import { Skeleton } from '../../components/common/Skeleton';
@@ -55,6 +56,7 @@ export type StudentDetailsTab =
 
 export const StudentDetailsView: React.FC<StudentDetailsViewProps> = ({ studentId, onBack, initialTab }) => {
   const { user } = useAuth();
+  const toast = useToast();
   const [student, setStudent] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [pdfDownloading, setPdfDownloading] = useState(false);
@@ -188,7 +190,7 @@ export const StudentDetailsView: React.FC<StudentDetailsViewProps> = ({ studentI
         `KSRCE_Mentee_${student.register_number}_Dossier.pdf`
       );
     } catch (err: any) {
-      alert('Error downloading PDF: ' + err.message);
+      toast.error('Error downloading PDF: ' + err.message);
     } finally {
       setPdfDownloading(false);
     }
@@ -204,8 +206,9 @@ export const StudentDetailsView: React.FC<StudentDetailsViewProps> = ({ studentI
       });
       setShowMeetingModal(false);
       fetchStudentData();
+      toast.success('Saturday meeting logged successfully.');
     } catch (err: any) {
-      alert('Failed to log meeting: ' + err.message);
+      toast.error('Failed to log meeting: ' + err.message);
     }
   };
 
@@ -219,8 +222,9 @@ export const StudentDetailsView: React.FC<StudentDetailsViewProps> = ({ studentI
       });
       setShowCounsellingModal(false);
       fetchStudentData();
+      toast.success('Counselling session logged successfully.');
     } catch (err: any) {
-      alert('Failed to log counselling: ' + err.message);
+      toast.error('Failed to log counselling: ' + err.message);
     }
   };
 
@@ -291,14 +295,14 @@ export const StudentDetailsView: React.FC<StudentDetailsViewProps> = ({ studentI
     try {
       const res = await api.students.delete(student.id);
       if (res.success) {
-        alert(res.message || 'Student deleted successfully.');
+        toast.success(res.message || 'Student deleted successfully.');
         setShowDeleteStudentModal(false);
         if (onBack) onBack();
       } else {
-        alert(res.message || 'Failed to delete student.');
+        toast.error(res.message || 'Failed to delete student.');
       }
     } catch (err: any) {
-      alert(err.message || 'Error deleting student.');
+      toast.error(err.message || 'Error deleting student.');
     } finally {
       setDeletingStudent(false);
     }
@@ -308,7 +312,7 @@ export const StudentDetailsView: React.FC<StudentDetailsViewProps> = ({ studentI
   const handleGenerateAiSuggestion = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!aiPrompt.trim()) {
-      alert("Please describe the student's improvement need (e.g. 'weak in academic' or 'need skill improvement').");
+      toast.warning("Please describe the student's improvement need (e.g. 'weak in academic' or 'need skill improvement').");
       return;
     }
     setAiLoading(true);
@@ -325,10 +329,10 @@ export const StudentDetailsView: React.FC<StudentDetailsViewProps> = ({ studentI
         });
         setAiIsEditing(true);
       } else {
-        alert(res.message || 'Failed to generate AI counselling suggestion.');
+        toast.error(res.message || 'Failed to generate AI counselling suggestion.');
       }
     } catch (err: any) {
-      alert('Error contacting AI service: ' + err.message);
+      toast.error('Error contacting AI service: ' + err.message);
     } finally {
       setAiLoading(false);
     }
@@ -337,7 +341,7 @@ export const StudentDetailsView: React.FC<StudentDetailsViewProps> = ({ studentI
   const handleAcceptAndSaveAi = async () => {
     if (!aiResult) return;
     if (!aiResult.challengeObserved.trim() || !aiResult.correctiveAction.trim()) {
-      alert('Challenge observed and corrective action are required.');
+      toast.warning('Challenge observed and corrective action are required.');
       return;
     }
     setAiSaving(true);
@@ -358,11 +362,12 @@ export const StudentDetailsView: React.FC<StudentDetailsViewProps> = ({ studentI
         setAiResult(null);
         setAiPrompt('');
         fetchStudentData();
+        toast.success('AI counselling suggestion officially saved to student dossier!');
       } else {
-        alert(res.message || 'Failed to save official counselling record.');
+        toast.error(res.message || 'Failed to save official counselling record.');
       }
     } catch (err: any) {
-      alert('Error saving record: ' + err.message);
+      toast.error('Error saving record: ' + err.message);
     } finally {
       setAiSaving(false);
     }
@@ -378,8 +383,9 @@ export const StudentDetailsView: React.FC<StudentDetailsViewProps> = ({ studentI
       });
       setShowProgressModal(false);
       fetchStudentData();
+      toast.success('Monthly progress record saved.');
     } catch (err: any) {
-      alert('Failed to log monthly progress: ' + err.message);
+      toast.error('Failed to log monthly progress: ' + err.message);
     }
   };
 
@@ -398,8 +404,9 @@ export const StudentDetailsView: React.FC<StudentDetailsViewProps> = ({ studentI
       });
       setShowAcademicModal(false);
       fetchStudentData();
+      toast.success('Academic ledger updated successfully.');
     } catch (err: any) {
-      alert('Failed to update academic records: ' + err.message);
+      toast.error('Failed to update academic records: ' + err.message);
     }
   };
 

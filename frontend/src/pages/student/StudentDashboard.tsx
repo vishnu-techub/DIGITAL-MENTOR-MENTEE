@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 import { StudentDocumentsManager } from '../../components/documents/StudentDocumentsManager';
 import { EmptyState } from '../../components/common/EmptyState';
 import { Skeleton } from '../../components/common/Skeleton';
@@ -29,6 +30,7 @@ interface StudentDashboardProps {
 
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, onSelectTab, justCompleted }) => {
   const { user } = useAuth();
+  const toast = useToast();
   const [profile, setProfile] = useState<any>(null);
   const [schedule, setSchedule] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -114,7 +116,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
         `KSRCE_RecordBook_${profile.register_number}.pdf`
       );
     } catch (err: any) {
-      alert('Error downloading PDF: ' + err.message);
+      toast.error('Error downloading PDF: ' + err.message);
     } finally {
       setPdfDownloading(false);
     }
@@ -246,10 +248,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
         setSaveSuccessMsg('Your profile changes have been saved successfully.');
         loadData();
       } else {
-        alert(res.message || 'Failed to update profile.');
+        toast.error(res.message || 'Failed to update profile.');
       }
     } catch (err: any) {
-      alert(err.message || 'Error updating profile.');
+      toast.error(err.message || 'Error updating profile.');
     } finally {
       setSavingProfile(false);
     }

@@ -195,7 +195,8 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
               </div>
             </div>
 
-            <div className="table-responsive">
+            {/* Desktop Table View */}
+            <div className="table-responsive desktop-only">
               <table className="table">
                 <thead>
                   <tr>
@@ -261,6 +262,66 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                 </tbody>
               </table>
             </div>
+
+            {/* Mobile Cards View */}
+            <div className="mobile-only" style={{ flexDirection: 'column', gap: '0.85rem', padding: '0.85rem' }}>
+              {filteredMentees.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '2rem 1rem', color: '#64748B' }}>
+                  No students have been assigned yet.
+                </div>
+              ) : (
+                filteredMentees.map((m) => (
+                  <div
+                    key={m.id}
+                    className="card"
+                    style={{
+                      padding: '1rem',
+                      borderRadius: '12px',
+                      border: '1px solid #E2E8F0',
+                      boxShadow: '0 2px 6px rgba(0,0,0,0.04)',
+                      background: '#ffffff',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                      <div>
+                        <div style={{ fontSize: '0.82rem', fontWeight: 800, color: '#0B2545', letterSpacing: '0.5px' }}>
+                          {m.register_number}
+                        </div>
+                        <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#1E293B', marginTop: '1px' }}>
+                          {m.full_name}
+                        </div>
+                        <div style={{ fontSize: '0.78rem', color: '#64748B' }}>
+                          {m.batch_name} • {m.residential_type?.replace('_', ' ') || 'DAY SCHOLAR'}
+                        </div>
+                      </div>
+                      <span className={`badge ${m.total_arrears > 0 ? 'badge-danger' : 'badge-success'}`}>
+                        {m.total_arrears || 0} Arrears
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.75rem' }}>
+                      <button
+                        className="btn btn-primary btn-sm"
+                        onClick={() => {
+                          setStudentInitialTab('overview');
+                          setSelectedStudentId(m.id);
+                        }}
+                        style={{ minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontWeight: 600 }}
+                      >
+                        Open Record Book <ArrowRight size={14} />
+                      </button>
+                      <button
+                        className="btn btn-pdf btn-sm"
+                        onClick={() => api.pdf.downloadStudentPdf(m.id, `KSRCE_Mentee_${m.register_number}_Dossier.pdf`)}
+                        style={{ minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontWeight: 600 }}
+                      >
+                        <FileText size={14} /> PDF
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -268,11 +329,11 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
       {/* Mentees Full Directory Tab */}
       {currentTab === 'mentees' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
               My Assigned Mentees Directory
             </h2>
-            <div style={{ width: '280px', position: 'relative' }}>
+            <div style={{ width: 'min(280px, 100%)', position: 'relative' }}>
               <Search size={16} style={{ position: 'absolute', left: '10px', top: '10px', color: '#94A3B8' }} />
               <input
                 type="text"
@@ -292,7 +353,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
               description={searchQuery ? "No assigned mentees match your search filter." : "When the administrator or HOD allocates mentees to your profile, their student cards and academic dossiers will appear here."}
             />
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '1.5rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 1fr))', gap: '1.25rem' }}>
               {filteredMentees.map((m) => {
               const studentInitials = m.full_name
                 ? m.full_name.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase()

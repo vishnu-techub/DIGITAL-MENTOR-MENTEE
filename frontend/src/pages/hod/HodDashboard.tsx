@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 import { StudentDetailsView } from '../common/StudentDetailsView';
 import { Modal } from '../../components/common/Modal';
 import { EmptyState } from '../../components/common/EmptyState';
@@ -25,6 +26,7 @@ interface HodDashboardProps {
 
 export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelectTab }) => {
   const { user } = useAuth();
+  const toast = useToast();
   const [students, setStudents] = useState<any[]>([]);
   const [faculty, setFaculty] = useState<any[]>([]);
   const [meetings, setMeetings] = useState<any[]>([]);
@@ -70,9 +72,9 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
       await api.mentorship.reassign(reassignForm);
       setShowReassignModal(false);
       loadData();
-      alert('Mentor reassigned successfully within department.');
+      toast.success('Mentor reassigned successfully within department.');
     } catch (err: any) {
-      alert('Reassignment failed: ' + err.message);
+      toast.error('Reassignment failed: ' + err.message);
     }
   };
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../../api/client';
+import { useToast } from '../../context/ToastContext';
 import { Modal } from '../../components/common/Modal';
 import { EmptyState } from '../../components/common/EmptyState';
 import { Skeleton } from '../../components/common/Skeleton';
@@ -44,6 +45,7 @@ interface AdminDashboardProps {
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSelectTab }) => {
+  const toast = useToast();
   const [stats, setStats] = useState<any>(null);
   const [students, setStudents] = useState<any[]>([]);
   const [faculty, setFaculty] = useState<any[]>([]);
@@ -232,10 +234,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
           isActive: 1,
         });
       } else {
-        alert('Student account created successfully.');
+        toast.success('Student account created successfully.');
       }
     } catch (err: any) {
-      alert('Error creating student account: ' + err.message);
+      toast.error('Error creating student account: ' + err.message);
     }
   };
 
@@ -246,13 +248,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
     try {
       const res = await api.students.resetPassword(resetPasswordModalData.studentId, tempNewPassword);
       if (res.success) {
-        alert(`Password for student ${resetPasswordModalData.registerNumber} (${resetPasswordModalData.studentName}) reset to: ${tempNewPassword}`);
+        toast.success(`Password for student ${resetPasswordModalData.registerNumber} (${resetPasswordModalData.studentName}) reset to: ${tempNewPassword}`);
         setShowResetPasswordModal(false);
       } else {
-        alert(res.message || 'Failed to reset password.');
+        toast.error(res.message || 'Failed to reset password.');
       }
     } catch (err: any) {
-      alert('Error resetting password: ' + err.message);
+      toast.error('Error resetting password: ' + err.message);
     }
   };
 
@@ -263,10 +265,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       if (res.success) {
         loadData();
       } else {
-        alert(res.message || 'Failed to toggle status.');
+        toast.error(res.message || 'Failed to toggle status.');
       }
     } catch (err: any) {
-      alert('Failed to toggle status: ' + err.message);
+      toast.error('Failed to toggle status: ' + err.message);
     }
   };
 
@@ -277,9 +279,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       await api.admin.createFaculty(newFacultyForm);
       setShowAddFacultyModal(false);
       loadData();
-      alert('Faculty registered successfully.');
+      toast.success('Faculty registered successfully.');
     } catch (err: any) {
-      alert('Error creating faculty: ' + err.message);
+      toast.error('Error creating faculty: ' + err.message);
     }
   };
 
@@ -290,9 +292,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       const res = await api.mentorship.reassign(reassignForm);
       setShowReassignModal(false);
       loadData();
-      alert(res.message || 'Mentor reassigned successfully. All historical records remain intact.');
+      toast.success(res.message || 'Mentor reassigned successfully. All historical records remain intact.');
     } catch (err: any) {
-      alert('Reassignment failed: ' + err.message);
+      toast.error('Reassignment failed: ' + err.message);
     }
   };
 
@@ -302,9 +304,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
     try {
       await api.admin.updateSettings(settingsForm);
       loadData();
-      alert('Institutional Saturday meeting schedule updated.');
+      toast.success('Institutional Saturday meeting schedule updated.');
     } catch (err: any) {
-      alert('Failed to update settings: ' + err.message);
+      toast.error('Failed to update settings: ' + err.message);
     }
   };
 
@@ -316,9 +318,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       setShowAddDeptModal(false);
       setNewDeptForm({ code: '', name: '' });
       loadData();
-      alert('Academic department created successfully.');
+      toast.success('Academic department created successfully.');
     } catch (err: any) {
-      alert('Failed to create department: ' + err.message);
+      toast.error('Failed to create department: ' + err.message);
     }
   };
 
@@ -328,7 +330,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       await api.admin.toggleFacultyStatus(facultyId);
       loadData();
     } catch (err: any) {
-      alert('Failed to toggle status: ' + err.message);
+      toast.error('Failed to toggle status: ' + err.message);
     }
   };
 
@@ -339,14 +341,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
     try {
       const res = await api.students.delete(deleteStudentTarget.id);
       if (res.success) {
-        alert(res.message || 'Student and all associated records deleted permanently.');
+        toast.success(res.message || 'Student and all associated records deleted permanently.');
         setDeleteStudentTarget(null);
         loadData();
       } else {
-        alert(res.message || 'Failed to delete student.');
+        toast.error(res.message || 'Failed to delete student.');
       }
     } catch (err: any) {
-      alert(err.message || 'Error deleting student.');
+      toast.error(err.message || 'Error deleting student.');
     } finally {
       setDeletingStudent(false);
     }
@@ -359,14 +361,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
     try {
       const res = await api.admin.deleteFaculty(deleteFacultyTarget.id);
       if (res.success) {
-        alert(res.message || 'Faculty member deleted successfully. Mentee assignments terminated.');
+        toast.success(res.message || 'Faculty member deleted successfully. Mentee assignments terminated.');
         setDeleteFacultyTarget(null);
         loadData();
       } else {
-        alert(res.message || 'Failed to delete faculty member.');
+        toast.error(res.message || 'Failed to delete faculty member.');
       }
     } catch (err: any) {
-      alert(err.message || 'Error deleting faculty member.');
+      toast.error(err.message || 'Error deleting faculty member.');
     } finally {
       setDeletingFaculty(false);
     }
@@ -621,8 +623,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
           </div>
 
           {/* Students Table */}
-          <div className="card">
-            <div className="table-responsive">
+          <div className="card" style={{ padding: 0 }}>
+            <div className="table-responsive desktop-only">
               <table className="table">
                 <thead>
                   <tr>
@@ -746,6 +748,84 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 </tbody>
               </table>
             </div>
+
+            {/* Mobile Cards View */}
+            <div className="mobile-only" style={{ flexDirection: 'column', gap: '0.85rem', padding: '0.85rem' }}>
+              {filteredStudents.length === 0 ? (
+                <div style={{ padding: '1.5rem', textAlign: 'center', color: '#64748B' }}>
+                  No students found.
+                </div>
+              ) : (
+                filteredStudents.map((s) => (
+                  <div
+                    key={s.id}
+                    className="card"
+                    style={{
+                      padding: '1rem',
+                      borderRadius: '12px',
+                      border: '1px solid #E2E8F0',
+                      boxShadow: '0 2px 6px rgba(0,0,0,0.04)',
+                      background: '#ffffff',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                      <div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#0B2545', letterSpacing: '0.5px' }}>
+                          {s.register_number}
+                        </div>
+                        <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#1E293B', marginTop: '1px' }}>
+                          {s.full_name}
+                        </div>
+                        <div style={{ fontSize: '0.78rem', color: '#64748B' }}>
+                          {s.department_code} • {s.batch_name}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                        <span className={`badge ${s.is_active === 1 ? 'badge-success' : 'badge-danger'}`}>
+                          {s.is_active === 1 ? 'Active' : 'Inactive'}
+                        </span>
+                        <span className={`badge ${s.total_arrears > 0 ? 'badge-danger' : 'badge-primary'}`} style={{ fontSize: '0.7rem' }}>
+                          {s.total_arrears || 0} Arrears
+                        </span>
+                      </div>
+                    </div>
+
+                    <div style={{ background: '#F8FAFC', padding: '0.65rem 0.85rem', borderRadius: '8px', fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.35rem', margin: '0.65rem 0' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#64748B' }}>Assigned Mentor:</span>
+                        <strong>{s.current_mentor_name || 'Unassigned'}</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#64748B' }}>Profile Setup:</span>
+                        <span>{s.profile_completed === 1 ? '✓ Completed' : '⚠ Pending'}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#64748B' }}>Saturday Sessions:</span>
+                        <strong>{s.completed_meetings_count || 0} Completed</strong>
+                      </div>
+                    </div>
+
+                    {/* Mobile Action Buttons */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.75rem' }}>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => setSelectedStudentId(s.id)}
+                        style={{ minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontWeight: 600 }}
+                      >
+                        <Eye size={15} /> View Dossier
+                      </button>
+                      <button
+                        className="btn btn-pdf btn-sm"
+                        onClick={() => api.pdf.downloadStudentPdf(s.id, `KSRCE_Mentee_${s.register_number}_Dossier.pdf`)}
+                        style={{ minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontWeight: 600 }}
+                      >
+                        <FileText size={15} /> Download PDF
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -763,7 +843,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
           </div>
 
           <div className="card" style={{ padding: 0 }}>
-            <div className="table-responsive">
+            {/* Desktop Table View */}
+            <div className="table-responsive desktop-only">
               <table className="table">
                 <thead>
                   <tr>
@@ -860,6 +941,87 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 )}
                 </tbody>
               </table>
+            </div>
+
+            {/* Mobile Cards View */}
+            <div className="mobile-only" style={{ flexDirection: 'column', gap: '0.85rem', padding: '0.85rem' }}>
+              {faculty.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '2rem', color: '#64748B' }}>
+                  No faculty members available.
+                </div>
+              ) : (
+                faculty.map((f) => (
+                  <div
+                    key={f.id}
+                    className="card"
+                    style={{
+                      padding: '1rem',
+                      borderRadius: '12px',
+                      border: '1px solid #E2E8F0',
+                      boxShadow: '0 2px 6px rgba(0,0,0,0.04)',
+                      background: '#ffffff',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                      <div>
+                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', letterSpacing: '0.5px' }}>
+                          EMP: {f.employee_id}
+                        </div>
+                        <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0B2545', marginTop: '1px' }}>
+                          {f.full_name}
+                        </div>
+                        <div style={{ fontSize: '0.76rem', color: '#64748B' }}>{f.email}</div>
+                      </div>
+                      <span className={`badge ${f.is_active ? 'badge-success' : 'badge-danger'}`}>
+                        {f.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+
+                    <div style={{ background: '#F8FAFC', padding: '0.75rem', borderRadius: '8px', fontSize: '0.82rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem', margin: '0.65rem 0' }}>
+                      <div>
+                        <span style={{ color: '#64748B', fontSize: '0.75rem', display: 'block' }}>Department</span>
+                        <strong>{f.department_code || 'IT'}</strong>
+                      </div>
+                      <div>
+                        <span style={{ color: '#64748B', fontSize: '0.75rem', display: 'block' }}>Designation</span>
+                        <strong>{f.designation || 'Faculty'}</strong>
+                      </div>
+                      <div>
+                        <span style={{ color: '#64748B', fontSize: '0.75rem', display: 'block' }}>Cabin</span>
+                        <strong>{f.cabin_location || 'IT Lab'}</strong>
+                      </div>
+                      <div>
+                        <span style={{ color: '#64748B', fontSize: '0.75rem', display: 'block' }}>Contact</span>
+                        <strong>{f.phone_number || '-'}</strong>
+                      </div>
+                      <div style={{ gridColumn: '1 / -1', borderTop: '1px dashed #E2E8F0', paddingTop: '0.4rem', marginTop: '0.2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ color: '#64748B', fontSize: '0.78rem' }}>Assigned Mentees</span>
+                        <strong style={{ color: '#1D4ED8', fontSize: '0.95rem' }}>{f.mentee_count || 0} Students</strong>
+                      </div>
+                    </div>
+
+                    {/* Mobile Action Buttons */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.75rem' }}>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => setViewMenteesTarget(f)}
+                        style={{ minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontWeight: 600 }}
+                      >
+                        <Eye size={15} /> View Mentees
+                      </button>
+                      {f.is_active === 1 && (
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => setAssignMenteesTarget(f)}
+                          style={{ minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontWeight: 600 }}
+                        >
+                          <UserPlus size={15} /> Assign Mentees
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
 
@@ -1507,10 +1669,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 try {
                   setNotifTriggerLoading(true);
                   await api.notifications.triggerReminders('SATURDAY_TODAY');
-                  setNotifTriggerSuccess('Saturday mentoring reminders successfully dispatched to all mentors and mentees.');
+                  toast.success('Saturday mentoring reminders successfully dispatched to all mentors and mentees.');
                   setTimeout(() => setNotifTriggerSuccess(null), 4000);
                 } catch (e: any) {
-                  alert(e.message || 'Failed to dispatch reminders');
+                  toast.error(e.message || 'Failed to dispatch reminders');
                 } finally {
                   setNotifTriggerLoading(false);
                 }
@@ -1650,10 +1812,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 try {
                   setNotifTriggerLoading(true);
                   await api.notifications.triggerReminders('SATURDAY_TODAY');
-                  setNotifTriggerSuccess('Automated Saturday mentoring reminders sent successfully.');
+                  toast.success('Automated Saturday mentoring reminders sent successfully.');
                   setTimeout(() => setNotifTriggerSuccess(null), 4000);
                 } catch (e: any) {
-                  alert(e.message || 'Failed to dispatch reminders');
+                  toast.error(e.message || 'Failed to dispatch reminders');
                 } finally {
                   setNotifTriggerLoading(false);
                 }
@@ -1752,8 +1914,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                       selectedPdfStudentId,
                       `KSRCE_Mentee_${st?.register_number || selectedPdfStudentId}_Dossier.pdf`
                     );
+                    toast.success('Student Dossier PDF downloaded successfully.');
                   } catch (err: any) {
-                    alert('PDF generation error: ' + err.message);
+                    toast.error('PDF generation error: ' + err.message);
                   } finally {
                     setPdfDownloading(false);
                   }
@@ -2419,6 +2582,7 @@ interface AssignMenteesModalProps {
 const AssignMenteesModal: React.FC<AssignMenteesModalProps> = ({
   faculty, departments, batches, onClose, onAssigned,
 }) => {
+  const toast = useToast();
   const [search, setSearch] = useState('');
   const [deptFilter, setDeptFilter] = useState('');
   const [batchFilter, setBatchFilter] = useState('');
@@ -2483,6 +2647,7 @@ const AssignMenteesModal: React.FC<AssignMenteesModalProps> = ({
         let msg = `✅ ${assigned.length} student(s) assigned to ${faculty.full_name}.`;
         if (alreadyAssigned.length > 0) msg += ` (${alreadyAssigned.length} skipped — already have a mentor)`;
         setResultMsg(msg);
+        toast.success(msg);
         setSelected(new Set());
         setShowConfirm(false);
         onAssigned(newMenteeCount);
@@ -2491,11 +2656,14 @@ const AssignMenteesModal: React.FC<AssignMenteesModalProps> = ({
         if (search.trim()) params.search = search.trim();
         fetchStudents(params);
       } else {
-        setResultMsg('❌ ' + (res.message || 'Assignment failed.'));
+        const errMsg = res.message || 'Assignment failed.';
+        setResultMsg('❌ ' + errMsg);
+        toast.error(errMsg);
         setShowConfirm(false);
       }
     } catch (err: any) {
       setResultMsg('❌ ' + err.message);
+      toast.error(err.message || 'Error assigning mentees.');
       setShowConfirm(false);
     } finally { setAssigning(false); }
   };
@@ -2676,6 +2844,7 @@ interface ViewMenteesModalProps {
 }
 
 const ViewMenteesModal: React.FC<ViewMenteesModalProps> = ({ faculty, onClose, onCountChanged, onViewStudent }) => {
+  const toast = useToast();
   const [mentees, setMentees] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -2712,11 +2881,12 @@ const ViewMenteesModal: React.FC<ViewMenteesModalProps> = ({ faculty, onClose, o
         onCountChanged(newCount);
         setRemoveTarget(null);
         fetchMentees(search);
+        toast.success('Assignment removed successfully.');
       } else {
-        alert(res.message || 'Failed to remove assignment.');
+        toast.error(res.message || 'Failed to remove assignment.');
       }
     } catch (err: any) {
-      alert('Error: ' + err.message);
+      toast.error('Error: ' + err.message);
     } finally { setRemoving(false); }
   };
 
