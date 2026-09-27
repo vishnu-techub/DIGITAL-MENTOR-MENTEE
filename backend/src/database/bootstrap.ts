@@ -134,15 +134,12 @@ export async function ensureSystemBootstrap(): Promise<void> {
     console.log(`[Bootstrap] Feeder schools already present (${schoolCount} schools in database).`);
   }
 
-  // 7. Ensure clean institutional state: ONLY the Admin account exists, no other data
-  await Promise.all([
-    User.deleteMany({ role: { $ne: 'ADMIN' } }),
-    Faculty.deleteMany({}),
-    Student.deleteMany({}),
-    MentorAssignment.deleteMany({}),
-  ]);
+  // 7. Ensure all previous student, faculty, and academic records are restored
+  console.log('[Bootstrap] Verifying institutional historical records restoration...');
+  const { restoreAllDetails } = await import('./restore-all-details.js');
+  await restoreAllDetails();
 
-  console.log('✓ Clean institutional bootstrap completed. Only Admin account exists in database.');
+  console.log('✓ Institutional bootstrap completed successfully.');
 }
 
 if (process.argv[1]?.endsWith('bootstrap.ts')) {
