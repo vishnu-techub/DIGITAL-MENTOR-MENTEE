@@ -351,7 +351,6 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
     return [
       `Semester 0${num}`,
       s && s.cgpa > 0 ? s.cgpa.toFixed(2) : '-',
-      s && s.sgpa > 0 ? s.sgpa.toFixed(2) : '-',
       arrearsCountDisplay,
       subjectsDisplay,
       statusDisplay,
@@ -365,21 +364,20 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
     head: [
       [{
         content: `3. SEMESTER ACADEMIC PERFORMANCE (SEMESTERS 1 TO 8) — Active: ${arrearStats.activeArrearsCount} | Total History: ${arrearStats.historicalArrearsCount} | Cleared: ${arrearStats.clearedCount}`,
-        colSpan: 6,
+        colSpan: 5,
         styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' },
       }],
-      ['Semester', 'CGPA', 'SGPA', 'Semester Arrears', 'Arrear Subjects', 'Clearance Remarks & Status'],
+      ['Semester', 'CGPA', 'Semester Arrears', 'Arrear Subjects', 'Clearance Remarks & Status'],
     ],
     body: semesterRows,
     headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold', halign: 'center' },
     styles: { fontSize: 8, cellPadding: 1.8, halign: 'center' },
     columnStyles: {
-      0: { fontStyle: 'bold', halign: 'left', cellWidth: 26 },
-      1: { cellWidth: 18 },
-      2: { cellWidth: 18 },
-      3: { cellWidth: 28 },
-      4: { halign: 'left', cellWidth: 32 },
-      5: { halign: 'left' },
+      0: { fontStyle: 'bold', halign: 'left', cellWidth: 28 },
+      1: { cellWidth: 20 },
+      2: { cellWidth: 30 },
+      3: { halign: 'left', cellWidth: 38 },
+      4: { halign: 'left' },
     },
   });
 
