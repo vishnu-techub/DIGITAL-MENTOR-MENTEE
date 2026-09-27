@@ -11,9 +11,11 @@ export interface ApiResponse<T = any> {
   meta?: { timestamp: string };
 }
 
-const API_BASE = (import.meta.env.VITE_API_URL
-  ? import.meta.env.VITE_API_URL.replace(/\/$/, '')
-  : '') + '/api';
+const rawApiUrl = (import.meta.env.VITE_API_URL || '').trim();
+const normalizedApiUrl = rawApiUrl
+  ? (rawApiUrl.startsWith('http') ? rawApiUrl : `https://${rawApiUrl}`).replace(/\/$/, '')
+  : '';
+const API_BASE = (normalizedApiUrl || '') + '/api';
 
 export function getAuthToken(): string | null {
   return localStorage.getItem('ksrce_token');
