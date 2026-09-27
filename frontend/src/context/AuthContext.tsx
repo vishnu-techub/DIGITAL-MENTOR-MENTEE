@@ -29,6 +29,17 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+function normalizeUser(u: User | null): User | null {
+  if (!u) return null;
+  if (u.role === 'ADMIN' && (!u.fullName || u.fullName.includes('Balasubramanian') || u.fullName === 'System Administrator')) {
+    return { ...u, fullName: 'System admin' };
+  }
+  if (u.fullName && u.fullName.includes('Balasubramanian')) {
+    return { ...u, fullName: 'System admin' };
+  }
+  return u;
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [token, setTokenState] = useState<string | null>(getAuthToken());
@@ -38,7 +49,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const res = await api.auth.me();
       if (res.success && res.data) {
-        setUser(res.data);
+        setUser(normalizeUser(res.data));
       } else {
         logout();
       }
@@ -64,8 +75,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (res.success && res.data) {
         setAuthToken(res.data.token);
         setTokenState(res.data.token);
-        setUser(res.data.user);
-        return res.data.user;
+        const normalized = normalizeUser(res.data.user)!;
+        setUser(normalized);
+        return normalized;
       }
       throw new Error(res.message || 'Login failed.');
     } finally {

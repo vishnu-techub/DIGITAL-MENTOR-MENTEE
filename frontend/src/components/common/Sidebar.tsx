@@ -315,7 +315,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, isOpe
         <div className="mobile-only" style={{ padding: '1rem', borderTop: '1px solid #F1F5F9', backgroundColor: '#F8FAFC' }}>
           <div style={{ marginBottom: '0.75rem' }}>
             <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#0B2545' }}>
-              {user?.fullName}
+              {user?.fullName?.includes('Balasubramanian') ? 'System admin' : (user?.fullName || 'System admin')}
             </div>
             <div style={{ fontSize: '0.75rem', color: '#64748B' }}>
               {user?.role} • {user?.dept_code || 'KSRCE'}

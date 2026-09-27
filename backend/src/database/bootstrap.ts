@@ -106,7 +106,7 @@ export async function ensureSystemBootstrap(): Promise<void> {
       email: adminEmail || 'admin@ksrce.ac.in',
       passwordHash,
       role: 'ADMIN',
-      fullName: 'System Administrator',
+      fullName: 'System admin',
       department: adminDept?._id,
       isActive: true,
     });
@@ -116,7 +116,7 @@ export async function ensureSystemBootstrap(): Promise<void> {
     adminUser.email = adminEmail || adminUser.email || 'admin@ksrce.ac.in';
     adminUser.passwordHash = passwordHash;
     adminUser.role = 'ADMIN';
-    adminUser.fullName = adminUser.fullName || 'System Administrator';
+    adminUser.fullName = 'System admin';
     adminUser.isActive = true;
     if (adminDept) {
       adminUser.department = adminDept._id;

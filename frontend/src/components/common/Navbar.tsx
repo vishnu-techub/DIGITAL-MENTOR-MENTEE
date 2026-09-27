@@ -248,7 +248,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
         <div className="desktop-only" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#ffffff' }}>
-              {user?.fullName}
+              {user?.fullName?.includes('Balasubramanian') ? 'System admin' : (user?.fullName || 'System admin')}
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.4rem', marginTop: '2px' }}>
               <span className={`badge ${getRoleBadgeClass(user?.role)}`} style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem' }}>
