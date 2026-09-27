@@ -17,6 +17,10 @@ const normalizedApiUrl = rawApiUrl
   : '';
 const API_BASE = (normalizedApiUrl || '') + '/api';
 
+import { ApiError, formatApiError } from './errorHandler';
+export { ApiError, formatApiError } from './errorHandler';
+export type { FormattedError, ApiErrorType } from './errorHandler';
+
 export function getAuthToken(): string | null {
   return localStorage.getItem('ksrce_token');
 }
@@ -45,15 +49,31 @@ async function request<T = any>(
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      headers,
+    });
+  } catch (netErr: any) {
+    // Only log technical network details in development console
+    if (import.meta.env.DEV) {
+      console.warn('[KSRCE API Client] Network connection error:', netErr);
+    }
+    throw new ApiError(0, netErr?.message || 'Failed to connect to backend server', endpoint);
+  }
 
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(data.message || 'Institutional API request failed.');
+    if (response.status === 401) {
+      removeAuthToken();
+      // Notify application of session expiration
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('ksrce:session-expired'));
+      }
+    }
+    throw new ApiError(response.status, data?.message, endpoint, data?.errors);
   }
 
   return data as ApiResponse<T>;

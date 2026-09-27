@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
 import path from 'path';
+import { connectDB, isDBConnected } from './config/database.js';
 import { ensureSystemBootstrap } from './database/bootstrap.js';
 
 import authRoutes from './modules/auth/auth.routes.js';
@@ -44,14 +45,32 @@ app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 const uploadsPath = path.resolve(process.cwd(), 'uploads');
 app.use('/uploads', express.static(uploadsPath));
 
-// Health Check
+// Institutional Database Health Check Endpoint (Requirement 13)
 app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'HEALTHY',
-    service: 'KSRCE Digital Mentor-Mentee API',
-    institution: 'K.S.R. College of Engineering (Autonomous)',
-    timestamp: new Date().toISOString(),
+  if (isDBConnected()) {
+    return res.status(200).json({
+      status: 'ok',
+      database: 'connected',
+    });
+  }
+
+  return res.status(503).json({
+    status: 'error',
+    database: 'disconnected',
   });
+});
+
+// Guard: API routes require active MongoDB connection before processing operations
+app.use('/api', (req, res, next) => {
+  if (req.path === '/health') return next();
+  if (!isDBConnected()) {
+    return res.status(503).json({
+      success: false,
+      statusCode: 503,
+      message: 'Service Unavailable: MongoDB Atlas connection is currently inactive. Please wait.',
+    });
+  }
+  next();
 });
 
 // Mount Institutional API Modules
@@ -70,13 +89,29 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/schools', schoolRoutes);
 
+// Catch-all 404 for unmatched API routes
+app.all('/api/*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    statusCode: 404,
+    message: `API endpoint '${req.method} ${req.path}' not found.`,
+    meta: { timestamp: new Date().toISOString() },
+  });
+});
+
 // Global Error Handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('Unhandled Server Error:', err);
-  res.status(err.status || 500).json({
+  const status = Number(err.status || err.statusCode) || 500;
+  // In production or for 500s, never expose raw exception stack traces or DB errors to client
+  const safeMessage = status === 500
+    ? 'Something went wrong on our side. Please try again later.'
+    : (err.message || 'An unexpected institutional error occurred.');
+
+  res.status(status).json({
     success: false,
-    statusCode: err.status || 500,
-    message: err.message || 'Internal institutional server error.',
+    statusCode: status,
+    message: safeMessage,
     meta: { timestamp: new Date().toISOString() },
   });
 });
@@ -84,9 +119,13 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 // Server Initialization
 async function startServer() {
   try {
-    // Clean Institutional Bootstrap: Synchronize schema indexes, master lookups & admin account only
+    // 1. Establish persistent MongoDB Atlas connection and wait for it before any operations
+    await connectDB();
+
+    // 2. Synchronize indexes and non-destructive system defaults (Admin account, Feeder schools, master lookups)
     await ensureSystemBootstrap();
 
+    // 3. Start listening for incoming API requests
     app.listen(PORT, () => {
       console.log(`============================================================`);
       console.log(`KSRCE Digital Mentor-Mentee Management Server`);

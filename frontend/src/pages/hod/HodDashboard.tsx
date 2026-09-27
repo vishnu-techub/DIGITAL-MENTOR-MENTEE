@@ -1,11 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../../api/client';
+import { api, ApiError } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { StudentDetailsView } from '../common/StudentDetailsView';
 import { Modal } from '../../components/common/Modal';
 import { EmptyState } from '../../components/common/EmptyState';
 import { Skeleton } from '../../components/common/Skeleton';
+import {
+  DashboardSkeleton,
+  StudentsSkeleton,
+  FacultySkeleton,
+  ReportsSkeleton,
+} from '../../components/common/SkeletonLoader';
+import { NetworkErrorState } from '../error/NetworkErrorState';
+import { ServiceUnavailableState } from '../error/ServiceUnavailableState';
+import { ServerErrorState } from '../error/ServerErrorState';
 import {
   Users,
   GraduationCap,
@@ -31,6 +40,7 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
   const [faculty, setFaculty] = useState<any[]>([]);
   const [meetings, setMeetings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<ApiError | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
 
@@ -45,6 +55,7 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
 
   const loadData = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const [stuRes, facRes, meetRes] = await Promise.all([
         api.students.list({ departmentId: user?.departmentId || '' }),
@@ -55,8 +66,9 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
       if (stuRes.success) setStudents(stuRes.data);
       if (facRes.success) setFaculty(facRes.data);
       if (meetRes.success) setMeetings(meetRes.data);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load HOD data:', err);
+      setLoadError(err instanceof ApiError ? err : new ApiError(500, err?.message));
     } finally {
       setLoading(false);
     }
@@ -90,6 +102,23 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
         onBack={() => setSelectedStudentId(null)}
       />
     );
+  }
+
+  if (loading) {
+    if (currentTab === 'students') return <StudentsSkeleton />;
+    if (currentTab === 'faculty') return <FacultySkeleton />;
+    if (currentTab === 'reports') return <ReportsSkeleton />;
+    return <DashboardSkeleton />;
+  }
+
+  if (loadError) {
+    if (loadError.type === 'NETWORK_ERROR' || loadError.statusCode === 0) {
+      return <NetworkErrorState onRetry={loadData} fullPage={false} />;
+    }
+    if (loadError.type === 'SERVICE_UNAVAILABLE' || loadError.statusCode === 503) {
+      return <ServiceUnavailableState onRetry={loadData} fullPage={false} />;
+    }
+    return <ServerErrorState onRetry={loadData} fullPage={false} />;
   }
 
   const filteredStudents = students.filter(

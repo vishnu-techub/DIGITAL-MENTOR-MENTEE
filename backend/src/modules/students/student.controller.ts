@@ -207,7 +207,7 @@ export async function getStudentById(req: AuthRequest, res: Response) {
     const student = await findStudentByIdOrReg(id);
 
     if (!student) {
-      return sendError(res, 'Student profile not found.', 404);
+      return sendError(res, 'Student not found', 404);
     }
 
     // RBAC: Student can only view their own profile

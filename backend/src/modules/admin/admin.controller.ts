@@ -511,12 +511,15 @@ export async function updateSystemSettings(req: AuthRequest, res: Response) {
  *  Supports search by name/register number.
  */
 export async function getMenteesByMentor(req: AuthRequest, res: Response) {
-  const { mentorId } = req.params;
+  const mentorId = req.params.mentorId as string;
   const { search = '', page = '1', limit = '50' } = req.query as Record<string, string>;
 
   try {
+    if (!mentorId || !mongoose.Types.ObjectId.isValid(mentorId)) {
+      return sendError(res, 'Mentor not found', 404);
+    }
     const faculty = await Faculty.findById(mentorId);
-    if (!faculty) return sendError(res, 'Faculty not found.', 404);
+    if (!faculty) return sendError(res, 'Mentor not found', 404);
 
     const activeAssignments = await MentorAssignment.find({
       mentor: faculty._id,

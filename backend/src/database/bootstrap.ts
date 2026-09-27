@@ -5,13 +5,6 @@ import {
   User,
   SystemSetting,
   School,
-  Faculty,
-  Student,
-  MentorAssignment,
-  AcademicRecord,
-  Meeting,
-  CounsellingRecord,
-  MonthlyProgress,
 } from '../models/index.js';
 import { runMigrations } from './migrate.js';
 import { FEEDER_SCHOOLS } from './feeder-schools.data.js';
@@ -125,9 +118,6 @@ export async function ensureSystemBootstrap(): Promise<void> {
     console.log(`[Bootstrap] Configured/updated Administrator account (${adminUsername}).`);
   }
 
-  // Ensure no duplicate Admin accounts exist
-  await User.deleteMany({ role: 'ADMIN', _id: { $ne: adminUser._id } });
-
   // 6. Institutional Master Lookups: Standard Feeder Schools (if empty)
   const schoolCount = await School.countDocuments();
   if (schoolCount === 0) {
@@ -138,19 +128,9 @@ export async function ensureSystemBootstrap(): Promise<void> {
     console.log(`[Bootstrap] Feeder schools already present (${schoolCount} schools in database).`);
   }
 
-  // 7. Ensure clean institutional state: ONLY the Admin account exists, no student or faculty records
-  await Promise.all([
-    User.deleteMany({ role: { $ne: 'ADMIN' } }),
-    Faculty.deleteMany({}),
-    Student.deleteMany({}),
-    MentorAssignment.deleteMany({}),
-    AcademicRecord.deleteMany({}),
-    Meeting.deleteMany({}),
-    CounsellingRecord.deleteMany({}),
-    MonthlyProgress.deleteMany({}),
-  ]);
-
-  console.log('✓ Institutional bootstrap completed: All student and faculty records cleared. Only Admin account preserved.');
+  // NOTE: Existing student, faculty, mentorship, academic, and counselling data are strictly preserved.
+  // No deletion or clearing operations are ever performed during bootstrap or server startup.
+  console.log('✓ Institutional bootstrap completed: System configuration and indexes verified.');
 }
 
 if (process.argv[1]?.endsWith('bootstrap.ts')) {

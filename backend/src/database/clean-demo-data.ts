@@ -17,6 +17,10 @@ import {
 import { ensureSystemBootstrap } from './bootstrap.js';
 
 export async function removeAllDemoData(): Promise<void> {
+  if (process.env.NODE_ENV === 'production' || process.env.RENDER === 'true') {
+    throw new Error('CRITICAL SAFETY PRECAUTION: Purging data is strictly forbidden in production or Render environments.');
+  }
+
   await connectDB();
   console.log('============================================================');
   console.log('PURGING ALL DEMO / SAMPLE DATA FROM MONGODB...');

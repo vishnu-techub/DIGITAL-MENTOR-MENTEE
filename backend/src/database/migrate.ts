@@ -45,7 +45,35 @@ export async function runMigrations(): Promise<void> {
       School.syncIndexes(),
     ]);
 
+    // Check and prevent TTL expiration on critical institutional collections
+    const permanentModels = [
+      Student,
+      Faculty,
+      MentorAssignment,
+      CounsellingRecord,
+      AcademicRecord,
+      StudentDocument,
+      Meeting,
+      MonthlyProgress,
+      User,
+    ];
+
+    for (const model of permanentModels) {
+      try {
+        const indexes = await model.collection.indexes();
+        for (const idx of indexes) {
+          if (idx.expireAfterSeconds !== undefined) {
+            console.warn(`! Found unwanted TTL index '${idx.name}' on collection '${model.collection.name}'. Dropping it to prevent data loss...`);
+            await model.collection.dropIndex(idx.name as string);
+          }
+        }
+      } catch (err: any) {
+        // If collection doesn't exist yet, indexes will be created upon insertion
+      }
+    }
+
     console.log('✓ All 15 Mongoose collection schemas and indexes successfully synchronized.');
+    console.log('✓ Verified NO TTL expiration indexes exist on any student, faculty, mentorship, academic, counselling, or document collections.');
     console.log('✓ Verified unique indexes: registerNumber, email, username, employeeId, code.');
     console.log('✓ Verified compound and foreign reference indexes: mentorId, studentId, department, batch, meetingDate.');
   } catch (err: any) {

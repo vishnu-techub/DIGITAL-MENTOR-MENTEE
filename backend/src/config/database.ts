@@ -13,21 +13,38 @@ try {
 
 let mongoMemoryServerInstance: any = null;
 
-// Setup Mongoose connection event listeners once
-mongoose.connection.on('connected', () => {
-  console.log('✓ MongoDB connection established successfully.');
-});
-
+// Setup Mongoose connection event listeners
 mongoose.connection.on('error', (err) => {
-  console.error('✗ MongoDB connection error:', err.message);
+  console.error('MongoDB connection error:', err.message);
 });
 
 mongoose.connection.on('disconnected', () => {
-  console.warn('! MongoDB disconnected.');
+  console.warn('MongoDB connection lost. Reconnecting...');
 });
 
 /**
- * MongoDB Connection Utility with Atlas Support, Error Handling & Graceful Shutdown
+ * Check if MongoDB connection is active
+ */
+export function isDBConnected(): boolean {
+  return mongoose.connection.readyState === 1;
+}
+
+/**
+ * Get current connected database name
+ */
+export function getDatabaseName(): string {
+  return mongoose.connection.name || (mongoose.connection.db as any)?.databaseName || 'unknown';
+}
+
+/**
+ * MongoDB Atlas Connection Module
+ *
+ * Requirements:
+ * 1. Uses process.env.MONGODB_URI
+ * 2. Connects to persistent MongoDB Atlas cluster and database
+ * 3. Never uses MongoDB memory server or in-memory DB in production or on Render
+ * 4. Logs success with database name and environment WITHOUT exposing secrets (password, URI, JWT)
+ * 5. Fails fast if connection cannot be established
  */
 export async function connectDB(): Promise<typeof mongoose> {
   // If already connected, reuse existing connection
@@ -37,59 +54,76 @@ export async function connectDB(): Promise<typeof mongoose> {
 
   // If currently connecting, wait until connected
   if (mongoose.connection.readyState === 2) {
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
       mongoose.connection.once('connected', () => resolve());
+      mongoose.connection.once('error', (err) => reject(err));
     });
     return mongoose;
   }
 
-  const uri = process.env.MONGODB_URI && process.env.MONGODB_URI.trim() !== ''
-    ? process.env.MONGODB_URI.trim()
-    : null;
+  const isProduction =
+    process.env.NODE_ENV === 'production' ||
+    Boolean(process.env.RENDER);
 
-  if (uri) {
-    console.log(`Connecting to MongoDB at: ${uri.replace(/\/\/([^:]+):([^@]+)@/, '//$1:****@')}`);
-    try {
-      await mongoose.connect(uri, {
-        serverSelectionTimeoutMS: 8000,
-      });
-      return mongoose;
-    } catch (err: any) {
-      console.error('Failed to connect to provided MONGODB_URI:', err.message);
-      if (process.env.NODE_ENV === 'production') {
-        throw err;
-      }
-      console.warn('Falling back to In-Memory MongoDB Server for development resilience...');
-    }
-  }
+  const uri = process.env.MONGODB_URI ? process.env.MONGODB_URI.trim() : '';
 
-  // Fallback to MongoMemoryServer for development / testing if no Atlas URI is reachable
-  try {
-    if (!mongoMemoryServerInstance) {
-      const { MongoMemoryServer } = await import('mongodb-memory-server');
-      const fs = await import('fs');
-      const path = await import('path');
-      const localDbDir = path.resolve(process.cwd(), '.mongo-data');
-      if (!fs.existsSync(localDbDir)) {
-        fs.mkdirSync(localDbDir, { recursive: true });
-      }
-
-      mongoMemoryServerInstance = await MongoMemoryServer.create({
-        instance: {
-          dbPath: localDbDir,
-        },
-      });
-    }
-    const memUri = mongoMemoryServerInstance.getUri();
-    console.log(`✓ Started Embedded MongoDB Instance for development: ${memUri}`);
-    await mongoose.connect(memUri);
-    return mongoose;
-  } catch (memErr: any) {
-    console.error('Unable to start embedded MongoDB instance:', memErr.message);
+  if (isProduction && !uri) {
     throw new Error(
-      'MongoDB connection could not be established. Please provide a valid MONGODB_URI in backend/.env'
+      'Fatal: MONGODB_URI environment variable is required in production / Render. In-memory databases are strictly forbidden.'
     );
   }
+
+  if (uri) {
+    try {
+      await mongoose.connect(uri, {
+        serverSelectionTimeoutMS: 15000,
+        autoIndex: true,
+      });
+
+      const dbName = getDatabaseName();
+      const envName = process.env.NODE_ENV || (process.env.RENDER ? 'production' : 'development');
+
+      // Startup logging without exposing credentials, URI, or secrets
+      console.log('MongoDB connected successfully');
+      console.log(`Database name: ${dbName}`);
+      console.log(`Environment: ${envName}`);
+
+      return mongoose;
+    } catch (err: any) {
+      console.error('Fatal: Failed to connect to MongoDB Atlas:', err.message);
+      if (isProduction) {
+        throw err;
+      }
+      // In development, if URI was provided, throw error so developer can correct credentials/URI
+      throw new Error(
+        `Failed to connect to MongoDB Atlas with provided MONGODB_URI: ${err.message}. Please check your MongoDB Atlas credentials and network access.`
+      );
+    }
+  }
+
+  // Only allowed in strictly non-production environments with explicit opt-in
+  if (!isProduction && process.env.ALLOW_MEMORY_DB === 'true') {
+    try {
+      console.warn('WARNING: ALLOW_MEMORY_DB is set. Starting temporary In-Memory MongoDB Server for testing only.');
+      if (!mongoMemoryServerInstance) {
+        const { MongoMemoryServer } = await import('mongodb-memory-server');
+        mongoMemoryServerInstance = await MongoMemoryServer.create();
+      }
+      const memUri = mongoMemoryServerInstance.getUri();
+      await mongoose.connect(memUri);
+      console.log('MongoDB connected successfully');
+      console.log(`Database name: ${getDatabaseName()} (TEMPORARY IN-MEMORY)`);
+      console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+      return mongoose;
+    } catch (memErr: any) {
+      console.error('Unable to start embedded MongoDB instance:', memErr.message);
+      throw new Error('MongoDB connection could not be established.');
+    }
+  }
+
+  throw new Error(
+    'MONGODB_URI environment variable is not defined. Please set MONGODB_URI in your environment or backend/.env file to connect to your persistent MongoDB Atlas database.'
+  );
 }
 
 /**
@@ -104,7 +138,7 @@ export async function disconnectDB(): Promise<void> {
       await mongoMemoryServerInstance.stop();
       mongoMemoryServerInstance = null;
     }
-    console.log('✓ MongoDB connection cleanly closed.');
+    console.log('MongoDB connection cleanly closed.');
   } catch (err: any) {
     console.error('Error during MongoDB disconnect:', err.message);
   }

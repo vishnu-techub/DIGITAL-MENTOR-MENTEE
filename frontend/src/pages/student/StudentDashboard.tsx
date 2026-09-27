@@ -1,10 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../../api/client';
+import { api, ApiError } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { StudentDocumentsManager } from '../../components/documents/StudentDocumentsManager';
 import { EmptyState } from '../../components/common/EmptyState';
 import { Skeleton } from '../../components/common/Skeleton';
+import {
+  StudentProfileSkeleton,
+  CounsellingSkeleton,
+  AcademicSkeleton,
+  DocumentsSkeleton,
+} from '../../components/common/SkeletonLoader';
+import { NetworkErrorState } from '../error/NetworkErrorState';
+import { ServiceUnavailableState } from '../error/ServiceUnavailableState';
+import { ServerErrorState } from '../error/ServerErrorState';
 import { Modal } from '../../components/common/Modal';
 import {
   GraduationCap,
@@ -34,6 +43,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
   const [profile, setProfile] = useState<any>(null);
   const [schedule, setSchedule] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<ApiError | null>(null);
   const [pdfDownloading, setPdfDownloading] = useState(false);
   const [showSuccessBanner, setShowSuccessBanner] = useState<boolean>(!!justCompleted);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
@@ -70,6 +80,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
 
   const loadData = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       if (user?.studentId || user?.username) {
         const studentIdentifier = user.studentId || user.username;
@@ -96,8 +107,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
         }
         if (schedRes.success) setSchedule(schedRes.data);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load student data:', err);
+      setLoadError(err instanceof ApiError ? err : new ApiError(500, err?.message));
     } finally {
       setLoading(false);
     }
@@ -188,18 +200,20 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
   };
 
   if (loading) {
-    return (
-      <div style={{ padding: '1rem 0' }}>
-        <Skeleton variant="card" height="130px" style={{ marginBottom: '1.5rem', borderRadius: '16px' }} />
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
-          <Skeleton variant="card" height="85px" />
-          <Skeleton variant="card" height="85px" />
-          <Skeleton variant="card" height="85px" />
-          <Skeleton variant="card" height="85px" />
-        </div>
-        <Skeleton variant="table" rows={6} />
-      </div>
-    );
+    if (currentTab === 'counselling') return <CounsellingSkeleton />;
+    if (currentTab === 'academics') return <AcademicSkeleton />;
+    if (currentTab === 'documents') return <DocumentsSkeleton />;
+    return <StudentProfileSkeleton />;
+  }
+
+  if (loadError) {
+    if (loadError.type === 'NETWORK_ERROR' || loadError.statusCode === 0) {
+      return <NetworkErrorState onRetry={loadData} fullPage={false} />;
+    }
+    if (loadError.type === 'SERVICE_UNAVAILABLE' || loadError.statusCode === 503) {
+      return <ServiceUnavailableState onRetry={loadData} fullPage={false} />;
+    }
+    return <ServerErrorState onRetry={loadData} fullPage={false} />;
   }
 
   if (!profile) {
