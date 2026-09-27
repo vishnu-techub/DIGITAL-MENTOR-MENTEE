@@ -8,6 +8,10 @@ import {
   Faculty,
   Student,
   MentorAssignment,
+  AcademicRecord,
+  Meeting,
+  CounsellingRecord,
+  MonthlyProgress,
 } from '../models/index.js';
 import { runMigrations } from './migrate.js';
 import { FEEDER_SCHOOLS } from './feeder-schools.data.js';
@@ -134,12 +138,19 @@ export async function ensureSystemBootstrap(): Promise<void> {
     console.log(`[Bootstrap] Feeder schools already present (${schoolCount} schools in database).`);
   }
 
-  // 7. Ensure all previous student, faculty, and academic records are restored
-  console.log('[Bootstrap] Verifying institutional historical records restoration...');
-  const { restoreAllDetails } = await import('./restore-all-details.js');
-  await restoreAllDetails();
+  // 7. Ensure clean institutional state: ONLY the Admin account exists, no student or faculty records
+  await Promise.all([
+    User.deleteMany({ role: { $ne: 'ADMIN' } }),
+    Faculty.deleteMany({}),
+    Student.deleteMany({}),
+    MentorAssignment.deleteMany({}),
+    AcademicRecord.deleteMany({}),
+    Meeting.deleteMany({}),
+    CounsellingRecord.deleteMany({}),
+    MonthlyProgress.deleteMany({}),
+  ]);
 
-  console.log('✓ Institutional bootstrap completed successfully.');
+  console.log('✓ Institutional bootstrap completed: All student and faculty records cleared. Only Admin account preserved.');
 }
 
 if (process.argv[1]?.endsWith('bootstrap.ts')) {
