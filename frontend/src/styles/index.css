@@ -1452,13 +1452,20 @@ div.desktop-only.table-responsive {
 }
 
 /* ============================================================
-   NOTIFICATION DROPDOWN — MOBILE SAFE WIDTH
+   NOTIFICATION DROPDOWN — DESKTOP & MOBILE SAFE
    ============================================================ */
-@media (max-width: 480px) {
-  /* The notification panel uses inline width:340px — cap it */
-  .ksrce-header div[style*='width: 340px'],
-  .ksrce-header div[style*='width:340px'] {
+.notification-dropdown {
+  width: 340px !important;
+  min-width: 280px !important;
+  max-width: calc(100vw - 24px) !important;
+  box-sizing: border-box;
+}
+
+@media (max-width: 640px) {
+  .notification-dropdown {
     width: calc(100vw - 1.5rem) !important;
+    min-width: 0 !important;
+    max-width: 340px !important;
     right: -0.5rem !important;
   }
 }

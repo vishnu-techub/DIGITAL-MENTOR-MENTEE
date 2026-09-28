@@ -54,13 +54,13 @@ export function formatApiError(status: number, rawMessage?: string, endpoint?: s
     };
   }
 
-  // 401 Unauthorized / Token Expired
+  // 401 Unauthorized
   if (status === 401) {
     return {
       type: 'UNAUTHORIZED',
       statusCode: 401,
-      title: 'Session Expired',
-      message: 'Your session has expired. Please login again.',
+      title: 'Authentication Failed',
+      message: rawMessage || (endpoint?.includes('/auth/login') ? 'Invalid username or password.' : 'Please login to continue.'),
     };
   }
 

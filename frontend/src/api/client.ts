@@ -68,10 +68,6 @@ async function request<T = any>(
   if (!response.ok) {
     if (response.status === 401) {
       removeAuthToken();
-      // Notify application of session expiration
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('ksrce:session-expired'));
-      }
     }
     throw new ApiError(response.status, data?.message, endpoint, data?.errors);
   }

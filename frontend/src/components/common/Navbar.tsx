@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotifications } from '../../context/NotificationContext';
 import { usePwa } from '../../context/PwaContext';
@@ -15,6 +15,21 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
   const { isInstalled, promptInstall } = usePwa();
   const [showNotifications, setShowNotifications] = useState(false);
   const [isTriggering, setIsTriggering] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowNotifications(false);
+      }
+    };
+    if (showNotifications) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showNotifications]);
 
   const handleTrigger = async (type: string) => {
     setIsTriggering(true);
@@ -122,7 +137,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
         )}
 
         {/* Notifications Bell */}
-        <div style={{ position: 'relative' }}>
+        <div ref={dropdownRef} style={{ position: 'relative' }}>
           <button
             onClick={() => setShowNotifications(!showNotifications)}
             style={{
@@ -167,12 +182,13 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
                 position: 'absolute',
                 right: 0,
                 top: '46px',
-                width: 'min(340px, calc(100vw - 24px))',
+                width: '340px',
+                maxWidth: 'calc(100vw - 24px)',
                 backgroundColor: '#ffffff',
                 borderRadius: '12px',
                 boxShadow: '0 10px 25px rgba(0,0,0,0.15)',
                 border: '1px solid #E2E8F0',
-                zIndex: 100,
+                zIndex: 1000,
                 color: '#1E293B',
                 overflow: 'hidden',
               }}

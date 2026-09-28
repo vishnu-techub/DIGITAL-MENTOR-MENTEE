@@ -20,7 +20,7 @@ export const LoginPage: React.FC = () => {
     try {
       await login({ username, password });
     } catch (err: any) {
-      setError(err.message || 'Invalid institutional credentials.');
+      setError(err.rawMessage || err.userMessage || err.message || 'Invalid username or password.');
     } finally {
       setLoading(false);
     }

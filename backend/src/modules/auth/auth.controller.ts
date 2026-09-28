@@ -85,7 +85,7 @@ export async function login(req: Request, res: Response) {
       profileCompleted,
     };
 
-    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '30d' });
 
     await logAudit({
       userId: user._id.toString(),
