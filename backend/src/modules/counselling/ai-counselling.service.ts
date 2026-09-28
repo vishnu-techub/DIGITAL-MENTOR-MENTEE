@@ -56,8 +56,8 @@ function generateDomainExpertSuggestion(
   prompt: string,
   studentName: string
 ): AiSuggestionResponse {
-  // ACADEMIC DOMAIN
-  if (category === 'Academic' || prompt.includes('academic') || prompt.includes('study') || prompt.includes('mark') || prompt.includes('cgpa') || prompt.includes('grade') || prompt.includes('exam') || prompt.includes('arrear')) {
+  // 1. ACADEMIC DEVELOPMENT
+  if (category === 'Academic Development' || category.includes('Academic') || prompt.includes('academic') || prompt.includes('study') || prompt.includes('mark') || prompt.includes('cgpa') || prompt.includes('grade') || prompt.includes('exam') || prompt.includes('arrear')) {
     if (prompt.includes('arrear') || prompt.includes('fail') || prompt.includes('backlog')) {
       return {
         challengeObserved: `Student has standing academic arrears and requires dedicated remedial guidance and structured timetable allocation.`,
@@ -76,15 +76,6 @@ function generateDomainExpertSuggestion(
       };
     }
 
-    if (prompt.includes('attendance') || prompt.includes('absent') || prompt.includes('leave')) {
-      return {
-        challengeObserved: `Irregular attendance pattern identified, leading to missed lectures and lab exercise backlogs.`,
-        correctiveAction: `1. Counseled student on 75% mandatory autonomous attendance requirement.\n2. Contacted parents to ensure timely bus commute from hometown.\n3. Arranged lab makeup session to complete pending experiments.`,
-        expectedImprovement: `Maintain consistent 85%+ attendance across all theory and laboratory courses for the remainder of the semester.`,
-        source: 'INSTITUTIONAL_AI_ENGINE',
-      };
-    }
-
     // General Academic Default
     return {
       challengeObserved: `Student requires structured academic focus, concept revision, and improved internal assessment performance.`,
@@ -94,8 +85,36 @@ function generateDomainExpertSuggestion(
     };
   }
 
-  // TRAINING & PLACEMENT DOMAIN
-  if (category === 'Training & Placement' || prompt.includes('placement') || prompt.includes('interview') || prompt.includes('aptitude') || prompt.includes('resume') || prompt.includes('job') || prompt.includes('company')) {
+  // 2. SKILL DEVELOPMENT
+  if (category === 'Skill Development' || category.includes('Skill') || prompt.includes('skill') || prompt.includes('communication') || prompt.includes('english') || prompt.includes('coding') || prompt.includes('technical') || prompt.includes('presentation')) {
+    if (prompt.includes('communication') || prompt.includes('english') || prompt.includes('speak') || prompt.includes('presentation')) {
+      return {
+        challengeObserved: `Student exhibits hesitation and lack of fluency in formal English communication and technical presentations.`,
+        correctiveAction: `1. Encouraged active participation in English Language Lab audio-visual exercises.\n2. Assigned a 3-minute technical paper presentation in the next mentoring circle.\n3. Recommended watching BBC English learning podcasts and reading daily editorial articles.`,
+        expectedImprovement: `Demonstrate confident verbal articulation during seminar presentations and viva-voce examinations without inhibition.`,
+        source: 'INSTITUTIONAL_AI_ENGINE',
+      };
+    }
+
+    if (prompt.includes('coding') || prompt.includes('python') || prompt.includes('java') || prompt.includes('software')) {
+      return {
+        challengeObserved: `Student lacks practical hands-on programming confidence and requires problem-solving practice in modern stacks.`,
+        correctiveAction: `1. Enrolled in NPTEL / Coursera programming certification course with mentor tracking.\n2. Recommended daily 1-hour problem solving on CodeChef / HackerRank.\n3. Directed to build a mini CRUD application demonstrating database and frontend connectivity.`,
+        expectedImprovement: `Complete minimum 50 coding problems on online judge and earn verified skill badge before semester end.`,
+        source: 'INSTITUTIONAL_AI_ENGINE',
+      };
+    }
+
+    return {
+      challengeObserved: `Student requires improvement in the selected practical technical and professional skill area.`,
+      correctiveAction: `1. Recommend relevant practice, participation in skill workshops, and hands-on lab building activities.\n2. Assigned targeted micro-project aligning with current industry engineering standards.\n3. Scheduled bi-weekly mentor review of skill logbook and portfolio additions.`,
+      expectedImprovement: `Improved confidence, practical technical ability, and consistency in executing laboratory and real-world tasks.`,
+      source: 'INSTITUTIONAL_AI_ENGINE',
+    };
+  }
+
+  // 3. CAREER DEVELOPMENT
+  if (category === 'Career Development' || category.includes('Career') || category.includes('Placement') || prompt.includes('career') || prompt.includes('placement') || prompt.includes('interview') || prompt.includes('aptitude') || prompt.includes('resume') || prompt.includes('job') || prompt.includes('company')) {
     if (prompt.includes('aptitude') || prompt.includes('quant') || prompt.includes('reasoning')) {
       return {
         challengeObserved: `Student needs intensive speed and accuracy enhancement in Quantitative Aptitude and Logical Reasoning.`,
@@ -122,48 +141,20 @@ function generateDomainExpertSuggestion(
     };
   }
 
-  // SKILL DEVELOPMENT DOMAIN
-  if (category === 'Skill Development' || prompt.includes('skill') || prompt.includes('communication') || prompt.includes('english') || prompt.includes('coding') || prompt.includes('technical')) {
-    if (prompt.includes('communication') || prompt.includes('english') || prompt.includes('speak') || prompt.includes('shy') || prompt.includes('hesitant')) {
-      return {
-        challengeObserved: `Student exhibits hesitation and lack of fluency in formal English communication and technical presentations.`,
-        correctiveAction: `1. Encouraged active participation in English Language Lab audio-visual exercises.\n2. Assigned a 3-minute technical paper presentation in the next mentoring circle.\n3. Recommended watching BBC English learning podcasts and reading daily editorial articles.`,
-        expectedImprovement: `Demonstrate confident verbal articulation during seminar presentations and viva-voce examinations without inhibition.`,
-        source: 'INSTITUTIONAL_AI_ENGINE',
-      };
-    }
-
-    if (prompt.includes('coding') || prompt.includes('python') || prompt.includes('java') || prompt.includes('software')) {
-      return {
-        challengeObserved: `Student lacks practical hands-on programming confidence and requires problem-solving practice in modern stacks.`,
-        correctiveAction: `1. Enrolled in NPTEL / Coursera programming certification course with mentor tracking.\n2. Recommended daily 1-hour problem solving on CodeChef / HackerRank.\n3. Directed to build a mini CRUD application demonstrating database and frontend connectivity.`,
-        expectedImprovement: `Complete minimum 50 coding problems on online judge and earn verified skill badge before semester end.`,
-        source: 'INSTITUTIONAL_AI_ENGINE',
-      };
-    }
-
+  // 4. PERSONAL DEVELOPMENT
+  if (category === 'Personal Development' || category.includes('Personal') || prompt.includes('personal') || prompt.includes('confidence') || prompt.includes('time') || prompt.includes('stress') || prompt.includes('routine') || prompt.includes('habit')) {
     return {
-      challengeObserved: `Student requires improvement in the selected practical technical and professional skill area.`,
-      correctiveAction: `1. Recommend relevant practice, participation in skill workshops, and hands-on lab building activities.\n2. Assigned targeted micro-project aligning with current industry engineering standards.\n3. Scheduled bi-weekly mentor review of skill logbook and portfolio additions.`,
-      expectedImprovement: `Improved confidence, practical technical ability, and consistency in executing laboratory and real-world tasks.`,
+      challengeObserved: `Student requires structured guidance in personal discipline, time management, and maintaining a balanced academic routine.`,
+      correctiveAction: `1. Structured a balanced daily schedule balancing study, sleep, and physical activity.\n2. Guided on priority matrix (Eisenhower matrix) to prevent last-minute examination stress.\n3. Scheduled weekly 10-minute check-in with mentor to review habit consistency and well-being.`,
+      expectedImprovement: `Demonstrated improvement in daily study routine, reduced anxiety, and enhanced focus during class hours.`,
       source: 'INSTITUTIONAL_AI_ENGINE',
     };
   }
 
-  // INNOVATION & RESEARCH DOMAIN
-  if (category === 'Innovation' || prompt.includes('innovation') || prompt.includes('idea') || prompt.includes('project') || prompt.includes('patent') || prompt.includes('startup') || prompt.includes('research')) {
+  // 5. EXTRA-CURRICULAR ACTIVITIES
+  if (category === 'Extra-Curricular Activities' || category.includes('Extra-Curricular') || prompt.includes('extra') || prompt.includes('sports') || prompt.includes('club') || prompt.includes('event') || prompt.includes('symposium') || prompt.includes('cultural')) {
     return {
-      challengeObserved: `Student demonstrates curiosity for innovative concepts but needs structured mentorship to translate ideas into prototype / paper submission.`,
-      correctiveAction: `1. Connected student with KSRCE Institution's Innovation Council (IIC) and Incubation Centre.\n2. Guided on literature survey methodology using IEEE Xplore and Scopus indexed publications.\n3. Assisted in formulating project proposal for Tamil Nadu State Council for Science & Technology (TNSCST) student project scheme.\n4. Encouraged building proof-of-concept prototype in department Makerspace.`,
-      expectedImprovement: `Successful completion of working prototype and submission of research paper to a Scopus-indexed national or international conference.`,
-      source: 'INSTITUTIONAL_AI_ENGINE',
-    };
-  }
-
-  // EXTRA-CURRICULAR / CO-CURRICULAR DOMAIN
-  if (category === 'Extra-Curricular / Co-Curricular' || prompt.includes('participat') || prompt.includes('event') || prompt.includes('symposium') || prompt.includes('sports') || prompt.includes('club') || prompt.includes('inactive')) {
-    return {
-      challengeObserved: `Student exhibits low engagement in co-curricular technical symposiums, hackathons, and campus club activities.`,
+      challengeObserved: `Student exhibits low engagement in co-curricular technical symposiums, hackathons, sports, and campus club activities.`,
       correctiveAction: `1. Motivated student to register as a team member in upcoming inter-college national symposium.\n2. Recommended joining department technical club (Coding Club / Robotics Club / Rotaract).\n3. Assigned presentation role in intra-departmental seminar to cultivate stage presence.\n4. Provided attendance on-duty (OD) processing guidance for external collegiate events.`,
       expectedImprovement: `Active participation in at least 2 inter-collegiate events per semester and submission of participation certificates.`,
       source: 'INSTITUTIONAL_AI_ENGINE',

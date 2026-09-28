@@ -7,15 +7,23 @@ export const ROLES = {
 
 export type Role = (typeof ROLES)[keyof typeof ROLES];
 
+export const COUNSELLING_5_CATEGORIES = [
+  'Academic Development',
+  'Skill Development',
+  'Career Development',
+  'Personal Development',
+  'Extra-Curricular Activities',
+] as const;
+
 export const COUNSELLING_CATEGORIES = {
-  ACADEMIC: 'Academic',
-  TRAINING_PLACEMENT: 'Training & Placement',
-  EXTRA_CO_CURRICULAR: 'Extra-Curricular / Co-Curricular',
-  INNOVATION: 'Innovation',
+  ACADEMIC_DEV: 'Academic Development',
   SKILL_DEV: 'Skill Development',
+  CAREER_DEV: 'Career Development',
+  PERSONAL_DEV: 'Personal Development',
+  EXTRA_CURRICULAR: 'Extra-Curricular Activities',
 } as const;
 
-export type CounsellingCategory = (typeof COUNSELLING_CATEGORIES)[keyof typeof COUNSELLING_CATEGORIES];
+export type CounsellingCategory = (typeof COUNSELLING_5_CATEGORIES)[number];
 
 export const ATTENDANCE_STATUS = {
   PRESENT: 'PRESENT',

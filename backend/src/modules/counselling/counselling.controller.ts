@@ -10,7 +10,7 @@ import {
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
-import { COUNSELLING_CATEGORIES } from '../../config/constants.js';
+import { COUNSELLING_CATEGORIES, COUNSELLING_5_CATEGORIES, CounsellingCategory } from '../../config/constants.js';
 import { generateCounsellingSuggestion } from './ai-counselling.service.js';
 import { askMentorAiBot, correctGrammarAndSpelling } from './ai-assistant.service.js';
 
@@ -52,7 +52,10 @@ export async function getCounsellingRecords(req: AuthRequest, res: Response) {
         session_date: c.sessionDate || c.date,
         counselling_date: c.sessionDate || c.date,
         counsellingDate: c.sessionDate || c.date,
-        category: c.category,
+        categories: Array.isArray(c.categories) && c.categories.length > 0
+          ? c.categories
+          : (c.category ? c.category.split(',').map((s: string) => s.trim()).filter(Boolean) : ['Academic Development']),
+        category: c.category || (Array.isArray(c.categories) ? c.categories.join(', ') : 'Academic Development'),
         concern_reason: c.concernReason || '',
         concernReason: c.concernReason || '',
         discussion_observation: c.discussionObservation || c.challengeObserved || '',
@@ -147,7 +150,8 @@ export async function createCounsellingRecord(req: AuthRequest, res: Response) {
     counsellingDate,
     sessionDate,
     date,
-    category = 'Academic',
+    categories,
+    category,
     concernReason,
     discussionObservation,
     challengeObserved,
@@ -177,11 +181,22 @@ export async function createCounsellingRecord(req: AuthRequest, res: Response) {
     );
   }
 
-  // Validate or fallback category
-  const validCategories = Object.values(COUNSELLING_CATEGORIES) as string[];
-  const selectedCategory = category && validCategories.includes(category)
-    ? category
-    : (effectiveSkills ? 'Skill Development' : 'Academic');
+  // Validate required multi-select categories (ONLY 5 basic categories)
+  const rawCategories = Array.isArray(categories)
+    ? categories
+    : (categories ? [categories] : (category ? (Array.isArray(category) ? category : [category]) : []));
+
+  const validCategories: CounsellingCategory[] = rawCategories
+    .map((c: any) => String(c).trim())
+    .filter((c: string): c is CounsellingCategory => COUNSELLING_5_CATEGORIES.includes(c as any));
+
+  if (validCategories.length === 0) {
+    return sendError(
+      res,
+      'Counselling Category is required. Please select at least one of: Academic Development, Skill Development, Career Development, Personal Development, Extra-Curricular Activities.',
+      400
+    );
+  }
 
   try {
     let student = null;
@@ -227,7 +242,8 @@ export async function createCounsellingRecord(req: AuthRequest, res: Response) {
       mentorId: mentorDoc._id,
       sessionDate: effectiveDate,
       date: effectiveDate,
-      category: selectedCategory,
+      categories: validCategories,
+      category: validCategories.join(', '),
       concernReason: effectiveConcern,
       discussionObservation: effectiveChallenge,
       challengeObserved: effectiveChallenge,
@@ -248,7 +264,7 @@ export async function createCounsellingRecord(req: AuthRequest, res: Response) {
     await Notification.create({
       user: student.user,
       title: 'New Counselling Entry Added',
-      message: `A new counselling record under domain "${category}" was added by your mentor.`,
+      message: `A new counselling record under "${validCategories.join(', ')}" was added by your mentor.`,
       type: 'SYSTEM_ANNOUNCEMENT',
       relatedEntity: 'COUNSELLING',
       relatedEntityId: record._id.toString(),
@@ -262,7 +278,8 @@ export async function createCounsellingRecord(req: AuthRequest, res: Response) {
       details: {
         studentId: student._id.toString(),
         registerNumber: student.registerNumber,
-        category,
+        categories: validCategories,
+        category: validCategories.join(', '),
         sessionDate: effectiveDate,
         aiGenerated: false,
       },
@@ -275,18 +292,102 @@ export async function createCounsellingRecord(req: AuthRequest, res: Response) {
         recordId: record._id.toString(),
         _id: record._id.toString(),
         studentId: student._id.toString(),
-        category,
+        categories: record.categories,
+        category: record.category,
         challengeObserved: record.challengeObserved,
         correctiveAction: record.correctiveAction,
-        expectedImprovement: record.expectedImprovement,
-        aiGenerated: record.aiGenerated,
+        sessionDate: record.sessionDate,
+        createdAt: record.createdAt,
       },
       'Counselling record created successfully.',
       201
     );
   } catch (err: any) {
     console.error('createCounsellingRecord error:', err);
-    return sendError(res, 'Failed to save counselling record.', 500);
+    return sendError(res, 'Failed to save counselling record: ' + err.message, 500);
+  }
+}
+
+// 4. Update Counselling Record (Preserves categories array and selections when editing)
+export async function updateCounsellingRecord(req: AuthRequest, res: Response) {
+  const { id } = req.params;
+  const {
+    counsellingDate,
+    sessionDate,
+    date,
+    categories,
+    category,
+    concernReason,
+    discussionObservation,
+    challengeObserved,
+    skillNeedingImprovement,
+    mentorRemarks,
+    actionPlan,
+    correctiveAction,
+    expectedImprovement,
+    followUpDate,
+    status,
+  } = req.body;
+
+  try {
+    const record = await CounsellingRecord.findById(id);
+    if (!record) {
+      return sendError(res, 'Counselling record not found.', 404);
+    }
+
+    if (categories !== undefined || category !== undefined) {
+      const raw = Array.isArray(categories) ? categories : (categories ? [categories] : (category ? (Array.isArray(category) ? category : [category]) : []));
+      const valid: CounsellingCategory[] = raw
+        .map((c: any) => String(c).trim())
+        .filter((c: string): c is CounsellingCategory => COUNSELLING_5_CATEGORIES.includes(c as any));
+      if (valid.length === 0) {
+        return sendError(res, 'At least one valid counselling category is required.', 400);
+      }
+      record.categories = valid;
+      record.category = valid.join(', ');
+    }
+
+    if (counsellingDate || sessionDate || date) {
+      const d = counsellingDate || sessionDate || date;
+      record.sessionDate = d;
+      record.date = d;
+    }
+    if (concernReason !== undefined) record.concernReason = concernReason;
+    if (discussionObservation !== undefined || challengeObserved !== undefined) {
+      const text = discussionObservation || challengeObserved;
+      record.discussionObservation = text;
+      record.challengeObserved = text;
+    }
+    if (skillNeedingImprovement !== undefined) record.skillNeedingImprovement = skillNeedingImprovement;
+    if (actionPlan !== undefined || correctiveAction !== undefined) {
+      const text = actionPlan || correctiveAction;
+      record.actionPlan = text;
+      record.correctiveAction = text;
+    }
+    if (expectedImprovement !== undefined) record.expectedImprovement = expectedImprovement;
+    if (mentorRemarks !== undefined) record.mentorRemarks = mentorRemarks;
+    if (followUpDate !== undefined) record.followUpDate = followUpDate;
+    if (status !== undefined) record.status = status;
+
+    await record.save();
+
+    return sendSuccess(
+      res,
+      {
+        recordId: record._id.toString(),
+        _id: record._id.toString(),
+        categories: record.categories,
+        category: record.category,
+        sessionDate: record.sessionDate,
+        discussionObservation: record.discussionObservation,
+        actionPlan: record.actionPlan,
+        status: record.status,
+      },
+      'Counselling record updated successfully.'
+    );
+  } catch (err: any) {
+    console.error('updateCounsellingRecord error:', err);
+    return sendError(res, 'Failed to update counselling record.', 500);
   }
 }
 

@@ -179,6 +179,8 @@ export const api = {
     getByStudent: (studentId: string) => request(`/counselling/${studentId}`),
     create: (data: any) =>
       request('/counselling', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: any) =>
+      request(`/counselling/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     askAiBot: (question: string) =>
       request<{
         answer: string;

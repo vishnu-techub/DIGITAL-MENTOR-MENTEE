@@ -11,6 +11,7 @@ import { ServiceUnavailableState } from '../error/ServiceUnavailableState';
 import { ServerErrorState } from '../error/ServerErrorState';
 import { MentorAiBotModal } from '../../components/mentor/MentorAiBotModal';
 import { GrammarAssistField } from '../../components/mentor/GrammarAssistField';
+import { CounsellingCategorySelect } from '../../components/mentor/CounsellingCategorySelect';
 import {
   ArrowLeft,
   GraduationCap,
@@ -40,6 +41,7 @@ import {
   Layers,
   Star,
   Download,
+  Edit2,
 } from 'lucide-react';
 
 export type MentorProfileTab =
@@ -108,8 +110,10 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
 
   // Mentor-Controlled Counselling Form Modal (Strictly manual with grammar assist)
   const [showCounsellingModal, setShowCounsellingModal] = useState(false);
+  const [editingCounsellingId, setEditingCounsellingId] = useState<string | null>(null);
   const [counsellingForm, setCounsellingForm] = useState({
     counsellingDate: new Date().toISOString().split('T')[0],
+    categories: ['Academic Development'] as string[],
     concernReason: '',
     discussionObservation: '',
     skillNeedingImprovement: '',
@@ -249,9 +253,52 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
     }
   };
 
+  // Open modal for creating new counselling record
+  const handleOpenAddCounselling = () => {
+    setEditingCounsellingId(null);
+    setCounsellingForm({
+      counsellingDate: new Date().toISOString().split('T')[0],
+      categories: ['Academic Development'],
+      concernReason: '',
+      discussionObservation: '',
+      skillNeedingImprovement: '',
+      mentorRemarks: '',
+      actionPlan: '',
+      followUpDate: '',
+      status: 'Completed',
+    });
+    setShowCounsellingModal(true);
+  };
+
+  // Open modal for editing existing counselling record (preserves selections)
+  const handleEditCounselling = (c: any) => {
+    setEditingCounsellingId(c.id || c._id);
+    const existingCats = Array.isArray(c.categories) && c.categories.length > 0
+      ? c.categories
+      : (c.category ? c.category.split(',').map((s: string) => s.trim()).filter(Boolean) : ['Academic Development']);
+
+    setCounsellingForm({
+      counsellingDate: c.counselling_date || c.counsellingDate || c.session_date ? new Date(c.counselling_date || c.counsellingDate || c.session_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+      categories: existingCats,
+      concernReason: c.concern_reason || c.concernReason || '',
+      discussionObservation: c.discussion_observation || c.discussionObservation || c.challenge_observed || c.challengeObserved || '',
+      skillNeedingImprovement: c.skill_needing_improvement || c.skillNeedingImprovement || '',
+      mentorRemarks: c.mentor_remarks || c.mentorRemarks || '',
+      actionPlan: c.action_plan || c.actionPlan || c.corrective_action || c.correctiveAction || '',
+      followUpDate: c.follow_up_date || c.followUpDate ? new Date(c.follow_up_date || c.followUpDate).toISOString().split('T')[0] : '',
+      status: c.status || 'Completed',
+    });
+    setShowCounsellingModal(true);
+  };
+
   // Mentor-Controlled Counselling Submission (Strictly mentor-typed, AI never automatically generates or saves)
   const handleCounsellingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!counsellingForm.categories || counsellingForm.categories.length === 0) {
+      toast.warning('Please select at least one Counselling Category.');
+      return;
+    }
+
     const concern = counsellingForm.concernReason.trim();
     const discussion = counsellingForm.discussionObservation.trim();
     const actionPlan = counsellingForm.actionPlan.trim();
@@ -267,9 +314,11 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
 
     setSubmittingCounselling(true);
     try {
-      await api.counselling.create({
+      const payload = {
         studentId: student.id,
         counsellingDate: counsellingForm.counsellingDate,
+        categories: counsellingForm.categories,
+        category: counsellingForm.categories.join(', '),
         concernReason: counsellingForm.concernReason,
         discussionObservation: counsellingForm.discussionObservation,
         challengeObserved: counsellingForm.discussionObservation || counsellingForm.concernReason,
@@ -280,11 +329,21 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
         followUpDate: counsellingForm.followUpDate,
         status: counsellingForm.status,
         aiGenerated: false,
-      });
-      toast.success('Counselling record saved successfully.');
+      };
+
+      if (editingCounsellingId) {
+        await api.counselling.update(editingCounsellingId, payload);
+        toast.success('Counselling record updated successfully.');
+      } else {
+        await api.counselling.create(payload);
+        toast.success('Counselling record saved successfully.');
+      }
+
       setShowCounsellingModal(false);
+      setEditingCounsellingId(null);
       setCounsellingForm({
         counsellingDate: new Date().toISOString().split('T')[0],
+        categories: ['Academic Development'],
         concernReason: '',
         discussionObservation: '',
         skillNeedingImprovement: '',
@@ -1498,7 +1557,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowCounsellingModal(true)}
+                  onClick={handleOpenAddCounselling}
                   className="btn btn-primary"
                   style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}
                 >
@@ -1523,9 +1582,27 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '0.85rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
-                      <span className="badge badge-primary" style={{ backgroundColor: '#7C3AED', color: '#ffffff' }}>
-                        {c.category || 'Mentorship'}
-                      </span>
+                      <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                        {(Array.isArray(c.categories) && c.categories.length > 0
+                          ? c.categories
+                          : (c.category ? c.category.split(',').map((s: string) => s.trim()).filter(Boolean) : ['Academic Development'])
+                        ).map((cat: string) => (
+                          <span
+                            key={cat}
+                            className="badge badge-primary"
+                            style={{
+                              backgroundColor: '#7C3AED',
+                              color: '#ffffff',
+                              fontSize: '0.78rem',
+                              fontWeight: 700,
+                              borderRadius: '6px',
+                              padding: '3px 8px',
+                            }}
+                          >
+                            {cat}
+                          </span>
+                        ))}
+                      </div>
                       <span style={{ fontSize: '0.82rem', color: '#64748B', fontWeight: 600 }}>
                         Counselling Date: {c.counselling_date || c.counsellingDate || c.session_date ? new Date(c.counselling_date || c.counsellingDate || c.session_date).toLocaleDateString() : 'Recent'}
                       </span>
@@ -1535,9 +1612,27 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                         </span>
                       )}
                     </div>
-                    <span className="badge badge-success">
-                      ✓ Mentor Recorded & Signed
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <button
+                        type="button"
+                        onClick={() => handleEditCounselling(c)}
+                        className="btn btn-secondary btn-sm"
+                        style={{
+                          fontSize: '0.74rem',
+                          fontWeight: 700,
+                          padding: '0.25rem 0.6rem',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.25rem',
+                        }}
+                        title="Edit Counselling Record"
+                      >
+                        <Edit2 size={12} /> Edit
+                      </button>
+                      <span className="badge badge-success">
+                        ✓ Mentor Signed
+                      </span>
+                    </div>
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem', fontSize: '0.86rem' }}>
@@ -1634,7 +1729,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowCounsellingModal(true)}
+                  onClick={handleOpenAddCounselling}
                   className="btn btn-primary"
                 >
                   + Add First Counselling Record
@@ -1962,9 +2057,12 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
       {/* Modal 2: Mentor-Controlled Counselling Form (Manual Entry with Grammar Assist) */}
       {showCounsellingModal && (
         <Modal
-          title="Add Mentee Counselling Record"
+          title={editingCounsellingId ? 'Edit Mentee Counselling Record' : 'Add Mentee Counselling Record'}
           isOpen={showCounsellingModal}
-          onClose={() => setShowCounsellingModal(false)}
+          onClose={() => {
+            setShowCounsellingModal(false);
+            setEditingCounsellingId(null);
+          }}
         >
           <form onSubmit={handleCounsellingSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
             <p style={{ fontSize: '0.8rem', color: '#64748B', margin: '0 0 1rem 0' }}>
@@ -1985,6 +2083,13 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 style={{ fontSize: '0.88rem', minHeight: '42px' }}
               />
             </div>
+
+            {/* Required Multi-Select: Counselling Category (ONLY the 5 basic categories) */}
+            <CounsellingCategorySelect
+              selectedCategories={counsellingForm.categories}
+              onChange={(cats) => setCounsellingForm({ ...counsellingForm, categories: cats })}
+              required
+            />
 
             {/* Field 2: Concern / Reason */}
             <GrammarAssistField
@@ -2076,7 +2181,10 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               <button
                 type="button"
                 className="btn btn-secondary"
-                onClick={() => setShowCounsellingModal(false)}
+                onClick={() => {
+                  setShowCounsellingModal(false);
+                  setEditingCounsellingId(null);
+                }}
                 style={{ minHeight: '44px', padding: '0.5rem 1.25rem' }}
               >
                 Cancel
@@ -2087,7 +2195,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 disabled={submittingCounselling}
                 style={{ minHeight: '44px', padding: '0.5rem 1.5rem', fontWeight: 700 }}
               >
-                {submittingCounselling ? 'Saving Record...' : 'Save Counselling Record'}
+                {submittingCounselling ? 'Saving Record...' : (editingCounsellingId ? 'Update Counselling Record' : 'Save Counselling Record')}
               </button>
             </div>
           </form>

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   getCounsellingRecords,
   createCounsellingRecord,
+  updateCounsellingRecord,
   getAiCounsellingSuggestion,
   askMentorAiBotController,
   grammarCheckController,
@@ -45,5 +46,8 @@ router.get('/:studentId', getCounsellingRecords);
 
 // 5. Official Save (Only when mentor types and clicks Save)
 router.post('/', authorize(ROLES.FACULTY, ROLES.HOD, ROLES.ADMIN), createCounsellingRecord);
+
+// 6. Update Counselling Record (Preserves selections)
+router.put('/:id', authorize(ROLES.FACULTY, ROLES.HOD, ROLES.ADMIN), updateCounsellingRecord);
 
 export default router;

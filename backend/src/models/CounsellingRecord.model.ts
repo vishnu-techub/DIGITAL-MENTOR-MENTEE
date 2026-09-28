@@ -1,11 +1,14 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
-export type CounsellingCategory =
-  | 'Academic'
-  | 'Training & Placement'
-  | 'Extra-Curricular / Co-Curricular'
-  | 'Innovation'
-  | 'Skill Development';
+export const COUNSELLING_5_CATEGORIES = [
+  'Academic Development',
+  'Skill Development',
+  'Career Development',
+  'Personal Development',
+  'Extra-Curricular Activities',
+] as const;
+
+export type CounsellingCategory = (typeof COUNSELLING_5_CATEGORIES)[number];
 
 export interface ICounsellingRecord extends Document {
   student: mongoose.Types.ObjectId;
@@ -14,7 +17,8 @@ export interface ICounsellingRecord extends Document {
   mentorId: mongoose.Types.ObjectId;
   date: string; // YYYY-MM-DD
   sessionDate: string; // YYYY-MM-DD
-  category: CounsellingCategory;
+  categories: CounsellingCategory[];
+  category?: string;
   concernReason?: string;
   discussionObservation?: string;
   challengeObserved: string;
@@ -63,17 +67,22 @@ const CounsellingRecordSchema = new Schema<ICounsellingRecord>(
       type: String,
       index: true,
     },
+    categories: {
+      type: [String],
+      enum: [
+        'Academic Development',
+        'Skill Development',
+        'Career Development',
+        'Personal Development',
+        'Extra-Curricular Activities',
+      ],
+      required: [true, 'At least one counselling category is required'],
+      default: ['Academic Development'],
+      index: true,
+    },
     category: {
       type: String,
-      enum: [
-        'Academic',
-        'Training & Placement',
-        'Extra-Curricular / Co-Curricular',
-        'Innovation',
-        'Skill Development',
-      ],
-      required: [true, 'Counselling domain category is required'],
-      index: true,
+      default: 'Academic Development',
     },
     concernReason: {
       type: String,
@@ -145,6 +154,21 @@ CounsellingRecordSchema.pre('save', function () {
   if (this.mentorId && !this.mentor) this.mentor = this.mentorId;
   if (this.sessionDate && !this.date) this.date = this.sessionDate;
   if (this.date && !this.sessionDate) this.sessionDate = this.date;
+
+  if (Array.isArray(this.categories) && this.categories.length > 0) {
+    this.category = this.categories.join(', ');
+  } else if (this.category && typeof this.category === 'string') {
+    const list = this.category.split(',').map((s: string) => s.trim()).filter(Boolean);
+    if (list.length > 0) {
+      this.categories = list as any;
+    } else {
+      this.categories = ['Academic Development'];
+      this.category = 'Academic Development';
+    }
+  } else {
+    this.categories = ['Academic Development'];
+    this.category = 'Academic Development';
+  }
 
   if (this.discussionObservation && !this.challengeObserved) {
     this.challengeObserved = this.discussionObservation;
