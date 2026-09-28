@@ -10,6 +10,7 @@ interface GrammarAssistFieldProps {
   rows?: number;
   required?: boolean;
   fieldId?: string;
+  error?: string;
 }
 
 export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
@@ -20,12 +21,14 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
   rows = 3,
   required = false,
   fieldId,
+  error,
 }) => {
   const [checking, setChecking] = useState(false);
   const [suggestedCorrection, setSuggestedCorrection] = useState<string | null>(null);
   const [showSuggestion, setShowSuggestion] = useState(false);
   const [lastCheckedValue, setLastCheckedValue] = useState('');
   const [appliedFeedback, setAppliedFeedback] = useState(false);
+  const [noIssuesFeedback, setNoIssuesFeedback] = useState(false);
   const debounceTimerRef = useRef<any>(null);
 
   // Debounced check (900ms) after mentor stops typing
@@ -77,9 +80,12 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
       if (res.success && res.data && res.data.hasCorrections) {
         setSuggestedCorrection(res.data.corrected.trim());
         setShowSuggestion(true);
+        setNoIssuesFeedback(false);
       } else {
         setSuggestedCorrection(null);
         setShowSuggestion(false);
+        setNoIssuesFeedback(true);
+        setTimeout(() => setNoIssuesFeedback(false), 2500);
       }
     } catch (err) {
       // Fallback
@@ -118,6 +124,12 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
             </span>
           )}
 
+          {noIssuesFeedback && (
+            <span style={{ fontSize: '0.75rem', color: '#059669', fontWeight: 600 }}>
+              ✓ No grammar issues
+            </span>
+          )}
+
           {suggestedCorrection && !showSuggestion && (
             <button
               type="button"
@@ -142,23 +154,25 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
             </button>
           )}
 
-          {value.trim().length > 4 && !suggestedCorrection && !showSuggestion && (
+          {value.trim().length >= 3 && !suggestedCorrection && !showSuggestion && (
             <button
               type="button"
               onClick={handleManualCheck}
               disabled={checking}
               className="btn btn-sm"
               style={{
-                background: 'transparent',
-                color: '#64748B',
-                border: 'none',
-                padding: '0.2rem 0.4rem',
-                fontSize: '0.72rem',
-                fontWeight: 600,
+                backgroundColor: '#F8FAFC',
+                color: '#3B82F6',
+                border: '1px solid #E2E8F0',
+                padding: '0.2rem 0.6rem',
+                fontSize: '0.74rem',
+                fontWeight: 700,
+                borderRadius: '6px',
                 cursor: 'pointer',
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '0.2rem',
+                gap: '0.25rem',
+                transition: 'all 0.15s ease',
               }}
               title="Check spelling and grammar"
             >
@@ -167,7 +181,9 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
                   <RefreshCw size={11} className="spin" /> Checking...
                 </>
               ) : (
-                'Improve Writing'
+                <>
+                  <Sparkles size={12} color="#3B82F6" /> Fix Grammar
+                </>
               )}
             </button>
           )}
@@ -185,13 +201,22 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
         onChange={(e) => onChange(e.target.value)}
         style={{
           width: '100%',
+          boxSizing: 'border-box',
           fontSize: '0.88rem',
           lineHeight: 1.5,
           borderRadius: '8px',
-          borderColor: showSuggestion ? '#93C5FD' : '#CBD5E1',
+          borderColor: error ? '#EF4444' : showSuggestion ? '#93C5FD' : '#CBD5E1',
           transition: 'border-color 0.15s ease',
+          resize: 'vertical',
+          minHeight: '70px',
         }}
       />
+
+      {error && (
+        <div style={{ color: '#DC2626', fontSize: '0.78rem', marginTop: '4px', fontWeight: 600 }}>
+          {error}
+        </div>
+      )}
 
       {/* Inline Grammar Correction Suggestion Card */}
       {showSuggestion && suggestedCorrection && (

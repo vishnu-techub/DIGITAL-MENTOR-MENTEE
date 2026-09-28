@@ -123,6 +123,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
     status: 'Completed',
   });
   const [submittingCounselling, setSubmittingCounselling] = useState(false);
+  const [counsellingErrors, setCounsellingErrors] = useState<Record<string, string>>({});
 
   const [showClearArrearModal, setShowClearArrearModal] = useState(false);
   const [clearArrearForm, setClearArrearForm] = useState({
@@ -256,6 +257,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
   // Open modal for creating new counselling record
   const handleOpenAddCounselling = () => {
     setEditingCounsellingId(null);
+    setCounsellingErrors({});
     setCounsellingForm({
       counsellingDate: new Date().toISOString().split('T')[0],
       categories: ['Academic Development'],
@@ -273,6 +275,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
   // Open modal for editing existing counselling record (preserves selections)
   const handleEditCounselling = (c: any) => {
     setEditingCounsellingId(c.id || c._id);
+    setCounsellingErrors({});
     const existingCats = Array.isArray(c.categories) && c.categories.length > 0
       ? c.categories
       : (c.category ? c.category.split(',').map((s: string) => s.trim()).filter(Boolean) : ['Academic Development']);
@@ -294,23 +297,29 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
   // Mentor-Controlled Counselling Submission (Strictly mentor-typed, AI never automatically generates or saves)
   const handleCounsellingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const errors: Record<string, string> = {};
+    if (!counsellingForm.counsellingDate) {
+      errors.counsellingDate = 'Counselling Date is required.';
+    }
     if (!counsellingForm.categories || counsellingForm.categories.length === 0) {
-      toast.warning('Please select at least one Counselling Category.');
-      return;
+      errors.categories = 'Please select at least one Counselling Category.';
+    }
+    if (!counsellingForm.concernReason.trim()) {
+      errors.concernReason = 'Concern / Reason is required.';
+    }
+    if (!counsellingForm.discussionObservation.trim()) {
+      errors.discussionObservation = 'Discussion / Observation is required.';
+    }
+    if (!counsellingForm.actionPlan.trim()) {
+      errors.actionPlan = 'Action Plan is required.';
     }
 
-    const concern = counsellingForm.concernReason.trim();
-    const discussion = counsellingForm.discussionObservation.trim();
-    const actionPlan = counsellingForm.actionPlan.trim();
-
-    if (!concern && !discussion) {
-      toast.warning('Please enter either Concern / Reason or Discussion / Observation.');
+    if (Object.keys(errors).length > 0) {
+      setCounsellingErrors(errors);
       return;
     }
-    if (!actionPlan) {
-      toast.warning('Action Plan is required.');
-      return;
-    }
+    setCounsellingErrors({});
 
     setSubmittingCounselling(true);
     try {
@@ -319,13 +328,13 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
         counsellingDate: counsellingForm.counsellingDate,
         categories: counsellingForm.categories,
         category: counsellingForm.categories.join(', '),
-        concernReason: counsellingForm.concernReason,
-        discussionObservation: counsellingForm.discussionObservation,
-        challengeObserved: counsellingForm.discussionObservation || counsellingForm.concernReason,
-        skillNeedingImprovement: counsellingForm.skillNeedingImprovement,
-        mentorRemarks: counsellingForm.mentorRemarks,
-        actionPlan: counsellingForm.actionPlan,
-        correctiveAction: counsellingForm.actionPlan,
+        concernReason: counsellingForm.concernReason.trim(),
+        discussionObservation: counsellingForm.discussionObservation.trim(),
+        challengeObserved: counsellingForm.discussionObservation.trim() || counsellingForm.concernReason.trim(),
+        skillNeedingImprovement: counsellingForm.skillNeedingImprovement.trim(),
+        mentorRemarks: counsellingForm.mentorRemarks || counsellingForm.actionPlan.trim(),
+        actionPlan: counsellingForm.actionPlan.trim(),
+        correctiveAction: counsellingForm.actionPlan.trim(),
         followUpDate: counsellingForm.followUpDate,
         status: counsellingForm.status,
         aiGenerated: false,
@@ -341,6 +350,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
 
       setShowCounsellingModal(false);
       setEditingCounsellingId(null);
+      setCounsellingErrors({});
       setCounsellingForm({
         counsellingDate: new Date().toISOString().split('T')[0],
         categories: ['Academic Development'],
@@ -2062,15 +2072,57 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           onClose={() => {
             setShowCounsellingModal(false);
             setEditingCounsellingId(null);
+            setCounsellingErrors({});
           }}
+          onSubmit={handleCounsellingSubmit}
+          footer={
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                width: '100%',
+                gap: '0.75rem',
+              }}
+            >
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setShowCounsellingModal(false);
+                  setEditingCounsellingId(null);
+                  setCounsellingErrors({});
+                }}
+                style={{ minHeight: '44px', padding: '0.5rem 1.25rem' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={submittingCounselling}
+                style={{
+                  minHeight: '44px',
+                  padding: '0.5rem 1.5rem',
+                  fontWeight: 700,
+                }}
+              >
+                {submittingCounselling
+                  ? 'Saving Record...'
+                  : editingCounsellingId
+                  ? 'Update Counselling Record'
+                  : 'Save Counselling Record'}
+              </button>
+            </div>
+          }
         >
-          <form onSubmit={handleCounsellingSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
             <p style={{ fontSize: '0.8rem', color: '#64748B', margin: '0 0 1rem 0' }}>
               Mentor-recorded counselling session for {student.full_name} ({student.register_number}). Enter observations manually. Real-time writing assistance helps detect spelling and grammar without modifying your meaning.
             </p>
 
-            {/* Field 1: Counselling Date */}
-            <div className="form-group" style={{ marginBottom: '1rem' }}>
+            {/* Field 1: Counselling Date * */}
+            <div className="form-group" style={{ marginBottom: '1.15rem' }}>
               <label className="form-label" style={{ fontWeight: 700, fontSize: '0.85rem' }}>
                 Counselling Date <span style={{ color: '#DC2626' }}>*</span>
               </label>
@@ -2079,30 +2131,56 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 className="form-control"
                 required
                 value={counsellingForm.counsellingDate}
-                onChange={(e) => setCounsellingForm({ ...counsellingForm, counsellingDate: e.target.value })}
-                style={{ fontSize: '0.88rem', minHeight: '42px' }}
+                onChange={(e) => {
+                  setCounsellingForm({ ...counsellingForm, counsellingDate: e.target.value });
+                  if (counsellingErrors.counsellingDate) {
+                    setCounsellingErrors((prev) => ({ ...prev, counsellingDate: undefined }));
+                  }
+                }}
+                style={{
+                  fontSize: '0.88rem',
+                  minHeight: '42px',
+                  borderColor: counsellingErrors.counsellingDate ? '#EF4444' : undefined,
+                }}
               />
+              {counsellingErrors.counsellingDate && (
+                <div style={{ color: '#DC2626', fontSize: '0.78rem', marginTop: '4px', fontWeight: 600 }}>
+                  {counsellingErrors.counsellingDate}
+                </div>
+              )}
             </div>
 
-            {/* Required Multi-Select: Counselling Category (ONLY the 5 basic categories) */}
+            {/* Field 2: Counselling Category * (Multi-Select with ONLY 5 categories) */}
             <CounsellingCategorySelect
               selectedCategories={counsellingForm.categories}
-              onChange={(cats) => setCounsellingForm({ ...counsellingForm, categories: cats })}
+              onChange={(cats) => {
+                setCounsellingForm({ ...counsellingForm, categories: cats });
+                if (counsellingErrors.categories && cats.length > 0) {
+                  setCounsellingErrors((prev) => ({ ...prev, categories: undefined }));
+                }
+              }}
               required
+              error={counsellingErrors.categories}
             />
 
-            {/* Field 2: Concern / Reason */}
+            {/* Field 3: Concern / Reason * */}
             <GrammarAssistField
               fieldId="concernReason"
               label="Concern / Reason"
               required
-              rows={2}
+              rows={3}
               placeholder="e.g. Low attendance in Anna University theory subjects / difficulty in core programming..."
               value={counsellingForm.concernReason}
-              onChange={(val) => setCounsellingForm({ ...counsellingForm, concernReason: val })}
+              onChange={(val) => {
+                setCounsellingForm({ ...counsellingForm, concernReason: val });
+                if (counsellingErrors.concernReason && val.trim()) {
+                  setCounsellingErrors((prev) => ({ ...prev, concernReason: undefined }));
+                }
+              }}
+              error={counsellingErrors.concernReason}
             />
 
-            {/* Field 3: Discussion / Observation */}
+            {/* Field 4: Discussion / Observation * */}
             <GrammarAssistField
               fieldId="discussionObservation"
               label="Discussion / Observation"
@@ -2110,10 +2188,16 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               rows={3}
               placeholder="Record mentor discussion points, student's explanation, and observed behavior..."
               value={counsellingForm.discussionObservation}
-              onChange={(val) => setCounsellingForm({ ...counsellingForm, discussionObservation: val })}
+              onChange={(val) => {
+                setCounsellingForm({ ...counsellingForm, discussionObservation: val });
+                if (counsellingErrors.discussionObservation && val.trim()) {
+                  setCounsellingErrors((prev) => ({ ...prev, discussionObservation: undefined }));
+                }
+              }}
+              error={counsellingErrors.discussionObservation}
             />
 
-            {/* Field 4: Skills Needing Improvement */}
+            {/* Field 5: Skills Needing Improvement */}
             <GrammarAssistField
               fieldId="skillNeedingImprovement"
               label="Skills Needing Improvement"
@@ -2123,7 +2207,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               onChange={(val) => setCounsellingForm({ ...counsellingForm, skillNeedingImprovement: val })}
             />
 
-            {/* Field 5: Action Plan */}
+            {/* Field 6: Action Plan * */}
             <GrammarAssistField
               fieldId="actionPlan"
               label="Action Plan"
@@ -2131,21 +2215,25 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               rows={3}
               placeholder="Concrete steps agreed upon: daily revision routine, problem sets to solve, practice vivas..."
               value={counsellingForm.actionPlan}
-              onChange={(val) => setCounsellingForm({ ...counsellingForm, actionPlan: val })}
+              onChange={(val) => {
+                setCounsellingForm({ ...counsellingForm, actionPlan: val });
+                if (counsellingErrors.actionPlan && val.trim()) {
+                  setCounsellingErrors((prev) => ({ ...prev, actionPlan: undefined }));
+                }
+              }}
+              error={counsellingErrors.actionPlan}
             />
 
-            {/* Field 6: Mentor Remarks */}
-            <GrammarAssistField
-              fieldId="mentorRemarks"
-              label="Mentor Remarks"
-              rows={2}
-              placeholder="Faculty mentor's specific guidance, expectations, and instructions..."
-              value={counsellingForm.mentorRemarks}
-              onChange={(val) => setCounsellingForm({ ...counsellingForm, mentorRemarks: val })}
-            />
-
-            {/* Field 7 & 8: Follow-up Date & Status (Single column / touch friendly grid) */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginBottom: '1.25rem' }}>
+            {/* Field 7 & 8: Follow-up Date & Status */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                gap: '1rem',
+                marginTop: '0.25rem',
+                marginBottom: '0.5rem',
+              }}
+            >
               <div className="form-group" style={{ margin: 0 }}>
                 <label className="form-label" style={{ fontWeight: 700, fontSize: '0.85rem' }}>
                   Follow-up Date
@@ -2176,29 +2264,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 </select>
               </div>
             </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => {
-                  setShowCounsellingModal(false);
-                  setEditingCounsellingId(null);
-                }}
-                style={{ minHeight: '44px', padding: '0.5rem 1.25rem' }}
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="btn btn-primary"
-                disabled={submittingCounselling}
-                style={{ minHeight: '44px', padding: '0.5rem 1.5rem', fontWeight: 700 }}
-              >
-                {submittingCounselling ? 'Saving Record...' : (editingCounsellingId ? 'Update Counselling Record' : 'Save Counselling Record')}
-              </button>
-            </div>
-          </form>
+          </div>
         </Modal>
       )}
 

@@ -15,12 +15,14 @@ interface CounsellingCategorySelectProps {
   selectedCategories: string[];
   onChange: (categories: string[]) => void;
   required?: boolean;
+  error?: string;
 }
 
 export const CounsellingCategorySelect: React.FC<CounsellingCategorySelectProps> = ({
   selectedCategories = [],
   onChange,
   required = true,
+  error,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
