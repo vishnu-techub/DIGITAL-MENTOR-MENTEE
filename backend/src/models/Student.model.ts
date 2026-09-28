@@ -47,6 +47,8 @@ export interface IStudent extends Document {
   bloodGroup?: string;
   residentialType: 'DAY_SCHOLAR' | 'HOSTELLER';
   mobileNumber?: string;
+  section?: string;
+  year?: number;
   email?: string;
   address?: string;
   parent: IParentDetails;
@@ -118,6 +120,17 @@ const StudentSchema = new Schema<IStudent>(
     mobileNumber: {
       type: String,
       trim: true,
+    },
+    section: {
+      type: String,
+      trim: true,
+      default: 'A',
+    },
+    year: {
+      type: Number,
+      min: 1,
+      max: 4,
+      default: 2,
     },
     email: {
       type: String,

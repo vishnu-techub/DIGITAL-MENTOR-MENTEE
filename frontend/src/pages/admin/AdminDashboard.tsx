@@ -503,15 +503,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Overview Tab */}
       {currentTab === 'overview' && (
         <div>
-          {/* Stat Cards */}
-          <div className="grid-cols-4" style={{ marginBottom: '1.5rem' }}>
+          {/* Stat Cards - 7 Real MongoDB Aggregations */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem', marginBottom: '1.5rem' }}>
             <div className="stat-card">
               <div className="stat-icon" style={{ backgroundColor: '#EEF2F6', color: '#0B2545' }}>
                 <GraduationCap size={24} />
               </div>
               <div className="stat-info">
                 <h3>Total Students</h3>
-                <div className="stat-value">{stats?.totalStudents ?? '...'}</div>
+                <div className="stat-value">{stats?.totalStudents ?? 0}</div>
               </div>
             </div>
 
@@ -521,7 +521,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
               </div>
               <div className="stat-info">
                 <h3>Total Faculty</h3>
-                <div className="stat-value">{stats?.totalFaculty ?? '...'}</div>
+                <div className="stat-value">{stats?.totalFaculty ?? 0}</div>
               </div>
             </div>
 
@@ -530,18 +530,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 <UserCheck size={24} />
               </div>
               <div className="stat-info">
-                <h3>Active Mentors</h3>
-                <div className="stat-value">{stats?.activeAssignments ?? '...'}</div>
+                <h3>Assigned Mentees</h3>
+                <div className="stat-value">{stats?.assignedMentees ?? 0}</div>
               </div>
             </div>
 
             <div className="stat-card">
               <div className="stat-icon" style={{ backgroundColor: '#FFFBEB', color: '#D97706' }}>
-                <UserCog size={24} />
+                <UserPlus size={24} />
               </div>
               <div className="stat-info">
-                <h3>Reassignments</h3>
-                <div className="stat-value">{stats?.reassignmentsCount ?? '...'}</div>
+                <h3>Unassigned Students</h3>
+                <div className="stat-value">{stats?.unassignedStudents ?? 0}</div>
+              </div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-icon" style={{ backgroundColor: '#FEF2F2', color: '#DC2626' }}>
+                <AlertCircle size={24} />
+              </div>
+              <div className="stat-info">
+                <h3>Active Arrears</h3>
+                <div className="stat-value">{stats?.activeArrears ?? 0}</div>
+              </div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-icon" style={{ backgroundColor: '#F5F3FF', color: '#7C3AED' }}>
+                <BookOpen size={24} />
+              </div>
+              <div className="stat-info">
+                <h3>Counselling Sessions</h3>
+                <div className="stat-value">{stats?.counsellingSessions ?? 0}</div>
+              </div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-icon" style={{ backgroundColor: '#FEF3C7', color: '#B45309' }}>
+                <FileText size={24} />
+              </div>
+              <div className="stat-info">
+                <h3>Uploaded Documents</h3>
+                <div className="stat-value">{stats?.uploadedDocuments ?? 0}</div>
               </div>
             </div>
           </div>

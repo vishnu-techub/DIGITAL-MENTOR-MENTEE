@@ -9,6 +9,8 @@ import { DashboardSkeleton, StudentsSkeleton } from '../../components/common/Ske
 import { NetworkErrorState } from '../error/NetworkErrorState';
 import { ServiceUnavailableState } from '../error/ServiceUnavailableState';
 import { ServerErrorState } from '../error/ServerErrorState';
+import { MentorAiBotModal } from '../../components/mentor/MentorAiBotModal';
+import { Modal } from '../../components/common/Modal';
 import {
   Users,
   CalendarCheck2,
@@ -20,6 +22,14 @@ import {
   ArrowRight,
   Clock,
   CheckCircle2,
+  Sparkles,
+  Download,
+  Filter,
+  FileCheck,
+  AlertCircle,
+  GraduationCap,
+  Plus,
+  Folder,
 } from 'lucide-react';
 
 interface FacultyDashboardProps {
@@ -34,7 +44,22 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
   const [schedule, setSchedule] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<ApiError | null>(null);
+
+  // Search & Filter states (Section 8)
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedDeptFilter, setSelectedDeptFilter] = useState('');
+  const [selectedYearFilter, setSelectedYearFilter] = useState('');
+  const [selectedSectionFilter, setSelectedSectionFilter] = useState('');
+  const [selectedArrearFilter, setSelectedArrearFilter] = useState<'ALL' | 'ARREARS' | 'CLEAR'>('ALL');
+  const [selectedCompletionFilter, setSelectedCompletionFilter] = useState<'ALL' | 'COMPLETED' | 'INCOMPLETE'>('ALL');
+
+  // Quick Action Modal states
+  const [isAiBotOpen, setIsAiBotOpen] = useState(false);
+  const [showQuickPdfModal, setShowQuickPdfModal] = useState(false);
+  const [quickPdfStudentId, setQuickPdfStudentId] = useState('');
+  const [showQuickCounsellingModal, setShowQuickCounsellingModal] = useState(false);
+  const [quickCounsellingStudentId, setQuickCounsellingStudentId] = useState('');
+
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [studentInitialTab, setStudentInitialTab] = useState<StudentDetailsTab>('overview');
 
@@ -107,63 +132,198 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
     return <ServerErrorState onRetry={loadData} fullPage={false} />;
   }
 
-  // Filtered mentees
+  // Computed filter options
+  const uniqueDepartments = Array.from(
+    new Set(mentees.map((m) => m.department_name || m.department_code).filter(Boolean))
+  );
+  const uniqueYears = Array.from(new Set(mentees.map((m) => m.year || 2))).sort();
+  const uniqueSections = Array.from(new Set(mentees.map((m) => m.section || 'A'))).sort();
+
+  // Filtered mentees (Section 8)
   const filteredMentees = mentees.filter((m) => {
-    return (
-      !searchQuery ||
-      m.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.register_number?.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    const q = searchQuery.toLowerCase().trim();
+    const matchesSearch =
+      !q ||
+      m.full_name?.toLowerCase().includes(q) ||
+      m.register_number?.toLowerCase().includes(q) ||
+      m.email?.toLowerCase().includes(q);
+
+    const matchesDept =
+      !selectedDeptFilter ||
+      m.department_name === selectedDeptFilter ||
+      m.department_code === selectedDeptFilter;
+
+    const matchesYear =
+      !selectedYearFilter ||
+      String(m.year) === selectedYearFilter ||
+      m.batch_name?.includes(selectedYearFilter);
+
+    const matchesSection =
+      !selectedSectionFilter ||
+      (m.section && m.section.toUpperCase() === selectedSectionFilter.toUpperCase());
+
+    const matchesArrear =
+      selectedArrearFilter === 'ALL' ||
+      (selectedArrearFilter === 'ARREARS' && (m.total_arrears || 0) > 0) ||
+      (selectedArrearFilter === 'CLEAR' && (!m.total_arrears || m.total_arrears === 0));
+
+    const comp = m.profile_completion_percentage ?? (m.profile_completed ? 100 : 40);
+    const matchesCompletion =
+      selectedCompletionFilter === 'ALL' ||
+      (selectedCompletionFilter === 'COMPLETED' && comp >= 100) ||
+      (selectedCompletionFilter === 'INCOMPLETE' && comp < 100);
+
+    return matchesSearch && matchesDept && matchesYear && matchesSection && matchesArrear && matchesCompletion;
   });
 
+  // Section 7 Dashboard Metrics
   const studentsWithArrears = mentees.filter((m) => (m.total_arrears || 0) > 0);
+  const totalActiveArrears = mentees.reduce((acc, m) => acc + (m.total_arrears || 0), 0);
+  const totalCounsellingSessions = mentees.reduce((acc, m) => acc + (m.counselling_count || 0), 0);
+  const pendingCounsellingCount = mentees.filter(
+    (m) => (m.total_arrears > 0 && (m.counselling_count || 0) === 0) || (m.counselling_count || 0) === 0
+  ).length;
+  const totalUploadedDocuments = mentees.reduce((acc, m) => acc + (m.document_count || 0), 0);
+  const monthlyImprovementCount = mentees.filter((m) => (m.completed_meetings_count || 0) > 0).length;
 
   return (
     <div>
       {/* Overview Tab */}
       {currentTab === 'overview' && (
         <div>
-          {/* Stat Cards */}
-          <div className="grid-cols-4" style={{ marginBottom: '1.5rem' }}>
+          {/* Quick Actions Bar (Section 7) */}
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '0.65rem',
+              marginBottom: '1.5rem',
+              background: '#ffffff',
+              padding: '0.85rem 1.25rem',
+              borderRadius: '12px',
+              border: '1px solid #E2E8F0',
+              boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
+              alignItems: 'center',
+            }}
+          >
+            <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#0B2545', textTransform: 'uppercase', letterSpacing: '0.5px', marginRight: '0.35rem' }}>
+              Quick Actions:
+            </span>
+            <button
+              className="btn btn-outline btn-sm"
+              onClick={() => onSelectTab('mentees')}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+            >
+              <Users size={14} /> View Mentees
+            </button>
+            <button
+              className="btn btn-outline btn-sm"
+              onClick={() => setShowQuickCounsellingModal(true)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+            >
+              <BookOpen size={14} /> Add Counselling
+            </button>
+            <button
+              className="btn btn-outline btn-sm"
+              onClick={() => onSelectTab('meetings')}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+            >
+              <CalendarCheck2 size={14} /> Saturday Meeting
+            </button>
+            <button
+              className="btn btn-gold btn-sm"
+              onClick={() => setIsAiBotOpen(true)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+            >
+              <Sparkles size={14} /> AI Assistant
+            </button>
+            <button
+              className="btn btn-outline btn-sm"
+              onClick={() => onSelectTab('documents')}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+            >
+              <FileCheck size={14} /> Documents
+            </button>
+            <button
+              className="btn btn-pdf btn-sm"
+              onClick={() => setShowQuickPdfModal(true)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+            >
+              <Download size={14} /> Download Student PDF
+            </button>
+          </div>
+
+          {/* Stat Cards - 7 Key Mentor Metrics (Section 7) */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem', marginBottom: '1.5rem' }}>
             <div className="stat-card">
               <div className="stat-icon" style={{ backgroundColor: '#EEF2F6', color: '#0B2545' }}>
-                <Users size={24} />
+                <Users size={22} />
               </div>
               <div className="stat-info">
-                <h3>Total Assigned Mentees</h3>
+                <h3>My Mentees</h3>
                 <div className="stat-value">{mentees.length}</div>
               </div>
             </div>
 
             <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#FFFBEB', color: '#D97706' }}>
-                <AlertTriangle size={24} />
+              <div className="stat-icon" style={{ backgroundColor: '#EFF6FF', color: '#1D4ED8' }}>
+                <CalendarCheck2 size={22} />
               </div>
               <div className="stat-info">
-                <h3>Students Needing Attention</h3>
-                <div className="stat-value">{studentsWithArrears.length}</div>
+                <h3>Upcoming Saturday Meeting</h3>
+                <div className="stat-value" style={{ fontSize: '1.05rem', marginTop: '4px' }}>
+                  {schedule?.nextSaturdayDate || 'Saturday'}
+                </div>
+              </div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-icon" style={{ backgroundColor: '#FFFBEB', color: '#D97706' }}>
+                <AlertTriangle size={22} />
+              </div>
+              <div className="stat-info">
+                <h3>Pending Counselling</h3>
+                <div className="stat-value">{pendingCounsellingCount}</div>
+              </div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-icon" style={{ backgroundColor: '#F5F3FF', color: '#7C3AED' }}>
+                <BookOpen size={22} />
+              </div>
+              <div className="stat-info">
+                <h3>Recent Counselling</h3>
+                <div className="stat-value">{totalCounsellingSessions}</div>
+              </div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-icon" style={{ backgroundColor: '#FEF2F2', color: '#DC2626' }}>
+                <AlertCircle size={22} />
+              </div>
+              <div className="stat-info">
+                <h3>Student Arrears</h3>
+                <div className="stat-value">{totalActiveArrears}</div>
+              </div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-icon" style={{ backgroundColor: '#FEF3C7', color: '#B45309' }}>
+                <FileText size={22} />
+              </div>
+              <div className="stat-info">
+                <h3>Student Documents</h3>
+                <div className="stat-value">{totalUploadedDocuments}</div>
               </div>
             </div>
 
             <div className="stat-card">
               <div className="stat-icon" style={{ backgroundColor: '#ECFDF5', color: '#059669' }}>
-                <CalendarCheck2 size={24} />
+                <Award size={22} />
               </div>
               <div className="stat-info">
-                <h3>Meetings Conducted</h3>
-                <div className="stat-value">{meetings.length}</div>
-              </div>
-            </div>
-
-            <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#EFF6FF', color: '#1D4ED8' }}>
-                <Clock size={24} />
-              </div>
-              <div className="stat-info">
-                <h3>Next Saturday Session</h3>
-                <div className="stat-value" style={{ fontSize: '1rem', marginTop: '6px' }}>
-                  {schedule?.nextSaturdayDate || 'Saturday'}
-                </div>
+                <h3>Monthly Improvement</h3>
+                <div className="stat-value">{monthlyImprovementCount}</div>
               </div>
             </div>
           </div>
@@ -349,34 +509,167 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
         </div>
       )}
 
-      {/* Mentees Full Directory Tab */}
+      {/* Mentees Full Directory Tab (Section 8) */}
       {currentTab === 'mentees' && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              My Assigned Mentees Directory
-            </h2>
-            <div style={{ width: 'min(280px, 100%)', position: 'relative' }}>
-              <Search size={16} style={{ position: 'absolute', left: '10px', top: '10px', color: '#94A3B8' }} />
-              <input
-                type="text"
-                className="form-control"
-                style={{ paddingLeft: '2rem' }}
-                placeholder="Search by Name or Reg No..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
+            <div>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
+                My Assigned Mentees Directory
+              </h2>
+              <div style={{ fontSize: '0.825rem', color: '#64748B', marginTop: '2px' }}>
+                Showing {filteredMentees.length} of {mentees.length} assigned students
+              </div>
             </div>
+
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button
+                className="btn btn-outline btn-sm"
+                onClick={() => setShowQuickCounsellingModal(true)}
+              >
+                <BookOpen size={14} /> Add Counselling
+              </button>
+              <button
+                className="btn btn-pdf btn-sm"
+                onClick={() => setShowQuickPdfModal(true)}
+              >
+                <Download size={14} /> Download Dossier PDF
+              </button>
+            </div>
+          </div>
+
+          {/* Section 8 Search & Multi-criteria Filter Bar */}
+          <div
+            className="card"
+            style={{
+              padding: '1rem',
+              marginBottom: '1.25rem',
+              background: '#ffffff',
+              borderRadius: '12px',
+              border: '1px solid #E2E8F0',
+            }}
+          >
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem', alignItems: 'center' }}>
+              {/* Search */}
+              <div style={{ position: 'relative' }}>
+                <Search size={15} style={{ position: 'absolute', left: '10px', top: '10px', color: '#94A3B8' }} />
+                <input
+                  type="text"
+                  className="form-control"
+                  style={{ paddingLeft: '2.1rem', fontSize: '0.85rem' }}
+                  placeholder="Search name, reg no..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+
+              {/* Department Filter */}
+              <div>
+                <select
+                  className="form-control"
+                  style={{ fontSize: '0.85rem' }}
+                  value={selectedDeptFilter}
+                  onChange={(e) => setSelectedDeptFilter(e.target.value)}
+                >
+                  <option value="">All Departments</option>
+                  {uniqueDepartments.map((dept: any) => (
+                    <option key={dept} value={dept}>{dept}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Year Filter */}
+              <div>
+                <select
+                  className="form-control"
+                  style={{ fontSize: '0.85rem' }}
+                  value={selectedYearFilter}
+                  onChange={(e) => setSelectedYearFilter(e.target.value)}
+                >
+                  <option value="">All Years</option>
+                  <option value="1">I Year</option>
+                  <option value="2">II Year</option>
+                  <option value="3">III Year</option>
+                  <option value="4">IV Year</option>
+                </select>
+              </div>
+
+              {/* Section Filter */}
+              <div>
+                <select
+                  className="form-control"
+                  style={{ fontSize: '0.85rem' }}
+                  value={selectedSectionFilter}
+                  onChange={(e) => setSelectedSectionFilter(e.target.value)}
+                >
+                  <option value="">All Sections</option>
+                  <option value="A">Section A</option>
+                  <option value="B">Section B</option>
+                  <option value="C">Section C</option>
+                </select>
+              </div>
+
+              {/* Arrear Filter */}
+              <div>
+                <select
+                  className="form-control"
+                  style={{ fontSize: '0.85rem' }}
+                  value={selectedArrearFilter}
+                  onChange={(e: any) => setSelectedArrearFilter(e.target.value)}
+                >
+                  <option value="ALL">All Arrear Statuses</option>
+                  <option value="ARREARS">Active Arrears Only</option>
+                  <option value="CLEAR">Clear / 0 Arrears</option>
+                </select>
+              </div>
+
+              {/* Profile Completion Filter */}
+              <div>
+                <select
+                  className="form-control"
+                  style={{ fontSize: '0.85rem' }}
+                  value={selectedCompletionFilter}
+                  onChange={(e: any) => setSelectedCompletionFilter(e.target.value)}
+                >
+                  <option value="ALL">All Profiles</option>
+                  <option value="COMPLETED">100% Completed</option>
+                  <option value="INCOMPLETE">Incomplete Profile</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Active Filters Reset Row */}
+            {(searchQuery || selectedDeptFilter || selectedYearFilter || selectedSectionFilter || selectedArrearFilter !== 'ALL' || selectedCompletionFilter !== 'ALL') && (
+              <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.78rem', color: '#64748B' }}>
+                  Showing <strong>{filteredMentees.length}</strong> matching students
+                </span>
+                <button
+                  className="btn btn-outline btn-sm"
+                  style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedDeptFilter('');
+                    setSelectedYearFilter('');
+                    setSelectedSectionFilter('');
+                    setSelectedArrearFilter('ALL');
+                    setSelectedCompletionFilter('ALL');
+                  }}
+                >
+                  Reset All Filters
+                </button>
+              </div>
+            )}
           </div>
 
           {filteredMentees.length === 0 ? (
             <EmptyState
               icon={<Users size={32} />}
-              title={searchQuery ? "No Mentees Found" : "No Mentees Assigned Yet"}
-              description={searchQuery ? "No assigned mentees match your search filter." : "When the administrator or HOD allocates mentees to your profile, their student cards and academic dossiers will appear here."}
+              title={searchQuery || selectedDeptFilter || selectedYearFilter || selectedSectionFilter ? "No Mentees Match Filter" : "No Mentees Assigned Yet"}
+              description={searchQuery || selectedDeptFilter || selectedYearFilter || selectedSectionFilter ? "Try adjusting your search query or filters above to find students." : "When the administrator or HOD allocates mentees to your profile, their student cards and academic dossiers will appear here."}
             />
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 1fr))', gap: '1.25rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))', gap: '1.25rem' }}>
               {filteredMentees.map((m) => {
               const studentInitials = m.full_name
                 ? m.full_name.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase()
@@ -384,8 +677,8 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
               const completion = m.profile_completion_percentage ?? (m.profile_completed ? 100 : 40);
               const arrears = m.total_arrears ?? 0;
               const cgpaVal = m.cgpa ? Number(m.cgpa).toFixed(2) : (m.latest_cgpa ? Number(m.latest_cgpa).toFixed(2) : 'N/A');
-              const nextMeeting = m.next_meeting_date || schedule?.nextSaturdayDate || 'Next Saturday';
-              const meetingStatus = m.meeting_status || 'SCHEDULED';
+              const studentYear = m.year ? `${m.year === 1 ? 'I' : m.year === 2 ? 'II' : m.year === 3 ? 'III' : 'IV'} Year` : 'II Year';
+              const studentSec = m.section || 'A';
 
               return (
                 <div
@@ -395,24 +688,21 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
-                    padding: '1.5rem',
+                    padding: '1.25rem',
                     borderRadius: '12px',
                     border: '1px solid #E2E8F0',
-                    boxShadow: '0 4px 12px rgba(11, 37, 69, 0.05)',
-                    transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                    boxShadow: '0 2px 8px rgba(11, 37, 69, 0.04)',
                     position: 'relative',
-                    overflow: 'hidden',
                   }}
                 >
                   {/* Top Header: Photo/Avatar + Identity */}
                   <div>
-                    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start', marginBottom: '1rem' }}>
-                      {/* Student Photo / Avatar */}
+                    <div style={{ display: 'flex', gap: '0.85rem', alignItems: 'flex-start', marginBottom: '0.85rem' }}>
                       <div
                         style={{
-                          width: '56px',
-                          height: '56px',
-                          minWidth: '56px',
+                          width: '50px',
+                          height: '50px',
+                          minWidth: '50px',
                           borderRadius: '50%',
                           background: 'linear-gradient(135deg, #0B2545 0%, #134074 100%)',
                           color: '#C59B27',
@@ -420,9 +710,9 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                           alignItems: 'center',
                           justifyContent: 'center',
                           fontWeight: 800,
-                          fontSize: '1.25rem',
+                          fontSize: '1.15rem',
                           border: '2px solid #C59B27',
-                          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                          boxShadow: '0 2px 6px rgba(0,0,0,0.08)',
                           overflow: 'hidden',
                         }}
                       >
@@ -438,91 +728,110 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                       </div>
 
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                          <h4
-                            style={{
-                              fontSize: '1.1rem',
-                              fontWeight: 800,
-                              color: '#0B2545',
-                              margin: 0,
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                            }}
-                            title={m.full_name}
-                          >
-                            {m.full_name}
-                          </h4>
-                        </div>
+                        <h4
+                          style={{
+                            fontSize: '1.05rem',
+                            fontWeight: 800,
+                            color: '#0B2545',
+                            margin: 0,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                          title={m.full_name}
+                        >
+                          {m.full_name}
+                        </h4>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '2px' }}>
                           <span
                             style={{
-                              fontSize: '0.8rem',
+                              fontSize: '0.78rem',
                               fontWeight: 700,
                               color: '#B45309',
                               backgroundColor: '#FEF3C7',
-                              padding: '2px 8px',
+                              padding: '1px 6px',
                               borderRadius: '4px',
-                              letterSpacing: '0.5px',
                             }}
                           >
                             {m.register_number}
                           </span>
                         </div>
-                        <div style={{ display: 'flex', gap: '0.4rem', marginTop: '6px', flexWrap: 'wrap' }}>
-                          <span className="badge badge-primary" style={{ fontSize: '0.72rem' }}>
-                            {m.department_code || m.department_name || 'ENGINEERING'}
+                        <div style={{ display: 'flex', gap: '0.35rem', marginTop: '5px', flexWrap: 'wrap' }}>
+                          <span className="badge badge-primary" style={{ fontSize: '0.7rem', padding: '2px 6px' }}>
+                            {m.department_code || m.department_name || 'IT'}
                           </span>
-                          <span className="badge badge-secondary" style={{ fontSize: '0.72rem' }}>
-                            {m.batch_name || 'Batch'}
+                          <span className="badge badge-secondary" style={{ fontSize: '0.7rem', padding: '2px 6px' }}>
+                            {studentYear}
+                          </span>
+                          <span className="badge badge-info" style={{ fontSize: '0.7rem', padding: '2px 6px' }}>
+                            Sec {studentSec}
                           </span>
                         </div>
                       </div>
                     </div>
 
-                    {/* Academic Performance Indicators */}
+                    {/* Section 8 Required Indicators Grid (CGPA, Active Arrears, Counselling Sessions, Document Count) */}
                     <div
                       style={{
                         display: 'grid',
                         gridTemplateColumns: '1fr 1fr',
-                        gap: '0.75rem',
-                        padding: '0.75rem',
+                        gap: '0.5rem',
+                        padding: '0.65rem',
                         backgroundColor: '#F8FAFC',
                         borderRadius: '8px',
-                        marginBottom: '1rem',
+                        marginBottom: '0.85rem',
                         border: '1px solid #EDF2F7',
                       }}
                     >
                       <div>
-                        <div style={{ fontSize: '0.7rem', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>
+                        <div style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>
                           Current CGPA
                         </div>
-                        <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0B2545', marginTop: '2px' }}>
+                        <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0B2545', marginTop: '2px' }}>
                           {cgpaVal}
                         </div>
                       </div>
+
                       <div>
-                        <div style={{ fontSize: '0.7rem', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>
-                          Arrears Count
+                        <div style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>
+                          Active Arrears
                         </div>
                         <div style={{ marginTop: '2px' }}>
                           <span
                             className={`badge ${arrears > 0 ? 'badge-danger' : 'badge-success'}`}
-                            style={{ fontWeight: 700, fontSize: '0.8rem' }}
+                            style={{ fontWeight: 700, fontSize: '0.75rem', padding: '2px 6px' }}
                           >
-                            {arrears > 0 ? `${arrears} Standing` : '0 (Clear)'}
+                            {arrears > 0 ? `${arrears} Active` : '0 (Clear)'}
                           </span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>
+                          Counselling
+                        </div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B', marginTop: '2px' }}>
+                          {m.counselling_count || 0} Sessions
+                        </div>
+                      </div>
+
+                      <div>
+                        <div style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>
+                          Documents
+                        </div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B', marginTop: '2px' }}>
+                          {m.document_count || 0} Uploaded
                         </div>
                       </div>
                     </div>
 
                     {/* Profile Completion Progress */}
-                    <div style={{ marginBottom: '1rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                    <div style={{ marginBottom: '0.85rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', fontWeight: 600, color: '#475569', marginBottom: '3px' }}>
                         <span>Profile Completion</span>
                         <span style={{ color: completion >= 100 ? '#059669' : '#D97706' }}>{completion}%</span>
                       </div>
-                      <div style={{ width: '100%', height: '6px', backgroundColor: '#E2E8F0', borderRadius: '4px', overflow: 'hidden' }}>
+                      <div style={{ width: '100%', height: '5px', backgroundColor: '#E2E8F0', borderRadius: '4px', overflow: 'hidden' }}>
                         <div
                           style={{
                             width: `${Math.min(100, completion)}%`,
@@ -534,64 +843,47 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                         />
                       </div>
                     </div>
-
-                    {/* Mentorship & Meeting Details */}
-                    <div style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.7, marginBottom: '0.5rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#64748B' }}>Current Mentor:</span>
-                        <strong style={{ color: '#0B2545' }}>{m.current_mentor_name || user?.fullName || 'Assigned Mentor'}</strong>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#64748B' }}>Next Saturday Meeting:</span>
-                        <strong style={{ color: '#0B2545' }}>{nextMeeting}</strong>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '2px' }}>
-                        <span style={{ color: '#64748B' }}>Meeting Status:</span>
-                        <span
-                          className={`badge ${
-                            meetingStatus === 'COMPLETED'
-                              ? 'badge-success'
-                              : meetingStatus === 'SCHEDULED'
-                              ? 'badge-info'
-                              : 'badge-warning'
-                          }`}
-                          style={{ fontSize: '0.72rem', textTransform: 'capitalize' }}
-                        >
-                          {meetingStatus.toLowerCase()}
-                        </span>
-                      </div>
-                    </div>
                   </div>
 
-                  {/* Card Actions Footer */}
-                  <div style={{ display: 'flex', gap: '0.6rem', marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid #F1F5F9' }}>
+                  {/* Section 8 Actions Footer (4 Required Buttons) */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.45rem', marginTop: '0.5rem', paddingTop: '0.65rem', borderTop: '1px solid #F1F5F9' }}>
                     <button
-                      className="btn btn-primary"
-                      style={{
-                        flex: 1,
-                        padding: '0.6rem 1rem',
-                        fontWeight: 700,
-                        fontSize: '0.85rem',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '0.4rem',
-                        letterSpacing: '0.3px',
-                      }}
+                      className="btn btn-primary btn-sm"
+                      style={{ fontSize: '0.78rem', padding: '0.45rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}
                       onClick={() => {
                         setStudentInitialTab('overview');
                         setSelectedStudentId(m.id || m._id);
                       }}
                     >
-                      VIEW DETAILS <ArrowRight size={15} />
+                      View Details
+                    </button>
+                    <button
+                      className="btn btn-outline btn-sm"
+                      style={{ fontSize: '0.78rem', padding: '0.45rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}
+                      onClick={() => {
+                        setStudentInitialTab('counselling');
+                        setSelectedStudentId(m.id || m._id);
+                      }}
+                    >
+                      <BookOpen size={13} /> Counselling
+                    </button>
+                    <button
+                      className="btn btn-outline btn-sm"
+                      style={{ fontSize: '0.78rem', padding: '0.45rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}
+                      onClick={() => {
+                        setStudentInitialTab('documents');
+                        setSelectedStudentId(m.id || m._id);
+                      }}
+                    >
+                      <FileCheck size={13} /> Documents
                     </button>
                     <button
                       className="btn btn-pdf btn-sm"
-                      title="Download Dossier PDF"
+                      style={{ fontSize: '0.78rem', padding: '0.45rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}
+                      title="Download Student Dossier PDF"
                       onClick={() => api.pdf.downloadStudentPdf(m.id || m._id, `KSRCE_Mentee_${m.register_number}_Dossier.pdf`)}
-                      style={{ padding: '0.6rem 0.85rem' }}
                     >
-                      <FileText size={16} /> PDF
+                      <Download size={13} /> Download PDF
                     </button>
                   </div>
                 </div>
@@ -836,6 +1128,291 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
           )}
         </div>
       )}
+
+      {/* Student Documents Tab (Section 14 & Quick Action) */}
+      {currentTab === 'documents' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+            <div>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
+                Mentee Documents & Institutional Portfolios
+              </h2>
+              <p style={{ fontSize: '0.85rem', color: '#64748B', marginTop: '2px' }}>
+                View uploaded certificates, Student Details Form PDFs, and document archives for all assigned mentees.
+              </p>
+            </div>
+            <button
+              className="btn btn-pdf btn-sm"
+              onClick={() => setShowQuickPdfModal(true)}
+            >
+              <Download size={14} /> Download Student PDF
+            </button>
+          </div>
+
+          {mentees.length === 0 ? (
+            <EmptyState
+              icon={<FileCheck size={40} />}
+              title="No Student Documents"
+              description="Uploaded certificates and system-generated student form PDFs will appear here once mentees are assigned."
+            />
+          ) : (
+            <div className="card">
+              <div className="table-responsive">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Register No</th>
+                      <th>Student Name</th>
+                      <th>Department & Year</th>
+                      <th>Uploaded Files</th>
+                      <th>Profile PDF Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mentees.map((m) => (
+                      <tr key={m.id || m._id}>
+                        <td style={{ fontWeight: 700, color: '#0B2545' }}>{m.register_number}</td>
+                        <td>
+                          <strong>{m.full_name}</strong>
+                          <div style={{ fontSize: '0.75rem', color: '#64748B' }}>{m.email}</div>
+                        </td>
+                        <td>
+                          {m.department_code || m.department_name} • {m.year || 2} Year
+                        </td>
+                        <td>
+                          <span className="badge badge-info" style={{ fontWeight: 700 }}>
+                            {m.document_count || 0} Documents
+                          </span>
+                        </td>
+                        <td>
+                          <span className="badge badge-success" style={{ fontWeight: 600 }}>
+                            Auto-Attached
+                          </span>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '0.4rem' }}>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => {
+                                setStudentInitialTab('documents');
+                                setSelectedStudentId(m.id || m._id);
+                              }}
+                            >
+                              <FileCheck size={13} /> View Documents
+                            </button>
+                            <button
+                              className="btn btn-pdf btn-sm"
+                              onClick={() => api.pdf.downloadStudentPdf(m.id || m._id, `KSRCE_Mentee_${m.register_number}_Dossier.pdf`)}
+                            >
+                              <Download size={13} /> PDF
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* AI Assistant Tab (Section 13) */}
+      {currentTab === 'ai-advisor' && (
+        <div>
+          <div
+            className="card"
+            style={{
+              padding: '2rem',
+              borderRadius: '16px',
+              background: 'linear-gradient(135deg, #0B2545 0%, #134074 100%)',
+              color: '#ffffff',
+              marginBottom: '1.5rem',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+              <div
+                style={{
+                  width: '44px',
+                  height: '44px',
+                  borderRadius: '10px',
+                  backgroundColor: 'rgba(197, 155, 39, 0.2)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#C59B27',
+                }}
+              >
+                <Sparkles size={24} />
+              </div>
+              <div>
+                <h2 style={{ fontSize: '1.4rem', fontWeight: 800, margin: 0, color: '#ffffff' }}>
+                  Faculty Mentorship AI Advisory Assistant
+                </h2>
+                <div style={{ fontSize: '0.85rem', color: '#CBD5E1' }}>
+                  Institutional Guidance • Communication Coaching • Arrear Remediation Strategies
+                </div>
+              </div>
+            </div>
+
+            <p style={{ color: '#E2E8F0', fontSize: '0.925rem', maxWidth: '720px', lineHeight: 1.6 }}>
+              A specialized consultative assistant for mentors. Formulate discussion agendas, design remedial action plans, and prepare personalized intervention strategies for your mentees.
+            </p>
+
+            <div style={{ marginTop: '1.25rem' }}>
+              <button
+                className="btn btn-gold"
+                style={{ padding: '0.75rem 1.5rem', fontWeight: 700, fontSize: '0.95rem' }}
+                onClick={() => setIsAiBotOpen(true)}
+              >
+                <Sparkles size={16} /> Open Interactive AI Advisor Chat
+              </button>
+            </div>
+          </div>
+
+          {/* Sample Prompts Grid */}
+          <div className="card" style={{ padding: '1.5rem' }}>
+            <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#0B2545', marginBottom: '1rem' }}>
+              Frequently Asked Guidance Prompts
+            </h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '0.75rem' }}>
+              {[
+                "How can I improve a student's communication skills?",
+                "What activities can help improve presentation skills?",
+                "How should I guide a student with repeated arrears?",
+                "Give me counselling discussion points for poor attendance.",
+                "Suggest questions to ask during a mentor meeting.",
+                "How to motivate a student with semester 1 and 2 standing arrears?",
+              ].map((prompt, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    padding: '0.85rem 1rem',
+                    borderRadius: '8px',
+                    backgroundColor: '#F8FAFC',
+                    border: '1px solid #E2E8F0',
+                    fontSize: '0.875rem',
+                    color: '#334155',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => setIsAiBotOpen(true)}
+                >
+                  <span>"{prompt}"</span>
+                  <ArrowRight size={14} style={{ color: '#0B2545', flexShrink: 0, marginLeft: '0.5rem' }} />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Separate AI Advisory Assistant Modal (Section 13) */}
+      <MentorAiBotModal isOpen={isAiBotOpen} onClose={() => setIsAiBotOpen(false)} />
+
+      {/* Quick PDF Download Modal */}
+      <Modal
+        isOpen={showQuickPdfModal}
+        onClose={() => setShowQuickPdfModal(false)}
+        title="Download Student Dossier PDF"
+      >
+        <div style={{ padding: '0.5rem 0' }}>
+          <p style={{ fontSize: '0.875rem', color: '#64748B', marginBottom: '1rem' }}>
+            Select any assigned mentee to download their complete institutional dossier PDF including profile, academic history, arrears, and counselling records.
+          </p>
+
+          <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+            <label className="form-label" style={{ fontWeight: 700 }}>Select Mentee *</label>
+            <select
+              className="form-control"
+              value={quickPdfStudentId}
+              onChange={(e) => setQuickPdfStudentId(e.target.value)}
+            >
+              <option value="">-- Choose an assigned mentee --</option>
+              {mentees.map((m) => (
+                <option key={m.id || m._id} value={m.id || m._id}>
+                  {m.register_number} — {m.full_name} ({m.department_code || 'IT'} {m.batch_name || ''})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => setShowQuickPdfModal(false)}
+            >
+              Cancel
+            </button>
+            <button
+              className="btn btn-pdf"
+              disabled={!quickPdfStudentId}
+              onClick={() => {
+                const target = mentees.find((m) => (m.id || m._id) === quickPdfStudentId);
+                const regNo = target?.register_number || 'Mentee';
+                api.pdf.downloadStudentPdf(quickPdfStudentId, `KSRCE_Mentee_${regNo}_Dossier.pdf`);
+                setShowQuickPdfModal(false);
+              }}
+            >
+              <Download size={15} /> Download Complete Dossier PDF
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Quick Add Counselling Modal */}
+      <Modal
+        isOpen={showQuickCounsellingModal}
+        onClose={() => setShowQuickCounsellingModal(false)}
+        title="Add Mentee Counselling Session"
+      >
+        <div style={{ padding: '0.5rem 0' }}>
+          <p style={{ fontSize: '0.875rem', color: '#64748B', marginBottom: '1rem' }}>
+            Select an assigned mentee to open their counselling record book and add an intervention record with multi-category classification and grammar assistance.
+          </p>
+
+          <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+            <label className="form-label" style={{ fontWeight: 700 }}>Select Mentee *</label>
+            <select
+              className="form-control"
+              value={quickCounsellingStudentId}
+              onChange={(e) => setQuickCounsellingStudentId(e.target.value)}
+            >
+              <option value="">-- Choose an assigned mentee --</option>
+              {mentees.map((m) => (
+                <option key={m.id || m._id} value={m.id || m._id}>
+                  {m.register_number} — {m.full_name} ({m.counselling_count || 0} Sessions)
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => setShowQuickCounsellingModal(false)}
+            >
+              Cancel
+            </button>
+            <button
+              className="btn btn-primary"
+              disabled={!quickCounsellingStudentId}
+              onClick={() => {
+                const id = quickCounsellingStudentId;
+                setShowQuickCounsellingModal(false);
+                setStudentInitialTab('counselling');
+                setSelectedStudentId(id);
+              }}
+            >
+              <BookOpen size={15} /> Open Counselling Desk
+            </button>
+          </div>
+        </div>
+      </Modal>
 
     </div>
   );

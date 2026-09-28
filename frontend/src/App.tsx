@@ -12,6 +12,9 @@ import { CompleteProfileWizard } from './pages/student/CompleteProfileWizard';
 import { PwaInstallBanner } from './components/common/PwaInstallBanner';
 import { NotFoundPage } from './pages/error/NotFoundPage';
 import { AccessDeniedState } from './pages/error/AccessDeniedState';
+import { SessionExpiredState } from './pages/error/SessionExpiredState';
+import { ServerErrorState } from './pages/error/ServerErrorState';
+import { NetworkErrorState } from './pages/error/NetworkErrorState';
 import { StudentRouteView } from './pages/common/StudentRouteView';
 import { MentorViewWrapper } from './pages/common/MentorViewWrapper';
 
@@ -70,6 +73,11 @@ export const App: React.FC = () => {
         <Routes>
           <Route path="/" element={<LoginPage />} />
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/session-expired" element={<SessionExpiredState onLoginAgain={() => navigate('/login')} />} />
+          <Route path="/401" element={<SessionExpiredState onLoginAgain={() => navigate('/login')} />} />
+          <Route path="/403" element={<AccessDeniedState onGoDashboard={() => navigate('/login')} />} />
+          <Route path="/500" element={<ServerErrorState onRetry={() => window.location.reload()} />} />
+          <Route path="/network-error" element={<NetworkErrorState onRetry={() => window.location.reload()} />} />
           <Route path="*" element={<NotFoundPage onGoDashboard={() => navigate('/login')} onGoBack={() => navigate('/login')} />} />
         </Routes>
         <PwaInstallBanner />
@@ -186,6 +194,15 @@ export const App: React.FC = () => {
         path="/student/*"
         element={user?.role === 'STUDENT' ? MainDashboardLayout : <AccessDeniedState onGoDashboard={() => navigate('/')} />}
       />
+
+      {/* Explicit Error Pages (Section 4) */}
+      <Route path="/session-expired" element={<SessionExpiredState onLoginAgain={() => navigate('/login')} />} />
+      <Route path="/401" element={<SessionExpiredState onLoginAgain={() => navigate('/login')} />} />
+      <Route path="/access-denied" element={<AccessDeniedState onGoDashboard={() => navigate('/')} />} />
+      <Route path="/403" element={<AccessDeniedState onGoDashboard={() => navigate('/')} />} />
+      <Route path="/server-error" element={<ServerErrorState onRetry={() => window.location.reload()} />} />
+      <Route path="/500" element={<ServerErrorState onRetry={() => window.location.reload()} />} />
+      <Route path="/network-error" element={<NetworkErrorState onRetry={() => window.location.reload()} />} />
 
       {/* Catch-all 404 Route (Requirement 14) */}
       <Route path="*" element={<NotFoundPage onGoDashboard={() => navigate('/')} onGoBack={() => navigate(-1)} />} />

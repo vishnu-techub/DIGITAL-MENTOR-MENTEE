@@ -12,6 +12,9 @@ import {
   AuditLog,
   SystemSetting,
   Notification,
+  CounsellingRecord,
+  AcademicRecord,
+  StudentDocument,
 } from '../../models/index.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
@@ -24,10 +27,22 @@ export async function getAdminDashboardStats(req: AuthRequest, res: Response) {
     const totalStudents = await Student.countDocuments({ isActive: true });
     const totalFaculty = await Faculty.countDocuments({ isActive: true });
     const totalDepartments = await Department.countDocuments();
-    const activeAssignments = await MentorAssignment.countDocuments({ status: 'ACTIVE' });
+    const assignedMentees = await MentorAssignment.countDocuments({ status: 'ACTIVE' });
+    const unassignedStudents = Math.max(0, totalStudents - assignedMentees);
     const reassignmentsCount = await MentorAssignment.countDocuments({ status: 'COMPLETED' });
     const totalMeetings = await Meeting.countDocuments({ meetingStatus: 'COMPLETED' });
     const pendingMeetings = await Meeting.countDocuments({ meetingStatus: 'PENDING' });
+
+    // Real MongoDB calculation for Active Arrears
+    const arrearAgg = await AcademicRecord.aggregate([
+      { $match: { arrearsCount: { $gt: 0 } } },
+      { $group: { _id: null, totalActiveArrears: { $sum: '$arrearsCount' } } },
+    ]);
+    const activeArrears = arrearAgg[0]?.totalActiveArrears || 0;
+
+    // Real MongoDB calculation for Counselling Sessions & Documents
+    const counsellingSessions = await CounsellingRecord.countDocuments();
+    const uploadedDocuments = await StudentDocument.countDocuments();
 
     // Recent 10 audit activities
     const rawActivities = await AuditLog.find()
@@ -49,8 +64,13 @@ export async function getAdminDashboardStats(req: AuthRequest, res: Response) {
       totalStudents,
       totalFaculty,
       totalDepartments,
-      activeAssignments,
+      assignedMentees,
+      unassignedStudents,
+      activeAssignments: assignedMentees,
       reassignmentsCount,
+      activeArrears,
+      counsellingSessions,
+      uploadedDocuments,
       totalMeetings,
       pendingMeetings,
       recentActivities,

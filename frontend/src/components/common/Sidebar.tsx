@@ -20,6 +20,7 @@ import {
   Download,
   LogOut,
   X,
+  Sparkles,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -211,10 +212,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, isOpe
               <BookOpen size={18} /> 5-Domain Counselling
             </button>
             <button
+              className={`nav-item ${currentTab === 'documents' ? 'active' : ''}`}
+              onClick={() => handleSelect('documents')}
+            >
+              <FileCheck size={18} /> Student Documents
+            </button>
+            <button
               className={`nav-item ${currentTab === 'progress' ? 'active' : ''}`}
               onClick={() => handleSelect('progress')}
             >
               <Award size={18} /> Monthly Improvement
+            </button>
+            <button
+              className={`nav-item ${currentTab === 'ai-advisor' ? 'active' : ''}`}
+              onClick={() => handleSelect('ai-advisor')}
+            >
+              <Sparkles size={18} /> AI Assistant
             </button>
           </>
         );

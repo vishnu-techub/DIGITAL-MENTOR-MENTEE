@@ -122,11 +122,12 @@ export async function getStudents(req: AuthRequest, res: Response) {
         const activeMentor = activeAsg?.mentor as any;
         const mentorUser = activeMentor?.user as any;
 
-        const [meetingCount, counsellingCount, academicRecords, latestMeeting] = await Promise.all([
+        const [meetingCount, counsellingCount, academicRecords, latestMeeting, docCount] = await Promise.all([
           Meeting.countDocuments({ student: s._id, meetingStatus: 'COMPLETED' }),
           CounsellingRecord.countDocuments({ student: s._id }),
           AcademicRecord.find({ student: s._id }).sort({ semesterNumber: -1 }),
           Meeting.findOne({ student: s._id }).sort({ meetingDate: -1 }),
+          StudentDocument.countDocuments({ student: s._id }),
         ]);
 
         const arrearStats = calculateArrearStatistics(
@@ -162,6 +163,8 @@ export async function getStudents(req: AuthRequest, res: Response) {
           department_code: dept?.code || '',
           batch_id: batch?._id?.toString() || '',
           batch_name: batch?.name || '',
+          year: s.year || 2,
+          section: s.section || 'A',
           dob: s.dob || '',
           blood_group: s.bloodGroup || '',
           residential_type: s.residentialType,
@@ -177,6 +180,7 @@ export async function getStudents(req: AuthRequest, res: Response) {
           assignment_status: activeAsg?.status || 'UNASSIGNED',
           completed_meetings_count: meetingCount,
           counselling_count: counsellingCount,
+          document_count: docCount,
           total_arrears: totalArrears,
           active_arrears: arrearStats.activeArrearsCount,
           historical_arrears: arrearStats.historicalArrearsCount,
