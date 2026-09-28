@@ -9,6 +9,8 @@ import { StudentNotFound } from '../error/StudentNotFound';
 import { NetworkErrorState } from '../error/NetworkErrorState';
 import { ServiceUnavailableState } from '../error/ServiceUnavailableState';
 import { ServerErrorState } from '../error/ServerErrorState';
+import { MentorAiBotModal } from '../../components/mentor/MentorAiBotModal';
+import { GrammarAssistField } from '../../components/mentor/GrammarAssistField';
 import {
   ArrowLeft,
   GraduationCap,
@@ -101,19 +103,21 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
   });
   const [submittingMeeting, setSubmittingMeeting] = useState(false);
 
+  // Separate Mentor AI Assistant Modal
+  const [showAiBot, setShowAiBot] = useState(false);
+
+  // Mentor-Controlled Counselling Form Modal (Strictly manual with grammar assist)
   const [showCounsellingModal, setShowCounsellingModal] = useState(false);
   const [counsellingForm, setCounsellingForm] = useState({
-    sessionDate: new Date().toISOString().split('T')[0],
-    category: 'Skill Development',
+    counsellingDate: new Date().toISOString().split('T')[0],
+    concernReason: '',
+    discussionObservation: '',
     skillNeedingImprovement: '',
-    challengeObserved: '',
-    correctiveAction: '',
-    expectedImprovement: '',
-    studentFeedback: '',
     mentorRemarks: '',
+    actionPlan: '',
     followUpDate: '',
+    status: 'Completed',
   });
-  const [aiGenerating, setAiGenerating] = useState(false);
   const [submittingCounselling, setSubmittingCounselling] = useState(false);
 
   const [showClearArrearModal, setShowClearArrearModal] = useState(false);
@@ -245,91 +249,49 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
     }
   };
 
-  // AI Counselling Assistant Generation
-  const handleGenerateAiSuggestions = async () => {
-    if (!counsellingForm.skillNeedingImprovement.trim() && !counsellingForm.challengeObserved.trim()) {
-      toast.warning('Please enter the skill / area needing improvement or describe the observation first.');
-      return;
-    }
-
-    const promptText = counsellingForm.skillNeedingImprovement.trim() || counsellingForm.challengeObserved.trim();
-    setAiGenerating(true);
-    try {
-      const res = await api.counselling.getAiSuggestion(
-        student.id,
-        counsellingForm.category,
-        promptText
-      );
-
-      if (res.success && res.data) {
-        setCounsellingForm((prev) => ({
-          ...prev,
-          challengeObserved:
-            res.data.challengeObserved ||
-            `Mentee exhibits need for targeted guidance in ${promptText}.`,
-          correctiveAction:
-            res.data.correctiveAction ||
-            `1. Structured practice in ${promptText}.\n2. Weekly progress check.\n3. Referral to peer tutor.`,
-          expectedImprovement:
-            res.data.expectedImprovement ||
-            `Measurable improvement within 3 weeks of consistent practice.`,
-          mentorRemarks: `AI-suggested mentoring plan reviewed and customized for mentee on ${new Date().toISOString().split('T')[0]}.`,
-        }));
-        toast.success('AI counselling recommendations generated! Please review and modify before saving.');
-      } else {
-        // Fallback institutional generator
-        generateLocalAiPlan(promptText, counsellingForm.category);
-      }
-    } catch (err) {
-      generateLocalAiPlan(promptText, counsellingForm.category);
-    } finally {
-      setAiGenerating(false);
-    }
-  };
-
-  const generateLocalAiPlan = (promptText: string, category: string) => {
-    setCounsellingForm((prev) => ({
-      ...prev,
-      challengeObserved: `Mentee identified as requiring targeted intervention in: "${promptText}". Current performance indicates need for structured mentoring.`,
-      correctiveAction: `• Step 1: Dedicate 45 minutes daily to ${promptText} fundamentals.\n• Step 2: Solve 3 previous Anna University exam question sets.\n• Step 3: Attend Saturday mentoring session for doubts clearing.`,
-      expectedImprovement: `Demonstrated comprehension and improved mock test score within 3 weeks.`,
-      mentorRemarks: `Reviewed by faculty mentor on ${new Date().toISOString().split('T')[0]}. Mentee advised to maintain regular attendance.`,
-    }));
-    toast.success('AI recommendations generated! Please review and adjust before saving.');
-  };
-
-  // Counselling Submission
+  // Mentor-Controlled Counselling Submission (Strictly mentor-typed, AI never automatically generates or saves)
   const handleCounsellingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!counsellingForm.challengeObserved.trim() || !counsellingForm.correctiveAction.trim()) {
-      toast.warning('Challenge observed and corrective action are required.');
+    const concern = counsellingForm.concernReason.trim();
+    const discussion = counsellingForm.discussionObservation.trim();
+    const actionPlan = counsellingForm.actionPlan.trim();
+
+    if (!concern && !discussion) {
+      toast.warning('Please enter either Concern / Reason or Discussion / Observation.');
       return;
     }
+    if (!actionPlan) {
+      toast.warning('Action Plan is required.');
+      return;
+    }
+
     setSubmittingCounselling(true);
     try {
       await api.counselling.create({
         studentId: student.id,
-        category: counsellingForm.category,
-        sessionDate: counsellingForm.sessionDate,
-        challengeObserved: counsellingForm.challengeObserved,
-        correctiveAction: counsellingForm.correctiveAction,
-        expectedImprovement: counsellingForm.expectedImprovement,
-        studentFeedback: counsellingForm.studentFeedback || 'Mentee agreed to execute the corrective plan.',
+        counsellingDate: counsellingForm.counsellingDate,
+        concernReason: counsellingForm.concernReason,
+        discussionObservation: counsellingForm.discussionObservation,
+        challengeObserved: counsellingForm.discussionObservation || counsellingForm.concernReason,
+        skillNeedingImprovement: counsellingForm.skillNeedingImprovement,
         mentorRemarks: counsellingForm.mentorRemarks,
-        aiGenerated: true,
+        actionPlan: counsellingForm.actionPlan,
+        correctiveAction: counsellingForm.actionPlan,
+        followUpDate: counsellingForm.followUpDate,
+        status: counsellingForm.status,
+        aiGenerated: false,
       });
-      toast.success('5-Domain counselling record saved successfully.');
+      toast.success('Counselling record saved successfully.');
       setShowCounsellingModal(false);
       setCounsellingForm({
-        sessionDate: new Date().toISOString().split('T')[0],
-        category: 'Skill Development',
+        counsellingDate: new Date().toISOString().split('T')[0],
+        concernReason: '',
+        discussionObservation: '',
         skillNeedingImprovement: '',
-        challengeObserved: '',
-        correctiveAction: '',
-        expectedImprovement: '',
-        studentFeedback: '',
         mentorRemarks: '',
+        actionPlan: '',
         followUpDate: '',
+        status: 'Completed',
       });
       await fetchStudentData();
     } catch (err: any) {
@@ -661,6 +623,28 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             >
               <Download size={16} />
               {pdfDownloading ? 'Generating PDF...' : 'Download Student PDF'}
+            </button>
+
+            {/* Separate Mentor AI Assistant / AI Bot Button */}
+            <button
+              type="button"
+              onClick={() => setShowAiBot(true)}
+              className="btn btn-primary"
+              style={{
+                backgroundColor: '#7C3AED',
+                borderColor: '#7C3AED',
+                color: '#ffffff',
+                fontWeight: 800,
+                fontSize: '0.85rem',
+                padding: '0.65rem 1.25rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                boxShadow: '0 2px 8px rgba(124, 58, 237, 0.25)',
+              }}
+              title="Open Separate Mentor AI Advisory Bot"
+            >
+              <Bot size={16} /> AI Assistant / Bot
             </button>
           </div>
         </div>
@@ -1483,24 +1467,44 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
       {activeTab === 'counselling' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           {/* Header & Add Action */}
+          {/* Header & Add Action */}
           <div className="card" style={{ padding: '1.5rem', backgroundColor: '#ffffff' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
               <div>
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
-                  Mentee 5-Domain Counselling Dossier
+                  Mentee Counselling Records & Dossier
                 </h2>
                 <p style={{ fontSize: '0.82rem', color: '#64748B', margin: '4px 0 0 0' }}>
                   Student-specific intervention and corrective action records for {student.full_name} ({student.register_number}).
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowCounsellingModal(true)}
-                className="btn btn-primary"
-                style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}
-              >
-                <Plus size={16} /> + Add Counselling Record
-              </button>
+              <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowAiBot(true)}
+                  className="btn btn-secondary"
+                  style={{
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.45rem',
+                    color: '#6D28D9',
+                    borderColor: '#DDD6FE',
+                    backgroundColor: '#F5F3FF',
+                  }}
+                  title="Open Separate Mentor AI Advisor Bot"
+                >
+                  <Bot size={16} /> Open AI Advisor Bot
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCounsellingModal(true)}
+                  className="btn btn-primary"
+                  style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}
+                >
+                  <Plus size={16} /> + Add Counselling Record
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1517,57 +1521,84 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                     borderLeft: '4px solid #7C3AED',
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '0.85rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
                       <span className="badge badge-primary" style={{ backgroundColor: '#7C3AED', color: '#ffffff' }}>
-                        {c.category}
+                        {c.category || 'Mentorship'}
                       </span>
                       <span style={{ fontSize: '0.82rem', color: '#64748B', fontWeight: 600 }}>
-                        Session Date: {c.session_date ? new Date(c.session_date).toLocaleDateString() : 'Recent'}
+                        Counselling Date: {c.counselling_date || c.counsellingDate || c.session_date ? new Date(c.counselling_date || c.counsellingDate || c.session_date).toLocaleDateString() : 'Recent'}
                       </span>
+                      {c.status && (
+                        <span className="badge badge-secondary" style={{ backgroundColor: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE' }}>
+                          Status: {c.status}
+                        </span>
+                      )}
                     </div>
                     <span className="badge badge-success">
-                      ✓ Mentor Signed
+                      ✓ Mentor Recorded & Signed
                     </span>
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem', fontSize: '0.86rem' }}>
-                    <div>
-                      <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
-                        Observed Concern / Challenge
-                      </div>
-                      <div style={{ color: '#0F172A', marginTop: '2px', fontWeight: 600 }}>
-                        {c.challenge_observed || c.challengeObserved}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
-                        Corrective Action Plan
-                      </div>
-                      <div style={{ color: '#0F172A', marginTop: '2px', whiteSpace: 'pre-line' }}>
-                        {c.corrective_action || c.correctiveAction}
-                      </div>
-                    </div>
-
-                    {(c.expected_improvement || c.expectedImprovement) && (
+                    {(c.concern_reason || c.concernReason) && (
                       <div>
                         <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
-                          Expected Improvement
+                          Concern / Reason
                         </div>
-                        <div style={{ color: '#059669', marginTop: '2px', fontWeight: 600 }}>
-                          {c.expected_improvement || c.expectedImprovement}
+                        <div style={{ color: '#0F172A', marginTop: '2px', fontWeight: 600 }}>
+                          {c.concern_reason || c.concernReason}
                         </div>
                       </div>
                     )}
 
+                    <div>
+                      <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+                        Discussion / Observation
+                      </div>
+                      <div style={{ color: '#0F172A', marginTop: '2px', fontWeight: 500, whiteSpace: 'pre-line' }}>
+                        {c.discussion_observation || c.discussionObservation || c.challenge_observed || c.challengeObserved}
+                      </div>
+                    </div>
+
+                    {(c.skill_needing_improvement || c.skillNeedingImprovement) && (
+                      <div>
+                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+                          Skills Needing Improvement
+                        </div>
+                        <div style={{ color: '#D97706', marginTop: '2px', fontWeight: 600 }}>
+                          {c.skill_needing_improvement || c.skillNeedingImprovement}
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+                        Action Plan
+                      </div>
+                      <div style={{ color: '#0F172A', marginTop: '2px', whiteSpace: 'pre-line' }}>
+                        {c.action_plan || c.actionPlan || c.corrective_action || c.correctiveAction}
+                      </div>
+                    </div>
+
                     {(c.mentor_remarks || c.mentorRemarks) && (
                       <div>
                         <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
-                          Mentor Remarks & Follow-Up
+                          Mentor Remarks
                         </div>
                         <div style={{ color: '#334155', marginTop: '2px', fontStyle: 'italic' }}>
                           {c.mentor_remarks || c.mentorRemarks}
+                        </div>
+                      </div>
+                    )}
+
+                    {(c.follow_up_date || c.followUpDate) && (
+                      <div>
+                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+                          Follow-up Date
+                        </div>
+                        <div style={{ color: '#2563EB', marginTop: '2px', fontWeight: 600 }}>
+                          {new Date(c.follow_up_date || c.followUpDate).toLocaleDateString()}
                         </div>
                       </div>
                     )}
@@ -1581,16 +1612,34 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0B2545', margin: '0 0 0.5rem 0' }}>
                 No Counselling Records for this Mentee Yet
               </h3>
-              <p style={{ fontSize: '0.85rem', color: '#64748B', maxWidth: '420px', margin: '0 auto 1.25rem auto' }}>
-                Counselling sessions are recorded on a student-specific basis. Click below to log a new counselling record with AI assistance.
+              <p style={{ fontSize: '0.85rem', color: '#64748B', maxWidth: '440px', margin: '0 auto 1.25rem auto' }}>
+                Counselling sessions are recorded on a student-specific basis. Mentors manually type the counselling details with built-in writing assistance.
               </p>
-              <button
-                type="button"
-                onClick={() => setShowCounsellingModal(true)}
-                className="btn btn-primary"
-              >
-                + Add First Counselling Record
-              </button>
+              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowAiBot(true)}
+                  className="btn btn-secondary"
+                  style={{
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.45rem',
+                    color: '#6D28D9',
+                    borderColor: '#DDD6FE',
+                    backgroundColor: '#F5F3FF',
+                  }}
+                >
+                  <Bot size={16} /> Open AI Advisor Bot
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCounsellingModal(true)}
+                  className="btn btn-primary"
+                >
+                  + Add First Counselling Record
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -1910,139 +1959,134 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
         </Modal>
       )}
 
-      {/* Modal 2: Add Counselling Record with AI Assistant */}
+      {/* Modal 2: Mentor-Controlled Counselling Form (Manual Entry with Grammar Assist) */}
       {showCounsellingModal && (
         <Modal
-          title="Add 5-Domain Counselling Record"
+          title="Add Mentee Counselling Record"
           isOpen={showCounsellingModal}
           onClose={() => setShowCounsellingModal(false)}
         >
-          <form onSubmit={handleCounsellingSubmit}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-              <div className="form-group">
-                <label className="form-label">Session Date</label>
+          <form onSubmit={handleCounsellingSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+            <p style={{ fontSize: '0.8rem', color: '#64748B', margin: '0 0 1rem 0' }}>
+              Mentor-recorded counselling session for {student.full_name} ({student.register_number}). Enter observations manually. Real-time writing assistance helps detect spelling and grammar without modifying your meaning.
+            </p>
+
+            {/* Field 1: Counselling Date */}
+            <div className="form-group" style={{ marginBottom: '1rem' }}>
+              <label className="form-label" style={{ fontWeight: 700, fontSize: '0.85rem' }}>
+                Counselling Date <span style={{ color: '#DC2626' }}>*</span>
+              </label>
+              <input
+                type="date"
+                className="form-control"
+                required
+                value={counsellingForm.counsellingDate}
+                onChange={(e) => setCounsellingForm({ ...counsellingForm, counsellingDate: e.target.value })}
+                style={{ fontSize: '0.88rem', minHeight: '42px' }}
+              />
+            </div>
+
+            {/* Field 2: Concern / Reason */}
+            <GrammarAssistField
+              fieldId="concernReason"
+              label="Concern / Reason"
+              required
+              rows={2}
+              placeholder="e.g. Low attendance in Anna University theory subjects / difficulty in core programming..."
+              value={counsellingForm.concernReason}
+              onChange={(val) => setCounsellingForm({ ...counsellingForm, concernReason: val })}
+            />
+
+            {/* Field 3: Discussion / Observation */}
+            <GrammarAssistField
+              fieldId="discussionObservation"
+              label="Discussion / Observation"
+              required
+              rows={3}
+              placeholder="Record mentor discussion points, student's explanation, and observed behavior..."
+              value={counsellingForm.discussionObservation}
+              onChange={(val) => setCounsellingForm({ ...counsellingForm, discussionObservation: val })}
+            />
+
+            {/* Field 4: Skills Needing Improvement */}
+            <GrammarAssistField
+              fieldId="skillNeedingImprovement"
+              label="Skills Needing Improvement"
+              rows={2}
+              placeholder="e.g. Communication, presentation skills, time management, analytical thinking..."
+              value={counsellingForm.skillNeedingImprovement}
+              onChange={(val) => setCounsellingForm({ ...counsellingForm, skillNeedingImprovement: val })}
+            />
+
+            {/* Field 5: Action Plan */}
+            <GrammarAssistField
+              fieldId="actionPlan"
+              label="Action Plan"
+              required
+              rows={3}
+              placeholder="Concrete steps agreed upon: daily revision routine, problem sets to solve, practice vivas..."
+              value={counsellingForm.actionPlan}
+              onChange={(val) => setCounsellingForm({ ...counsellingForm, actionPlan: val })}
+            />
+
+            {/* Field 6: Mentor Remarks */}
+            <GrammarAssistField
+              fieldId="mentorRemarks"
+              label="Mentor Remarks"
+              rows={2}
+              placeholder="Faculty mentor's specific guidance, expectations, and instructions..."
+              value={counsellingForm.mentorRemarks}
+              onChange={(val) => setCounsellingForm({ ...counsellingForm, mentorRemarks: val })}
+            />
+
+            {/* Field 7 & 8: Follow-up Date & Status (Single column / touch friendly grid) */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginBottom: '1.25rem' }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ fontWeight: 700, fontSize: '0.85rem' }}>
+                  Follow-up Date
+                </label>
                 <input
                   type="date"
                   className="form-control"
-                  required
-                  value={counsellingForm.sessionDate}
-                  onChange={(e) => setCounsellingForm({ ...counsellingForm, sessionDate: e.target.value })}
+                  value={counsellingForm.followUpDate}
+                  onChange={(e) => setCounsellingForm({ ...counsellingForm, followUpDate: e.target.value })}
+                  style={{ fontSize: '0.88rem', minHeight: '42px' }}
                 />
               </div>
 
-              <div className="form-group">
-                <label className="form-label">Domain Category</label>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ fontWeight: 700, fontSize: '0.85rem' }}>
+                  Status
+                </label>
                 <select
                   className="form-control"
-                  value={counsellingForm.category}
-                  onChange={(e) => setCounsellingForm({ ...counsellingForm, category: e.target.value })}
+                  value={counsellingForm.status}
+                  onChange={(e) => setCounsellingForm({ ...counsellingForm, status: e.target.value })}
+                  style={{ fontSize: '0.88rem', minHeight: '42px' }}
                 >
-                  <option value="Academic">Academic</option>
-                  <option value="Training & Placement">Training & Placement</option>
-                  <option value="Extra-Curricular / Co-Curricular">Extra-Curricular / Co-Curricular</option>
-                  <option value="Innovation">Innovation</option>
-                  <option value="Skill Development">Skill Development</option>
+                  <option value="Completed">Completed</option>
+                  <option value="Follow-up Required">Follow-up Required</option>
+                  <option value="In Progress">In Progress</option>
+                  <option value="Scheduled">Scheduled</option>
                 </select>
               </div>
             </div>
 
-            {/* AI Prompt Input & Generator */}
-            <div
-              style={{
-                backgroundColor: '#F5F3FF',
-                border: '1px solid #DDD6FE',
-                borderRadius: '12px',
-                padding: '1rem',
-                marginBottom: '1rem',
-              }}
-            >
-              <label style={{ fontSize: '0.82rem', fontWeight: 800, color: '#6D28D9', display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.4rem' }}>
-                <Sparkles size={16} /> AI Counselling Assistant (Institutional Mentor AI)
-              </label>
-              <p style={{ fontSize: '0.76rem', color: '#5B21B6', margin: '0 0 0.6rem 0' }}>
-                Describe the specific skill, difficulty, or behavior needing improvement to generate structured suggestions.
-              </p>
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <input
-                  type="text"
-                  className="form-control"
-                  style={{ flex: 1, minWidth: '220px' }}
-                  placeholder="e.g. Difficulty in Anna University C++ pointer arithmetic / public speaking fear..."
-                  value={counsellingForm.skillNeedingImprovement}
-                  onChange={(e) => setCounsellingForm({ ...counsellingForm, skillNeedingImprovement: e.target.value })}
-                />
-                <button
-                  type="button"
-                  onClick={handleGenerateAiSuggestions}
-                  disabled={aiGenerating}
-                  className="btn btn-primary"
-                  style={{ backgroundColor: '#7C3AED', borderColor: '#7C3AED', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
-                >
-                  <Bot size={16} />
-                  {aiGenerating ? 'Generating Plan...' : 'Generate AI Plan'}
-                </button>
-              </div>
-            </div>
-
-            <div className="form-group" style={{ marginBottom: '1rem' }}>
-              <label className="form-label">Observed Challenge / Concern</label>
-              <textarea
-                className="form-control"
-                rows={2}
-                required
-                placeholder="Mentee's specific issue or observation..."
-                value={counsellingForm.challengeObserved}
-                onChange={(e) => setCounsellingForm({ ...counsellingForm, challengeObserved: e.target.value })}
-              />
-            </div>
-
-            <div className="form-group" style={{ marginBottom: '1rem' }}>
-              <label className="form-label">Corrective Action Plan & Activities</label>
-              <textarea
-                className="form-control"
-                rows={3}
-                required
-                placeholder="Step-by-step guidance provided to mentee..."
-                value={counsellingForm.correctiveAction}
-                onChange={(e) => setCounsellingForm({ ...counsellingForm, correctiveAction: e.target.value })}
-              />
-            </div>
-
-            <div className="form-group" style={{ marginBottom: '1rem' }}>
-              <label className="form-label">Expected Improvement (Measurable Outcome)</label>
-              <input
-                type="text"
-                className="form-control"
-                placeholder="e.g. Passing internal test 2 with >= 60% mark."
-                value={counsellingForm.expectedImprovement}
-                onChange={(e) => setCounsellingForm({ ...counsellingForm, expectedImprovement: e.target.value })}
-              />
-            </div>
-
-            <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-              <label className="form-label">Mentor Remarks</label>
-              <input
-                type="text"
-                className="form-control"
-                placeholder="Specific guidance for student compliance..."
-                value={counsellingForm.mentorRemarks}
-                onChange={(e) => setCounsellingForm({ ...counsellingForm, mentorRemarks: e.target.value })}
-              />
-            </div>
-
-            <p style={{ fontSize: '0.74rem', color: '#64748B', fontStyle: 'italic', marginBottom: '1rem' }}>
-              Note: Mentor must review and edit all AI suggestions before saving. AI suggestions are never automatically committed.
-            </p>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
               <button
                 type="button"
                 className="btn btn-secondary"
                 onClick={() => setShowCounsellingModal(false)}
+                style={{ minHeight: '44px', padding: '0.5rem 1.25rem' }}
               >
                 Cancel
               </button>
-              <button type="submit" className="btn btn-primary" disabled={submittingCounselling}>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={submittingCounselling}
+                style={{ minHeight: '44px', padding: '0.5rem 1.5rem', fontWeight: 700 }}
+              >
                 {submittingCounselling ? 'Saving Record...' : 'Save Counselling Record'}
               </button>
             </div>
@@ -2286,6 +2330,12 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           </form>
         </Modal>
       )}
+
+      {/* Separate Mentor AI Advisory Bot Modal */}
+      <MentorAiBotModal
+        isOpen={showAiBot}
+        onClose={() => setShowAiBot(false)}
+      />
     </div>
   );
 };

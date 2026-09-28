@@ -179,6 +179,26 @@ export const api = {
     getByStudent: (studentId: string) => request(`/counselling/${studentId}`),
     create: (data: any) =>
       request('/counselling', { method: 'POST', body: JSON.stringify(data) }),
+    askAiBot: (question: string) =>
+      request<{
+        answer: string;
+        topic: string;
+        suggestedQuestions?: string[];
+        source: string;
+      }>('/mentor/ai-bot/ask', {
+        method: 'POST',
+        body: JSON.stringify({ question }),
+      }),
+    checkGrammar: (text: string) =>
+      request<{
+        original: string;
+        corrected: string;
+        hasCorrections: boolean;
+        source: string;
+      }>('/mentor/grammar-check', {
+        method: 'POST',
+        body: JSON.stringify({ text }),
+      }),
     getAiSuggestion: (studentId: string, category: string, mentorPrompt: string) =>
       request<{
         category: string;
