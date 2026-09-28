@@ -8,6 +8,7 @@ import { sendSuccess, sendError } from '../../utils/response.js';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
 import { ROLES } from '../../config/constants.js';
+import { syncStudentDetailsPdf } from './student-details-pdf.service.js';
 
 // Ensure upload directory exists
 const UPLOADS_DIR = path.resolve(process.cwd(), 'uploads', 'documents');
@@ -65,20 +66,18 @@ export async function uploadDocument(req: AuthRequest, res: Response) {
     studentId: bodyStudentId,
     title,
     category,
+    documentType: reqDocType,
     eventName,
     organizer,
     eventDate,
     description,
   } = req.body;
 
-  if (!title || !category) {
-    // Cleanup uploaded file on validation error
-    if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-    return sendError(res, 'Document Title and Category are mandatory fields.', 400);
-  }
+  const effectiveTitle = (title || file.originalname || 'Certificate').trim();
+  const effectiveCategory = (category || 'Other').trim();
 
   try {
-    // Resolve target student
+    // Resolve target student using permanent studentId
     let targetStudentId = bodyStudentId;
     if (req.user?.role === ROLES.STUDENT) {
       targetStudentId = req.user.studentId;
@@ -104,20 +103,25 @@ export async function uploadDocument(req: AuthRequest, res: Response) {
 
     // Relative URL for serving static file
     const fileUrl = `/uploads/documents/${file.filename}`;
+    const docType = reqDocType === 'other' ? 'other' : 'certificate';
 
     const newDoc = await StudentDocument.create({
-      studentId: student._id,
-      title: title.trim(),
-      category: category.trim(),
+      studentId: student._id, // Linked strictly by permanent studentId
+      documentType: docType,
+      isPrimary: false,
+      fileName: file.originalname,
+      fileUrl,
+      fileType: file.mimetype,
+      fileSize: file.size,
+      title: effectiveTitle,
+      category: effectiveCategory,
       eventName: eventName?.trim() || '',
       organizer: organizer?.trim() || '',
       eventDate: eventDate?.trim() || '',
       description: description?.trim() || '',
-      fileUrl,
-      fileName: file.originalname,
-      fileType: file.mimetype,
-      fileSize: file.size,
+      uploadedBy: req.user?.id ? new mongoose.Types.ObjectId(req.user.id) : undefined,
       verificationStatus: 'Pending',
+      uploadedAt: new Date(),
     });
 
     await logAudit({
@@ -129,6 +133,7 @@ export async function uploadDocument(req: AuthRequest, res: Response) {
         studentId: student._id.toString(),
         registerNumber: student.registerNumber,
         title: newDoc.title,
+        documentType: newDoc.documentType,
         category: newDoc.category,
         fileName: file.originalname,
       },
@@ -141,6 +146,8 @@ export async function uploadDocument(req: AuthRequest, res: Response) {
         id: newDoc._id.toString(),
         _id: newDoc._id.toString(),
         studentId: student._id.toString(),
+        documentType: newDoc.documentType,
+        isPrimary: newDoc.isPrimary,
         title: newDoc.title,
         category: newDoc.category,
         eventName: newDoc.eventName,
@@ -191,28 +198,43 @@ export async function getStudentDocuments(req: AuthRequest, res: Response) {
       }
     }
 
+    // Auto-generate initial Student Details Form once if student has completed profile but doc doesn't exist
+    const existingForm = await StudentDocument.findOne({
+      studentId: student._id,
+      $or: [{ isPrimary: true }, { documentType: 'student_details_form' }],
+    });
+    if (!existingForm && student.profileCompleted) {
+      await syncStudentDetailsPdf(student._id);
+    }
+
+    // Document Order: Student Details Form (isPrimary: true) ALWAYS first,
+    // then certificates/other documents sorted by newest uploaded date
     const docs = await StudentDocument.find({ studentId: student._id })
       .populate('rejectedBy', 'fullName username role')
-      .sort({ uploadedAt: -1 });
+      .populate('uploadedBy', 'fullName username role')
+      .sort({ isPrimary: -1, uploadedAt: -1 });
 
     const formatted = docs.map((d: any) => ({
       id: d._id.toString(),
       _id: d._id.toString(),
       studentId: d.studentId.toString(),
-      title: d.title,
-      category: d.category,
+      documentType: d.documentType || (d.isPrimary ? 'student_details_form' : 'certificate'),
+      isPrimary: Boolean(d.isPrimary),
+      fileName: d.fileName || (d.isPrimary ? 'Student Details Form.pdf' : d.title),
+      fileUrl: d.fileUrl,
+      fileType: d.fileType || 'application/pdf',
+      fileSize: d.fileSize || 0,
+      title: d.title || d.fileName,
+      category: d.category || 'Other',
       eventName: d.eventName || '',
       organizer: d.organizer || '',
       eventDate: d.eventDate || '',
       description: d.description || '',
-      fileUrl: d.fileUrl,
-      fileName: d.fileName,
-      fileType: d.fileType,
-      fileSize: d.fileSize,
-      verificationStatus: d.verificationStatus,
+      verificationStatus: d.verificationStatus || 'Pending',
       rejectionReason: d.rejectionReason || '',
       rejectedByName: d.rejectedBy?.fullName || null,
       rejectedDate: d.rejectedDate || null,
+      uploadedByName: d.uploadedBy?.fullName || null,
       uploadedAt: d.uploadedAt,
       updatedAt: d.updatedAt,
     }));
@@ -256,6 +278,14 @@ export async function deleteDocument(req: AuthRequest, res: Response) {
     const doc = await StudentDocument.findById(documentId);
     if (!doc) {
       return sendError(res, 'Document not found.', 404);
+    }
+
+    if (doc.isPrimary || doc.documentType === 'student_details_form') {
+      return sendError(
+        res,
+        'The Student Details Form cannot be deleted manually. It is automatically maintained by the student profile system.',
+        400
+      );
     }
 
     // Authorization

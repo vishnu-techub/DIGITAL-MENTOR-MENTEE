@@ -17,16 +17,21 @@ export type DocumentCategory =
 
 export type VerificationStatus = 'Pending' | 'Verified' | 'Rejected';
 
+export type DocumentType = 'student_details_form' | 'certificate' | 'other';
+
 export interface IStudentDocument extends Document {
   studentId: mongoose.Types.ObjectId;
+  documentType: DocumentType | string;
+  isPrimary: boolean;
+  fileName: string;
+  fileUrl: string;
+  uploadedBy?: mongoose.Types.ObjectId;
   title: string;
   category: DocumentCategory | string;
   eventName?: string;
   organizer?: string;
   eventDate?: string;
   description?: string;
-  fileUrl: string;
-  fileName: string;
   fileType: string;
   fileSize: number;
   verificationStatus: VerificationStatus;
@@ -45,29 +50,42 @@ const StudentDocumentSchema = new Schema<IStudentDocument>(
       required: [true, 'Permanent studentId is mandatory for document storage'],
       index: true,
     },
+    documentType: {
+      type: String,
+      enum: ['student_details_form', 'certificate', 'other'],
+      default: 'certificate',
+      index: true,
+    },
+    isPrimary: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    fileName: {
+      type: String,
+      required: [true, 'File name is required'],
+      trim: true,
+    },
+    fileUrl: {
+      type: String,
+      required: [true, 'File URL is required'],
+      trim: true,
+    },
+    uploadedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      index: true,
+    },
     title: {
       type: String,
-      required: [true, 'Document title is required'],
       trim: true,
+      default: function (this: any) {
+        return this.fileName || 'Document';
+      },
     },
     category: {
       type: String,
       required: [true, 'Document category is required'],
-      enum: [
-        'Event Certificate',
-        'Workshop Certificate',
-        'Hackathon Certificate',
-        'SIH Certificate',
-        'NPTEL Certificate',
-        'MOOC Certificate',
-        'Internship Certificate',
-        'Paper Presentation',
-        'Symposium',
-        'Technical Event',
-        'Award',
-        'Achievement',
-        'Other',
-      ],
       default: 'Other',
       index: true,
     },
@@ -91,21 +109,13 @@ const StudentDocumentSchema = new Schema<IStudentDocument>(
       trim: true,
       default: '',
     },
-    fileUrl: {
-      type: String,
-      required: [true, 'File URL is required'],
-    },
-    fileName: {
-      type: String,
-      required: [true, 'File name is required'],
-    },
     fileType: {
       type: String,
-      required: [true, 'File MIME type is required'],
+      default: 'application/pdf',
     },
     fileSize: {
       type: Number,
-      required: [true, 'File size is required'],
+      default: 0,
     },
     verificationStatus: {
       type: String,
@@ -131,8 +141,8 @@ const StudentDocumentSchema = new Schema<IStudentDocument>(
   }
 );
 
-// Indexes
-StudentDocumentSchema.index({ studentId: 1, uploadedAt: -1 });
+// Indexes: studentId with isPrimary descending ensures Student Details Form is ALWAYS first
+StudentDocumentSchema.index({ studentId: 1, isPrimary: -1, uploadedAt: -1 });
 StudentDocumentSchema.index({ studentId: 1, verificationStatus: 1 });
 
 export const StudentDocument = mongoose.model<IStudentDocument>(

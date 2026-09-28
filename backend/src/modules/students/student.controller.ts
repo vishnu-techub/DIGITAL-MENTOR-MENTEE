@@ -20,6 +20,7 @@ import { AuthRequest } from '../../middleware/auth.middleware.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
 import { ROLES } from '../../config/constants.js';
 import { calculateArrearStatistics, parseSubjectCodes } from '../../utils/arrears.util.js';
+import { syncStudentDetailsPdf } from '../documents/student-details-pdf.service.js';
 
 // Helper: Resolve student from id, registerNumber, or user ID
 async function findStudentByIdOrReg(idOrReg: string) {
@@ -704,6 +705,13 @@ export async function submitStudentProfile(req: AuthRequest, res: Response) {
       req,
     });
 
+    // Automatically generate and attach/update the Student Details Form PDF
+    try {
+      await syncStudentDetailsPdf(student._id.toString(), req.user?.id);
+    } catch (pdfErr) {
+      console.error('Failed to sync student details PDF on profile submission:', pdfErr);
+    }
+
     return sendSuccess(
       res,
       { studentId: student._id.toString(), profileCompleted: true },
@@ -875,6 +883,13 @@ export async function updateStudent(req: AuthRequest, res: Response) {
 
     await student.save();
 
+    // Automatically update the existing Student Details Form PDF (replaces in place)
+    try {
+      await syncStudentDetailsPdf(student._id.toString(), req.user?.id);
+    } catch (pdfErr) {
+      console.error('Failed to sync student details PDF on profile update:', pdfErr);
+    }
+
     await logAudit({
       userId: req.user!.id,
       action: 'UPDATE_STUDENT_PROFILE',
@@ -994,6 +1009,13 @@ export async function updateStudentAcademics(req: AuthRequest, res: Response) {
       entityId: student._id.toString(),
       req,
     });
+
+    // Automatically update the existing Student Details Form PDF
+    try {
+      await syncStudentDetailsPdf(student._id.toString(), req.user?.id);
+    } catch (pdfErr) {
+      console.error('Failed to sync student details PDF on academics update:', pdfErr);
+    }
 
     return sendSuccess(res, null, 'Academic records updated successfully.');
   } catch (err: any) {
@@ -1152,6 +1174,13 @@ export async function clearArrear(req: AuthRequest, res: Response) {
     // Re-fetch all semesters and calculate updated statistics
     const allSemesters = await AcademicRecord.find({ student: student._id }).sort({ semesterNumber: 1 });
     const stats = calculateArrearStatistics(allSemesters, student.clearedSubjects || [], student.arrearHistory || []);
+
+    // Automatically update the existing Student Details Form PDF
+    try {
+      await syncStudentDetailsPdf(student._id.toString(), req.user?.id);
+    } catch (pdfErr) {
+      console.error('Failed to sync student details PDF on arrear clearance:', pdfErr);
+    }
 
     return sendSuccess(
       res,
