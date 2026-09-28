@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { api, ApiError } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
-import { StudentDetailsView, StudentDetailsTab } from '../common/StudentDetailsView';
+import { MentorStudentProfileView } from '../mentor/MentorStudentProfileView';
+import { StudentDetailsTab } from '../common/StudentDetailsView';
 import { EmptyState } from '../../components/common/EmptyState';
 import { Skeleton } from '../../components/common/Skeleton';
 import { DashboardSkeleton, StudentsSkeleton } from '../../components/common/SkeletonLoader';
@@ -80,7 +81,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
 
   if (selectedStudentId) {
     return (
-      <StudentDetailsView
+      <MentorStudentProfileView
         studentId={selectedStudentId}
         initialTab={studentInitialTab}
         onBack={() => {
