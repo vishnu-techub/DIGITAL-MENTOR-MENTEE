@@ -52,4 +52,13 @@ router.patch('/mentor-assignments/:assignmentId/remove', authorize(ROLES.ADMIN),
 router.get('/settings', getSystemSettings);
 router.put('/settings', authorize(ROLES.ADMIN), updateSystemSettings);
 
+// Mentee Institutional Identity Edit Requests (Admin review)
+import {
+  getAdminIdentityEditRequests,
+  reviewIdentityEditRequest,
+} from '../students/student-edit-request.controller.js';
+
+router.get('/identity-edit-requests', authorize(ROLES.ADMIN), getAdminIdentityEditRequests);
+router.put('/identity-edit-requests/:id/review', authorize(ROLES.ADMIN), reviewIdentityEditRequest);
+
 export default router;

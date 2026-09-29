@@ -70,7 +70,7 @@ function runTests() {
   console.assert(sem3!.arrears_count === 0, `Sem 3 arrears_count must be 0 after clearance, got ${sem3?.arrears_count}`);
   console.assert(sem3!.arrears_subjects === '—', `Sem 3 arrears_subjects must be "—" after clearance, got ${sem3?.arrears_subjects}`);
   console.assert(sem3!.historical_arrears_count === 1, `Sem 3 historical_arrears_count must remain 1, got ${sem3?.historical_arrears_count}`);
-  console.assert(sem3!.status === 'Cleared', `Sem 3 status must be "Cleared", got ${sem3?.status}`);
+  console.assert(sem3!.status === 'Clear', `Sem 3 status must be "Clear", got ${sem3?.status}`);
   console.assert(sem3!.clearance_remarks.includes('24ITT36 Cleared'), `Sem 3 clearance_remarks must include "24ITT36 Cleared", got ${sem3?.clearance_remarks}`);
 
   const sem4 = stats.formattedSemesters.find((s) => s.semester_number === 4);

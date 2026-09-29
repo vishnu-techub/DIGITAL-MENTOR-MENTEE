@@ -51,6 +51,15 @@ export const CompleteProfileWizard: React.FC<CompleteProfileWizardProps> = ({ on
     cutoffMark: '',
     admissionType: 'COUNSELLING',
     scholarshipDetails: '',
+    year: 2,
+    section: 'A',
+    lateralEntry: {
+      previousCollegeName: '',
+      previousCourseDiploma: '',
+      previousInstitution: '',
+      previousQualificationDetails: '',
+      admissionYear: new Date().getFullYear(),
+    },
     semesters: [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({
       semesterNumber: n,
       cgpa: '',
@@ -94,8 +103,17 @@ export const CompleteProfileWizard: React.FC<CompleteProfileWizardProps> = ({ on
             twelfthSchool: s.school?.twelfth_school || s.school?.twelfthSchool || '',
             twelfthSchoolId: s.school?.twelfth_school_id || s.school?.twelfthSchoolId?._id || s.school?.twelfthSchoolId || '',
             cutoffMark: s.school?.cutoff_mark ? String(s.school.cutoff_mark) : '',
-            admissionType: s.school?.admission_type || 'COUNSELLING',
+            admissionType: s.admission_type || s.school?.admission_type || 'COUNSELLING',
             scholarshipDetails: s.school?.scholarship_details || '',
+            year: Number(s.year) || 2,
+            section: s.section || 'A',
+            lateralEntry: {
+              previousCollegeName: s.lateral_entry?.previousCollegeName || s.school?.lateral_entry?.previousCollegeName || '',
+              previousCourseDiploma: s.lateral_entry?.previousCourseDiploma || s.school?.lateral_entry?.previousCourseDiploma || '',
+              previousInstitution: s.lateral_entry?.previousInstitution || s.school?.lateral_entry?.previousInstitution || '',
+              previousQualificationDetails: s.lateral_entry?.previousQualificationDetails || s.school?.lateral_entry?.previousQualificationDetails || '',
+              admissionYear: s.lateral_entry?.admissionYear || s.school?.lateral_entry?.admissionYear || new Date().getFullYear(),
+            },
           }));
         }
       } catch (err) {
@@ -118,6 +136,10 @@ export const CompleteProfileWizard: React.FC<CompleteProfileWizardProps> = ({ on
     setError(null);
     if (step === 1) {
       if (!formData.mobileNumber) { setError('Please enter your active mobile number.'); return false; }
+      if (!/^[0-9]{10}$/.test(formData.mobileNumber.trim())) {
+        setError('Mobile number must be exactly 10 digits without spaces, negatives or symbols.');
+        return false;
+      }
       if (!formData.dob) { setError('Please enter your date of birth.'); return false; }
       if (!formData.address) { setError('Please enter your permanent address.'); return false; }
     } else if (step === 2) {
@@ -129,6 +151,27 @@ export const CompleteProfileWizard: React.FC<CompleteProfileWizardProps> = ({ on
       if (!formData.tenthSchool?.trim() && !formData.tenthSchoolId) { setError('Please select or enter your 10th Standard school name.'); return false; }
       if (!formData.twelfthMark) { setError('Please enter your 12th standard mark.'); return false; }
       if (!formData.twelfthSchool?.trim() && !formData.twelfthSchoolId) { setError('Please select or enter your 12th Standard school name.'); return false; }
+
+      if (formData.admissionType === 'LATERAL_ENTRY') {
+        if (!formData.lateralEntry.previousCollegeName?.trim()) {
+          setError('Please enter your Previous College / Polytechnic Name for Lateral Entry.');
+          return false;
+        }
+        if (!formData.lateralEntry.previousCourseDiploma?.trim()) {
+          setError('Please enter your Previous Course / Diploma for Lateral Entry.');
+          return false;
+        }
+      }
+
+      for (const sem of formData.semesters) {
+        if (sem.cgpa !== '' && sem.cgpa !== undefined) {
+          const val = parseFloat(sem.cgpa);
+          if (isNaN(val) || val < 0.0 || val > 10.0) {
+            setError(`Semester ${sem.semesterNumber}: CGPA must be strictly between 0.0 and 10.0`);
+            return false;
+          }
+        }
+      }
     }
     return true;
   };
@@ -149,11 +192,13 @@ export const CompleteProfileWizard: React.FC<CompleteProfileWizardProps> = ({ on
     setSubmitting(true);
     setError(null);
     const payload = {
-      mobileNumber: formData.mobileNumber,
+      mobileNumber: formData.mobileNumber.trim(),
       dob: formData.dob,
       bloodGroup: formData.bloodGroup,
       residentialType: formData.residentialType,
       address: formData.address,
+      year: formData.year,
+      section: formData.section.trim().toUpperCase(),
       fatherName: formData.fatherName,
       fatherContact: formData.fatherContact,
       fatherOccupation: formData.fatherOccupation,
@@ -172,6 +217,7 @@ export const CompleteProfileWizard: React.FC<CompleteProfileWizardProps> = ({ on
       cutoffMark: formData.cutoffMark,
       admissionType: formData.admissionType,
       scholarshipDetails: formData.scholarshipDetails,
+      lateralEntry: formData.admissionType === 'LATERAL_ENTRY' ? formData.lateralEntry : undefined,
       semesters: formData.semesters.map((s) => ({
         semesterNumber: s.semesterNumber,
         cgpa: parseFloat(s.cgpa) || 0,
@@ -456,7 +502,20 @@ export const CompleteProfileWizard: React.FC<CompleteProfileWizardProps> = ({ on
             <div className="form-group">
               <label className="form-label">Admission Type</label>
               <select className="form-control" value={formData.admissionType}
-                onChange={(e) => updateField('admissionType', e.target.value)}>
+                onChange={(e) => {
+                  const newType = e.target.value;
+                  setFormData((prev) => ({
+                    ...prev,
+                    admissionType: newType,
+                    lateralEntry: newType === 'LATERAL_ENTRY' ? prev.lateralEntry : {
+                      previousCollegeName: '',
+                      previousCourseDiploma: '',
+                      previousInstitution: '',
+                      previousQualificationDetails: '',
+                      admissionYear: new Date().getFullYear(),
+                    },
+                  }));
+                }}>
                 <option value="COUNSELLING">Counselling (Govt Quota)</option>
                 <option value="MANAGEMENT">Management Quota</option>
                 <option value="LATERAL_ENTRY">Lateral Entry</option>
@@ -468,6 +527,103 @@ export const CompleteProfileWizard: React.FC<CompleteProfileWizardProps> = ({ on
                 onChange={(e) => updateField('scholarshipDetails', e.target.value)} placeholder="e.g. First Graduate / PMSS" />
             </div>
           </div>
+
+          {formData.admissionType === 'LATERAL_ENTRY' && (
+            <div
+              style={{
+                marginTop: '1rem',
+                marginBottom: '1.5rem',
+                padding: '1.25rem',
+                backgroundColor: '#F8FAFC',
+                borderRadius: '8px',
+                border: '1px solid #CBD5E1',
+              }}
+            >
+              <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: '#0B2545', margin: '0 0 1rem 0' }}>
+                Lateral Entry Details
+              </h4>
+              <div className="form-grid-3">
+                <div className="form-group">
+                  <label className="form-label">Previous College Name *</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Polytechnic / College Name"
+                    value={formData.lateralEntry.previousCollegeName}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        lateralEntry: { ...formData.lateralEntry, previousCollegeName: e.target.value },
+                      })
+                    }
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Previous Course / Diploma *</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Diploma in IT / CSE / ECE"
+                    value={formData.lateralEntry.previousCourseDiploma}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        lateralEntry: { ...formData.lateralEntry, previousCourseDiploma: e.target.value },
+                      })
+                    }
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Previous Institution</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Govt / Govt-Aided / Private Polytechnic"
+                    value={formData.lateralEntry.previousInstitution}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        lateralEntry: { ...formData.lateralEntry, previousInstitution: e.target.value },
+                      })
+                    }
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Previous Qualification Details</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Diploma Aggregate % (e.g. 88.5%)"
+                    value={formData.lateralEntry.previousQualificationDetails}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        lateralEntry: { ...formData.lateralEntry, previousQualificationDetails: e.target.value },
+                      })
+                    }
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Admission Year</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    min={2000}
+                    max={2035}
+                    value={formData.lateralEntry.admissionYear || ''}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        lateralEntry: { ...formData.lateralEntry, admissionYear: Number(e.target.value) || undefined },
+                      })
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
           <h4 className="wizard-section-title">Semesters 1–8 Academic Record</h4>
           <div className="semester-scroll">

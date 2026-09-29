@@ -4,6 +4,7 @@ import {
   getStudentDocuments,
   downloadDocument,
   deleteDocument,
+  deleteAllStudentDocuments,
   verifyDocument,
   documentUploadMiddleware,
 } from './document.controller.js';
@@ -32,7 +33,14 @@ router.get('/:documentId/download', downloadDocument);
 // 4. Delete document (Student can delete own; Admin can delete any)
 router.delete('/:documentId', deleteDocument);
 
-// 5. Verification status review (Faculty Mentor, Admin, HOD)
+// 5. Delete all uploaded documents for a student (Admin only)
+router.delete(
+  '/student/:studentId/all',
+  authorize(ROLES.ADMIN),
+  deleteAllStudentDocuments
+);
+
+// 6. Verification status review (Faculty Mentor, Admin, HOD)
 router.patch(
   '/:documentId/verify',
   authorize(ROLES.FACULTY, ROLES.ADMIN, ROLES.HOD),

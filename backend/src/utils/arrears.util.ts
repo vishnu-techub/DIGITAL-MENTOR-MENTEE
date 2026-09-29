@@ -271,17 +271,17 @@ export function calculateArrearStatistics(
         ? `${clearedInLaterSemesters.map((c) => `${c.subjectCode} Cleared`).join(', ')} / Active Arrear`
         : 'Active Arrear';
     } else if (numArrearsIncurred > 0 && activeCountInSem === 0) {
-      semStatus = 'Cleared';
-      semStatusLabel = 'Cleared';
+      semStatus = 'Clear';
+      semStatusLabel = 'Clear';
       const clearedLabels = clearedInLaterSemesters.map((c) => `${c.subjectCode} Cleared`).join(', ');
-      clearanceRemarks = clearedLabels || 'Cleared';
+      clearanceRemarks = clearedLabels ? `${clearedLabels} (Clear)` : 'Clear';
     } else {
       semStatus = 'Clear';
       semStatusLabel = 'Clear';
       if (subjectsClearedInThisSem.length > 0) {
         clearanceRemarks = `${subjectsClearedInThisSem.map((c) => `${c.subjectCode} Cleared`).join(', ')} / Clear`;
       } else {
-        clearanceRemarks = existingRemarks.trim() || 'Clear / Regular';
+        clearanceRemarks = 'Clear';
       }
     }
 

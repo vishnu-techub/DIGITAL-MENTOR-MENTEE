@@ -387,3 +387,59 @@ export async function verifyDocument(req: AuthRequest, res: Response) {
     return sendError(res, 'Failed to update document verification status.', 500);
   }
 }
+
+// 6. Delete all documents for a student (Admin only)
+export async function deleteAllStudentDocuments(req: AuthRequest, res: Response) {
+  const studentId = req.params.studentId as string;
+
+  try {
+    let student = null;
+    if (mongoose.Types.ObjectId.isValid(studentId)) {
+      student = await Student.findById(studentId);
+    }
+    if (!student) {
+      student = await Student.findOne({ registerNumber: studentId });
+    }
+    if (!student) {
+      return sendError(res, 'Student account not found.', 404);
+    }
+
+    // Delete uploaded documents and un-link physical files
+    const docs = await StudentDocument.find({ studentId: student._id });
+    let deletedCount = 0;
+
+    for (const doc of docs) {
+      // Keep primary student details form if present
+      if (!doc.isPrimary && doc.documentType !== 'student_details_form') {
+        const filePath = path.resolve(process.cwd(), doc.fileUrl.replace(/^\//, ''));
+        if (fs.existsSync(filePath)) {
+          try {
+            fs.unlinkSync(filePath);
+          } catch (e) {
+            console.warn('Could not delete physical file:', filePath);
+          }
+        }
+        await StudentDocument.findByIdAndDelete(doc._id);
+        deletedCount++;
+      }
+    }
+
+    await logAudit({
+      userId: req.user!.id,
+      action: 'DELETE_ALL_STUDENT_DOCUMENTS',
+      entity: 'DOCUMENT',
+      entityId: student._id.toString(),
+      details: { deletedCount, registerNumber: student.registerNumber },
+      req,
+    });
+
+    return sendSuccess(
+      res,
+      { deletedCount },
+      'All student documents deleted successfully.'
+    );
+  } catch (err: any) {
+    console.error('deleteAllStudentDocuments error:', err);
+    return sendError(res, 'Failed to delete student documents: ' + err.message, 500);
+  }
+}

@@ -23,8 +23,15 @@ export interface ISchoolDetails {
   twelfthSchool?: string;
   twelfthSchoolId?: mongoose.Types.ObjectId;
   cutoffMark?: number;
-  admissionType?: 'COUNSELLING' | 'MANAGEMENT';
+  admissionType?: 'COUNSELLING' | 'MANAGEMENT' | 'LATERAL_ENTRY';
   scholarshipDetails?: string;
+  lateralEntry?: {
+    previousCollegeName?: string;
+    previousCourseDiploma?: string;
+    previousInstitution?: string;
+    previousQualificationDetails?: string;
+    admissionYear?: number;
+  };
 }
 
 export interface IArrearHistoryItem {
@@ -167,10 +174,17 @@ const StudentSchema = new Schema<IStudent>(
       cutoffMark: { type: Number, default: 0 },
       admissionType: {
         type: String,
-        enum: ['COUNSELLING', 'MANAGEMENT'],
+        enum: ['COUNSELLING', 'MANAGEMENT', 'LATERAL_ENTRY'],
         default: 'COUNSELLING',
       },
       scholarshipDetails: { type: String, trim: true, default: 'Nil' },
+      lateralEntry: {
+        previousCollegeName: { type: String, trim: true, default: '' },
+        previousCourseDiploma: { type: String, trim: true, default: '' },
+        previousInstitution: { type: String, trim: true, default: '' },
+        previousQualificationDetails: { type: String, trim: true, default: '' },
+        admissionYear: { type: Number },
+      },
     },
     clearedSubjects: [
       {

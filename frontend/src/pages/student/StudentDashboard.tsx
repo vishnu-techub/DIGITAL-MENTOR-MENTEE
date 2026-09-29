@@ -30,12 +30,40 @@ import {
   CheckCircle2,
   Lock,
   Save,
+  Edit,
+  AlertCircle,
 } from 'lucide-react';
 
 interface StudentDashboardProps {
   currentTab: string;
   onSelectTab: (tab: string) => void;
   justCompleted?: boolean;
+}
+
+function getMeetingNotice(nextDateStr?: string) {
+  if (!nextDateStr) {
+    return { title: 'Upcoming Saturday Meeting', badge: 'Fixed Saturday', isPast: false };
+  }
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(nextDateStr);
+  target.setHours(0, 0, 0, 0);
+  const diffTime = target.getTime() - today.getTime();
+  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+  if (diffDays < 0) {
+    return { title: `Past Meeting (${nextDateStr})`, badge: 'Past', isPast: true };
+  }
+  if (diffDays === 0) {
+    return { title: "Today's Meeting", badge: "Today", isPast: false };
+  }
+  if (diffDays === 1) {
+    return { title: "Tomorrow's Meeting", badge: "Tomorrow", isPast: false };
+  }
+  if (target.getDay() === 6 && diffDays <= 7) {
+    return { title: "Upcoming Saturday Meeting", badge: "This Saturday", isPast: false };
+  }
+  return { title: `Upcoming Meeting — ${nextDateStr}`, badge: "Upcoming", isPast: false };
 }
 
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, onSelectTab, justCompleted }) => {
@@ -50,6 +78,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
 
+  // Identity Edit Request State (for Admin Approval)
+  const [showIdentityEditModal, setShowIdentityEditModal] = useState(false);
+  const [submittingEditRequest, setSubmittingEditRequest] = useState(false);
+  const [identityEditForm, setIdentityEditForm] = useState({
+    fullName: '',
+    registerNumber: '',
+    department: '',
+    batch: '',
+    reason: '',
+  });
+
   // Arrear Clearance State & Validation
   const [showClearArrearModal, setShowClearArrearModal] = useState(false);
   const [clearingArrear, setClearingArrear] = useState(false);
@@ -63,7 +102,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
     attempt: 1,
   });
 
-  // Profile Edit State
+  // Profile Edit State (with Year, Section, Admission Type, Lateral Entry, Scholarship)
   const [editForm, setEditForm] = useState({
     mobileNumber: '',
     email: '',
@@ -71,6 +110,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
     bloodGroup: '',
     residentialType: '',
     address: '',
+    year: 2,
+    section: 'A',
+    admissionType: 'COUNSELLING',
+    scholarshipDetails: 'Nil',
+    lateralEntry: {
+      previousCollegeName: '',
+      previousCourseDiploma: '',
+      previousInstitution: '',
+      previousQualificationDetails: '',
+      admissionYear: new Date().getFullYear(),
+    },
     fatherName: '',
     fatherContact: '',
     fatherOccupation: '',
@@ -91,6 +141,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
         ]);
         if (stuRes.success && stuRes.data) {
           setProfile(stuRes.data);
+          const lat = stuRes.data.lateral_entry || stuRes.data.school?.lateral_entry || {};
+          const admType = stuRes.data.admission_type || stuRes.data.school?.admission_type || 'COUNSELLING';
           setEditForm({
             mobileNumber: stuRes.data.mobile_number || '',
             email: stuRes.data.email || '',
@@ -98,6 +150,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
             bloodGroup: stuRes.data.blood_group || 'B+ve',
             residentialType: stuRes.data.residential_type || 'DAY_SCHOLAR',
             address: stuRes.data.address || '',
+            year: Number(stuRes.data.year) || 2,
+            section: stuRes.data.section || 'A',
+            admissionType: admType,
+            scholarshipDetails: stuRes.data.school?.scholarship_details || 'Nil',
+            lateralEntry: {
+              previousCollegeName: lat.previousCollegeName || lat.previous_college_name || '',
+              previousCourseDiploma: lat.previousCourseDiploma || lat.previous_course_diploma || '',
+              previousInstitution: lat.previousInstitution || lat.previous_institution || '',
+              previousQualificationDetails: lat.previousQualificationDetails || lat.previous_qualification_details || '',
+              admissionYear: lat.admissionYear || lat.admission_year || new Date().getFullYear(),
+            },
             fatherName: stuRes.data.parent?.father_name || '',
             fatherContact: stuRes.data.parent?.father_contact || '',
             fatherOccupation: stuRes.data.parent?.father_occupation || '',
@@ -239,19 +302,79 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
   const arrearStatusLabel = profile?.arrear_status_label || (activeArrears === 0 ? '🟢 No Active Arrears' : `🔴 ${activeArrears} Active Arrear${activeArrears > 1 ? 's' : ''}`);
   const latestCgpa = Number(profile?.semesters?.filter((s: any) => Number(s.cgpa) > 0).slice(-1)[0]?.cgpa || 0);
 
+  const openIdentityEditModal = () => {
+    if (!profile) return;
+    setIdentityEditForm({
+      fullName: profile.full_name || '',
+      registerNumber: profile.register_number || '',
+      department: profile.department_name || '',
+      batch: profile.batch_name || '',
+      reason: '',
+    });
+    setShowIdentityEditModal(true);
+  };
+
+  const handleSubmitIdentityEditRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!identityEditForm.reason.trim()) {
+      toast.warning('Please provide a reason for the institutional identity change request.');
+      return;
+    }
+    setSubmittingEditRequest(true);
+    try {
+      const res = await api.students.requestEdit({
+        requestedChanges: {
+          fullName: identityEditForm.fullName.trim(),
+          registerNumber: identityEditForm.registerNumber.trim(),
+          department: identityEditForm.department.trim(),
+          batch: identityEditForm.batch.trim(),
+        },
+        reason: identityEditForm.reason.trim(),
+      });
+      if (res.success) {
+        toast.success('Identity edit request submitted successfully. It will be reviewed by the Administrator.');
+        setShowIdentityEditModal(false);
+      } else {
+        toast.error(res.message || 'Failed to submit identity edit request.');
+      }
+    } catch (err: any) {
+      toast.error('Error submitting edit request: ' + err.message);
+    } finally {
+      setSubmittingEditRequest(false);
+    }
+  };
+
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile) return;
+
+    const cleanMobile = editForm.mobileNumber.trim();
+    if (!/^[0-9]{10}$/.test(cleanMobile)) {
+      toast.error('Mobile number must be exactly 10 digits without spaces, negatives or symbols.');
+      return;
+    }
+
+    const cleanEmail = editForm.email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      toast.error('Please enter a valid institutional or personal email address.');
+      return;
+    }
+
     setSavingProfile(true);
     setSaveSuccessMsg(null);
     try {
       const res = await api.students.update(profile.id, {
-        mobileNumber: editForm.mobileNumber,
-        email: editForm.email,
+        mobileNumber: cleanMobile,
+        email: cleanEmail,
         dob: editForm.dob,
         bloodGroup: editForm.bloodGroup,
         residentialType: editForm.residentialType,
         address: editForm.address,
+        year: Number(editForm.year) || 2,
+        section: (editForm.section || 'A').trim().toUpperCase(),
+        admissionType: editForm.admissionType,
+        scholarshipDetails: (editForm.scholarshipDetails || 'Nil').trim(),
+        lateralEntry: editForm.admissionType === 'LATERAL_ENTRY' ? editForm.lateralEntry : undefined,
         fatherName: editForm.fatherName,
         fatherContact: editForm.fatherContact,
         fatherOccupation: editForm.fatherOccupation,
@@ -261,6 +384,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
       });
       if (res.success) {
         setSaveSuccessMsg('Your profile changes have been saved successfully.');
+        toast.success('Profile details updated successfully.');
         loadData();
       } else {
         toast.error(res.message || 'Failed to update profile.');
@@ -430,24 +554,42 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
-            {/* Saturday Meeting Notice Card */}
-            <div className="card" style={{ borderLeft: '4px solid #C59B27' }}>
-              <div className="card-header">
-                <h3 className="card-title"><CalendarCheck2 size={18} /> Upcoming Saturday Meeting</h3>
-                <span className="badge badge-warning">Fixed Saturday</span>
-              </div>
-              <div style={{ padding: '0.5rem 0' }}>
-                <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0B2545', marginBottom: '4px' }}>
-                  Every Saturday at {schedule?.time || '10:30 AM'}
+            {/* Dynamic Date-Based Meeting Notice Card */}
+            {(() => {
+              const notice = getMeetingNotice(schedule?.nextSaturdayDate);
+              if (notice.isPast) {
+                return (
+                  <div className="card" style={{ borderLeft: '4px solid #64748B' }}>
+                    <div className="card-header">
+                      <h3 className="card-title"><CalendarCheck2 size={18} /> Meeting Schedule</h3>
+                      <span className="badge badge-secondary">All Caught Up</span>
+                    </div>
+                    <div style={{ padding: '0.5rem 0', color: '#64748B', fontSize: '0.85rem' }}>
+                      No upcoming meetings scheduled at this time. Past meetings are archived under the Meetings tab.
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <div className="card" style={{ borderLeft: '4px solid #C59B27' }}>
+                  <div className="card-header">
+                    <h3 className="card-title"><CalendarCheck2 size={18} /> {notice.title}</h3>
+                    <span className="badge badge-warning">{notice.badge}</span>
+                  </div>
+                  <div style={{ padding: '0.5rem 0' }}>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0B2545', marginBottom: '4px' }}>
+                      {schedule?.day || 'Saturday'} at {schedule?.time || '10:30 AM'}
+                    </div>
+                    <div style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '0.75rem' }}>
+                      Location: <strong>{profile?.currentMentor?.cabin_location || schedule?.location || 'Faculty Cabin'}</strong>
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#64748B', backgroundColor: '#F8FAFC', padding: '0.6rem 0.8rem', borderRadius: '8px' }}>
+                      Scheduled Date: <strong>{schedule?.nextSaturdayDate}</strong>. Attendance is mandatory as per college mentoring regulations.
+                    </div>
+                  </div>
                 </div>
-                <div style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '0.75rem' }}>
-                  Location: <strong>{profile?.currentMentor?.cabin_location || schedule?.location || 'Faculty Cabin'}</strong>
-                </div>
-                <div style={{ fontSize: '0.8rem', color: '#64748B', backgroundColor: '#F8FAFC', padding: '0.6rem 0.8rem', borderRadius: '8px' }}>
-                  Next Scheduled Date: <strong>{schedule?.nextSaturdayDate}</strong>. Attendance is mandatory as per college mentoring regulations.
-                </div>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Assigned Mentor Card */}
             <div className="card">
@@ -556,17 +698,27 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
 
           {/* Section 1: Immutable Identity Information */}
           <div className="card" style={{ marginBottom: '1.5rem', backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0' }}>
-            <div className="card-header" style={{ borderBottom: '1px solid #E2E8F0' }}>
+            <div className="card-header" style={{ borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Lock size={16} color="#64748B" />
-                <h3 className="card-title" style={{ fontSize: '1rem', color: '#1E293B' }}>
+                <h3 className="card-title" style={{ fontSize: '1rem', color: '#1E293B', margin: 0 }}>
                   Institutional Identity (Read-Only)
                 </h3>
               </div>
-              <span className="badge badge-secondary">Locked by Administration</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span className="badge badge-secondary">Locked by Administration</span>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  style={{ fontSize: '0.75rem', padding: '4px 10px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                  onClick={openIdentityEditModal}
+                >
+                  <Edit size={12} /> Request Edit
+                </button>
+              </div>
             </div>
-            <p style={{ fontSize: '0.8rem', color: '#64748B', margin: '0 0 1rem 0' }}>
-              Core academic identity fields are strictly managed by college administration to maintain data integrity.
+            <p style={{ fontSize: '0.8rem', color: '#64748B', margin: '0.5rem 0 1rem 0' }}>
+              Core academic identity fields are strictly managed by college administration. To request updates, click "Request Edit".
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
               <div>
@@ -576,10 +728,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
               <div>
                 <label className="form-label" style={{ fontSize: '0.75rem' }}>Register Number</label>
                 <input type="text" className="form-control" value={profile?.register_number || ''} disabled style={{ backgroundColor: '#EDF2F7', cursor: 'not-allowed' }} />
-              </div>
-              <div>
-                <label className="form-label" style={{ fontSize: '0.75rem' }}>Student ID</label>
-                <input type="text" className="form-control" value={profile?.id || ''} disabled style={{ backgroundColor: '#EDF2F7', cursor: 'not-allowed' }} />
               </div>
               <div>
                 <label className="form-label" style={{ fontSize: '0.75rem' }}>Department</label>
@@ -684,6 +832,180 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
                   />
                 </div>
               </div>
+            </div>
+
+            {/* Academic & Admission Details */}
+            <div className="card" style={{ marginBottom: '1.5rem' }}>
+              <div className="card-header">
+                <h3 className="card-title" style={{ fontSize: '1rem' }}>
+                  <GraduationCap size={16} /> Academic & Admission Details
+                </h3>
+                <span className="badge badge-primary">Directly Editable</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div>
+                  <label className="form-label">Current Academic Year *</label>
+                  <select
+                    className="form-control"
+                    value={editForm.year}
+                    onChange={(e) => setEditForm({ ...editForm, year: Number(e.target.value) })}
+                    required
+                  >
+                    <option value={1}>I Year</option>
+                    <option value={2}>II Year</option>
+                    <option value={3}>III Year</option>
+                    <option value={4}>IV Year</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="form-label">Section *</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    maxLength={3}
+                    placeholder="e.g. A, B, C"
+                    value={editForm.section}
+                    onChange={(e) => setEditForm({ ...editForm, section: e.target.value.toUpperCase() })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="form-label">Admission Type *</label>
+                  <select
+                    className="form-control"
+                    value={editForm.admissionType}
+                    onChange={(e) => {
+                      const newType = e.target.value;
+                      setEditForm((prev) => ({
+                        ...prev,
+                        admissionType: newType,
+                        lateralEntry: newType === 'LATERAL_ENTRY' ? prev.lateralEntry : {
+                          previousCollegeName: '',
+                          previousCourseDiploma: '',
+                          previousInstitution: '',
+                          previousQualificationDetails: '',
+                          admissionYear: new Date().getFullYear(),
+                        },
+                      }));
+                    }}
+                    required
+                  >
+                    <option value="COUNSELLING">Counselling (Govt Quota)</option>
+                    <option value="MANAGEMENT">Management Quota</option>
+                    <option value="LATERAL_ENTRY">Lateral Entry</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="form-label">Scholarship Details</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. First Graduate, Post-Matric, PMSS, Nil"
+                    value={editForm.scholarshipDetails}
+                    onChange={(e) => setEditForm({ ...editForm, scholarshipDetails: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              {/* Conditional Lateral Entry Details Section */}
+              {editForm.admissionType === 'LATERAL_ENTRY' && (
+                <div
+                  style={{
+                    marginTop: '1.25rem',
+                    padding: '1.25rem',
+                    backgroundColor: '#F8FAFC',
+                    borderRadius: '8px',
+                    border: '1px solid #CBD5E1',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem' }}>
+                    <BookOpen size={16} color="#0B2545" />
+                    <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: '#0B2545', margin: 0 }}>
+                      Lateral Entry Details
+                    </h4>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+                    <div>
+                      <label className="form-label">Previous College Name *</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="Polytechnic / College Name"
+                        value={editForm.lateralEntry.previousCollegeName}
+                        onChange={(e) =>
+                          setEditForm({
+                            ...editForm,
+                            lateralEntry: { ...editForm.lateralEntry, previousCollegeName: e.target.value },
+                          })
+                        }
+                        required={editForm.admissionType === 'LATERAL_ENTRY'}
+                      />
+                    </div>
+                    <div>
+                      <label className="form-label">Previous Course / Diploma *</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="e.g. Diploma in IT / CSE / ECE"
+                        value={editForm.lateralEntry.previousCourseDiploma}
+                        onChange={(e) =>
+                          setEditForm({
+                            ...editForm,
+                            lateralEntry: { ...editForm.lateralEntry, previousCourseDiploma: e.target.value },
+                          })
+                        }
+                        required={editForm.admissionType === 'LATERAL_ENTRY'}
+                      />
+                    </div>
+                    <div>
+                      <label className="form-label">Previous Institution</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="Govt / Govt-Aided / Autonomous Polytechnic"
+                        value={editForm.lateralEntry.previousInstitution}
+                        onChange={(e) =>
+                          setEditForm({
+                            ...editForm,
+                            lateralEntry: { ...editForm.lateralEntry, previousInstitution: e.target.value },
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label className="form-label">Previous Qualification Details</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="Diploma Aggregate % (e.g. 88.5%)"
+                        value={editForm.lateralEntry.previousQualificationDetails}
+                        onChange={(e) =>
+                          setEditForm({
+                            ...editForm,
+                            lateralEntry: { ...editForm.lateralEntry, previousQualificationDetails: e.target.value },
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label className="form-label">Admission Year</label>
+                      <input
+                        type="number"
+                        className="form-control"
+                        min={2000}
+                        max={2035}
+                        value={editForm.lateralEntry.admissionYear || ''}
+                        onChange={(e) =>
+                          setEditForm({
+                            ...editForm,
+                            lateralEntry: { ...editForm.lateralEntry, admissionYear: Number(e.target.value) || undefined },
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Permitted Family Details */}
@@ -855,15 +1177,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
                       (s?.cleared_in_later_semesters && s.cleared_in_later_semesters.length > 0)
                     );
 
-                    let clearanceStatus = 'Clear / Regular';
+                    let clearanceStatus = 'Clear';
                     if (hasActive) {
                       clearanceStatus = 'Active Arrear';
                     } else if (isCleared) {
-                      clearanceStatus = s?.clearance_remarks || (s?.cleared_in_later_semesters?.[0]?.subjectCode ? `${s.cleared_in_later_semesters[0].subjectCode} Cleared` : 'Cleared');
+                      clearanceStatus = s?.clearance_remarks || (s?.cleared_in_later_semesters?.[0]?.subjectCode ? `${s.cleared_in_later_semesters[0].subjectCode} Cleared` : 'Cleared in later semester');
                     } else if (s?.cleared_subjects && s.cleared_subjects.length > 0) {
-                      clearanceStatus = s.cleared_subjects.map((c: any) => `${c.subjectCode} Cleared`).join(', ') + ' / Clear';
-                    } else if (s?.remarks) {
-                      clearanceStatus = s.remarks;
+                      clearanceStatus = s.cleared_subjects.map((c: any) => `${c.subjectCode} Cleared`).join(', ');
                     }
 
                     return (
@@ -873,7 +1193,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
                         <td>{s && Number(s.sgpa) > 0 ? Number(s.sgpa).toFixed(2) : '-'}</td>
                         <td>
                           <span className={`badge ${hasActive ? 'badge-danger' : 'badge-success'}`}>
-                            {hasActive ? `${arrearsCount} Arrear${arrearsCount > 1 ? 's' : ''}` : '0'}
+                            {hasActive ? `${arrearsCount} Active Arrear${arrearsCount > 1 ? 's' : ''}` : 'Clear'}
                           </span>
                         </td>
                         <td>
@@ -888,11 +1208,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
                             <span className="badge badge-danger">Active Arrear</span>
                           ) : isCleared ? (
                             <span className="badge badge-success" style={{ fontWeight: 600 }}>
-                              ✓ {clearanceStatus}
+                              Clear ({clearanceStatus})
                             </span>
                           ) : (
-                            <span style={{ color: '#059669', fontSize: '0.85rem' }}>
-                              {clearanceStatus}
+                            <span className="badge badge-success" style={{ fontWeight: 600 }}>
+                              Clear
                             </span>
                           )}
                         </td>
@@ -1316,6 +1636,105 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
           </div>
         </form>
       </Modal>
+
+      {/* REQUEST IDENTITY EDIT MODAL */}
+      {showIdentityEditModal && (
+        <Modal
+          isOpen={showIdentityEditModal}
+          title="Request Institutional Identity Modification"
+          onClose={() => {
+            if (!submittingEditRequest) setShowIdentityEditModal(false);
+          }}
+        >
+          <form onSubmit={handleSubmitIdentityEditRequest}>
+            <div style={{ padding: '0.5rem 0' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem', color: '#1E293B' }}>
+                <Lock size={18} color="#C59B27" />
+                <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748B', lineHeight: 1.4 }}>
+                  Institutional identity fields are locked to preserve institutional records. Any changes requested below will be forwarded to the College Administrator for review and verification before being applied.
+                </p>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Full Name</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={identityEditForm.fullName}
+                  onChange={(e) => setIdentityEditForm({ ...identityEditForm, fullName: e.target.value })}
+                  placeholder="Enter full legal name as per institutional records"
+                />
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Register Number</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={identityEditForm.registerNumber}
+                  onChange={(e) => setIdentityEditForm({ ...identityEditForm, registerNumber: e.target.value.toUpperCase() })}
+                  placeholder="e.g. 731523205099"
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                <div>
+                  <label className="form-label">Department</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={identityEditForm.department}
+                    onChange={(e) => setIdentityEditForm({ ...identityEditForm, department: e.target.value })}
+                    placeholder="Department Name"
+                  />
+                </div>
+                <div>
+                  <label className="form-label">Batch</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={identityEditForm.batch}
+                    onChange={(e) => setIdentityEditForm({ ...identityEditForm, batch: e.target.value })}
+                    placeholder="e.g. 2023-2027"
+                  />
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '1.25rem' }}>
+                <label className="form-label">
+                  Reason for Request <span style={{ color: '#DC2626' }}>*</span>
+                </label>
+                <textarea
+                  className="form-control"
+                  rows={3}
+                  required
+                  placeholder="State the justification or official reason for requesting this correction (e.g. spelling error in name, registration number correction)..."
+                  value={identityEditForm.reason}
+                  onChange={(e) => setIdentityEditForm({ ...identityEditForm, reason: e.target.value })}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={submittingEditRequest}
+                  onClick={() => setShowIdentityEditModal(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={submittingEditRequest}
+                >
+                  {submittingEditRequest ? 'Submitting Request...' : 'Submit Request to Admin'}
+                </button>
+              </div>
+            </div>
+          </form>
+        </Modal>
+      )}
     </div>
   );
 };

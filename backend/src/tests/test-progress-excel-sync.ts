@@ -140,7 +140,7 @@ async function runProgressExcelSyncTest() {
   // STEP 1: Student adds Hackathon Certificate: "Smart India Hackathon 2026"
   // =========================================================================
   console.log('\n--- Step 1: Adding Hackathon Certificate ---');
-  const hackathonRecord = await StudentProgress.create({
+  const hackathonRecord: any = await StudentProgress.create({
     studentId: studentObj._id,
     registerNumber: regNo,
     studentName: studentObj.fullName,
@@ -156,7 +156,7 @@ async function runProgressExcelSyncTest() {
     description: 'Developed an AI-driven digital mentoring and student record platform.',
     certificateUrl: '/uploads/progress/sih2026_cert.pdf',
     status: 'Pending',
-  });
+  } as any);
 
   assert(hackathonRecord._id, 'Hackathon record must be created in MongoDB');
   console.log('✓ Hackathon record saved in MongoDB collection student_progress.');
@@ -212,7 +212,7 @@ async function runProgressExcelSyncTest() {
   // STEP 2: Student adds NPTEL, Global Cert, Symposium, Award, Second Hackathon
   // =========================================================================
   console.log('\n--- Step 2: Adding Multi-category achievements ---');
-  await StudentProgress.create([
+  await (StudentProgress.create as any)([
     {
       studentId: studentObj._id,
       registerNumber: regNo,
@@ -303,7 +303,7 @@ async function runProgressExcelSyncTest() {
   workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(exportResult.buffer as any);
 
-  sheet1 = workbook.getWorksheet('MENTOR MENTEE LIST');
+  sheet1 = workbook.getWorksheet('MENTOR MENTEE LIST')!;
   stuRow = sheet1.getRow(studentRowNumber);
 
   // Check NPTEL (Col 7)
@@ -400,9 +400,9 @@ async function runProgressExcelSyncTest() {
   const exportResB = await generateMentorMenteesExcel(facultyMentorB._id.toString());
   const wbB = new ExcelJS.Workbook();
   await wbB.xlsx.load(exportResB.buffer as any);
-  const sheet1B = wbB.getWorksheet('MENTOR MENTEE LIST');
+  const sheet1B = wbB.getWorksheet('MENTOR MENTEE LIST')!;
   let foundInNewMentor = false;
-  let newMentorRow: ExcelJS.Row | null = null;
+  let newMentorRow: any = null;
   sheet1B.eachRow((row) => {
     if (row.getCell(4).value?.toString() === regNo) {
       foundInNewMentor = true;

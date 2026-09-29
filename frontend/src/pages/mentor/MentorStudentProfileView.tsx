@@ -1183,12 +1183,66 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
 
             <div>
               <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+                Academic Year & Section
+              </label>
+              <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0F172A', marginTop: '4px' }}>
+                Year {student.year || '—'} • Section {student.section || '—'}
+              </div>
+            </div>
+
+            <div>
+              <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
                 Admission Type
               </label>
               <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0F172A', marginTop: '4px' }}>
-                {student.school?.admission_type || 'COUNSELLING'}
+                {(student.admission_type || student.admissionType || student.school?.admission_type) === 'LATERAL_ENTRY'
+                  ? 'Lateral Entry'
+                  : (student.admission_type || student.admissionType || student.school?.admission_type) === 'MANAGEMENT'
+                  ? 'Management Quota'
+                  : 'Counselling (Govt Quota)'}
               </div>
             </div>
+
+            <div style={{ gridColumn: 'span 2' }}>
+              <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+                Scholarship Details
+              </label>
+              <div style={{ fontSize: '0.95rem', color: '#334155', marginTop: '4px' }}>
+                {student.scholarship_details || student.scholarshipDetails || 'No scholarship recorded'}
+              </div>
+            </div>
+
+            {/* Lateral Entry Details Section (Conditional) */}
+            {((student.admission_type || student.admissionType) === 'LATERAL_ENTRY' ||
+              Boolean(student.lateral_entry?.previous_college_name || student.lateralEntry?.previousCollegeName)) && (
+              <div style={{ gridColumn: 'span 2', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '8px', padding: '1rem', marginTop: '0.5rem' }}>
+                <h4 style={{ fontSize: '0.9rem', fontWeight: 800, color: '#1E40AF', margin: '0 0 0.75rem 0' }}>
+                  Lateral Entry Academic Details
+                </h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem', fontSize: '0.85rem' }}>
+                  <div>
+                    <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous College Name:</span>
+                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_college_name || student.lateralEntry?.previousCollegeName || '—'}</strong>
+                  </div>
+                  <div>
+                    <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous Course / Diploma:</span>
+                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_course || student.lateralEntry?.previousCourse || '—'}</strong>
+                  </div>
+                  <div>
+                    <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous Institution:</span>
+                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_institution || student.lateralEntry?.previousInstitution || '—'}</strong>
+                  </div>
+                  <div>
+                    <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous Qualification:</span>
+                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_qualification_details || student.lateralEntry?.previousQualificationDetails || '—'}</strong>
+                  </div>
+                  <div>
+                    <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Admission Year:</span>
+                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.admission_year || student.lateralEntry?.admissionYear || '—'}</strong>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div style={{ gridColumn: 'span 2' }}>
               <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
@@ -1323,10 +1377,8 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                           <td style={{ padding: '0.75rem 1rem' }}>
                             {hasStanding ? (
                               <span className="badge badge-danger">Active Arrear</span>
-                            ) : sem.arrears_count > 0 ? (
-                              <span className="badge badge-success">Cleared</span>
                             ) : (
-                              <span className="badge badge-info">Regular Pass</span>
+                              <span className="badge badge-success">Clear</span>
                             )}
                           </td>
                         </tr>

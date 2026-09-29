@@ -11,6 +11,10 @@ import {
   resetStudentPassword,
   toggleStudentStatus,
 } from './student.controller.js';
+import {
+  createIdentityEditRequest,
+  getMyIdentityEditRequests,
+} from './student-edit-request.controller.js';
 import { authenticate } from '../../middleware/auth.middleware.js';
 import { authorize } from '../../middleware/rbac.middleware.js';
 import { ROLES } from '../../config/constants.js';
@@ -25,6 +29,10 @@ router.get('/', authorize(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY), getStudents);
 // Student first-login complete profile
 router.post('/complete-profile', authorize(ROLES.STUDENT, ROLES.ADMIN), submitStudentProfile);
 router.post('/:id/complete-profile', authorize(ROLES.STUDENT, ROLES.ADMIN), submitStudentProfile);
+
+// Institutional Identity Correction Request (Student)
+router.post('/identity-edit-request', authorize(ROLES.STUDENT), createIdentityEditRequest);
+router.get('/identity-edit-request/my', authorize(ROLES.STUDENT), getMyIdentityEditRequests);
 
 // Admin reset student password
 router.post('/:id/reset-password', authorize(ROLES.ADMIN), resetStudentPassword);
@@ -41,8 +49,8 @@ router.post('/', authorize(ROLES.ADMIN), createStudent);
 // Update profile info (Admin or Student self)
 router.put('/:id', authorize(ROLES.ADMIN, ROLES.STUDENT), updateStudent);
 
-// Update Semester 1-8 academics and school marks (Admin, Faculty)
-router.put('/:id/academics', authorize(ROLES.ADMIN, ROLES.FACULTY), updateStudentAcademics);
+// Update Semester 1-8 academics and school marks (Admin, Faculty, Student)
+router.put('/:id/academics', authorize(ROLES.ADMIN, ROLES.FACULTY, ROLES.STUDENT), updateStudentAcademics);
 
 // Clear an arrear in a specific semester preserving historical records (Admin, Faculty)
 router.post('/:id/clear-arrear', authorize(ROLES.ADMIN, ROLES.FACULTY), clearArrear);

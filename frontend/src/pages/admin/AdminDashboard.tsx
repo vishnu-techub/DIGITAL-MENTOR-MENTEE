@@ -87,6 +87,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
   const [selectedDept, setSelectedDept] = useState('');
   const [selectedBatch, setSelectedBatch] = useState('');
 
+  // Identity Edit Requests
+  const [identityEditRequests, setIdentityEditRequests] = useState<any[]>([]);
+  const [loadingEditRequests, setLoadingEditRequests] = useState(false);
+  const [identityRequestFilter, setIdentityRequestFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL');
+  const [selectedEditRequest, setSelectedEditRequest] = useState<any | null>(null);
+  const [reviewNotes, setReviewNotes] = useState('');
+  const [reviewAction, setReviewAction] = useState<'APPROVED' | 'REJECTED'>('APPROVED');
+  const [submittingReview, setSubmittingReview] = useState(false);
+
   // Modals
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
   const [showAddFacultyModal, setShowAddFacultyModal] = useState(false);
@@ -172,10 +181,53 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
     meetingLocation: 'Faculty Cabin / Mentoring Room',
   });
 
+  const fetchEditRequests = async () => {
+    setLoadingEditRequests(true);
+    try {
+      const res = await api.admin.getEditRequests();
+      if (res.success && res.data) {
+        setIdentityEditRequests(res.data);
+      }
+    } catch (err: any) {
+      console.error('Failed to load identity edit requests:', err);
+    } finally {
+      setLoadingEditRequests(false);
+    }
+  };
+
+  const handleReviewEditRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEditRequest) return;
+    setSubmittingReview(true);
+    try {
+      const res = await api.admin.reviewEditRequest(selectedEditRequest._id || selectedEditRequest.id, {
+        status: reviewAction,
+        reviewNotes: reviewNotes.trim() || undefined,
+        action: reviewAction === 'APPROVED' ? 'APPROVE' : 'REJECT',
+        adminComments: reviewNotes.trim() || undefined,
+      });
+      if (res.success) {
+        toast.success(`Identity correction request ${reviewAction === 'APPROVED' ? 'approved & updated' : 'rejected'}.`);
+        setSelectedEditRequest(null);
+        setReviewNotes('');
+        await fetchEditRequests();
+        // Refresh students list to reflect changes immediately
+        const studentsRes = await api.students.list();
+        if (studentsRes.success) setStudents(studentsRes.data);
+      } else {
+        toast.error(res.message || 'Failed to review request.');
+      }
+    } catch (err: any) {
+      toast.error('Error reviewing request: ' + err.message);
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
+
   const loadData = async () => {
     setLoading(true);
     try {
-      const [statsRes, studentsRes, facultyRes, deptsRes, batchesRes, auditRes, settingsRes, meetingsRes, notifsRes, schoolsRes] =
+      const [statsRes, studentsRes, facultyRes, deptsRes, batchesRes, auditRes, settingsRes, meetingsRes, notifsRes, schoolsRes, editReqsRes] =
         await Promise.all([
           api.admin.getStats(),
           api.students.list(),
@@ -187,11 +239,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
           api.meetings.list().catch(() => ({ success: false, data: [] })),
           api.notifications.list().catch(() => ({ success: false, data: { notifications: [] } })),
           api.schools.list({ limit: 100 }).catch(() => ({ success: false, data: { schools: [] } })),
+          api.admin.getEditRequests().catch(() => ({ success: false, data: [] })),
         ]);
 
       if (statsRes.success) setStats(statsRes.data);
       if (studentsRes.success) setStudents(studentsRes.data);
       if (facultyRes.success) setFaculty(facultyRes.data);
+      if (editReqsRes.success && editReqsRes.data) setIdentityEditRequests(editReqsRes.data);
       if (deptsRes.success) {
         setDepartments(deptsRes.data);
         const itDept = deptsRes.data.find((d: any) => d.code === 'IT') || deptsRes.data[0];
@@ -459,6 +513,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
   // Reset student details view when sidebar tab changes
   useEffect(() => {
     setSelectedStudentId(null);
+    if (currentTab === 'identity-requests') {
+      fetchEditRequests();
+    }
   }, [currentTab]);
 
   if (selectedStudentId) {
@@ -2158,6 +2215,213 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
         </div>
       )}
 
+      {/* Identity Edit Requests Tab */}
+      {currentTab === 'identity-requests' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+            <div>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <FileCheck size={22} color="#0B2545" /> Student Identity Correction Requests
+              </h2>
+              <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: '#64748B' }}>
+                Review and approve student correction requests for official institutional records (Full Name, Register Number, Department, Batch).
+              </p>
+            </div>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={fetchEditRequests}
+              disabled={loadingEditRequests}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              <History size={14} /> {loadingEditRequests ? 'Refreshing...' : 'Refresh Requests'}
+            </button>
+          </div>
+
+          {/* Filter Pills */}
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+            {[
+              { id: 'ALL', label: 'All Requests', count: identityEditRequests.length },
+              { id: 'PENDING', label: 'Pending Review', count: identityEditRequests.filter(r => r.status === 'PENDING').length },
+              { id: 'APPROVED', label: 'Approved', count: identityEditRequests.filter(r => r.status === 'APPROVED').length },
+              { id: 'REJECTED', label: 'Rejected', count: identityEditRequests.filter(r => r.status === 'REJECTED').length },
+            ].map(f => (
+              <button
+                key={f.id}
+                onClick={() => setIdentityRequestFilter(f.id as any)}
+                className={`btn btn-sm ${identityRequestFilter === f.id ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ borderRadius: '20px', padding: '0.35rem 0.85rem', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                <span>{f.label}</span>
+                <span
+                  style={{
+                    backgroundColor: identityRequestFilter === f.id ? 'rgba(255,255,255,0.25)' : '#E2E8F0',
+                    color: identityRequestFilter === f.id ? '#fff' : '#475569',
+                    borderRadius: '10px',
+                    padding: '1px 6px',
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                  }}
+                >
+                  {f.count}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div className="card">
+            <div className="table-responsive">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Date Submitted</th>
+                    <th>Student Name & Reg No</th>
+                    <th>Requested Changes</th>
+                    <th>Reason / Justification</th>
+                    <th>Status</th>
+                    <th>Review Decision</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {identityEditRequests
+                    .filter(r => identityRequestFilter === 'ALL' || r.status === identityRequestFilter)
+                    .length === 0 ? (
+                    <tr>
+                      <td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: '#64748B' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                          <CheckCircle2 size={32} color="#94A3B8" />
+                          <div style={{ fontWeight: 600, color: '#475569' }}>No identity correction requests found.</div>
+                          <div style={{ fontSize: '0.8rem' }}>
+                            {identityRequestFilter === 'PENDING'
+                              ? 'There are no pending student edit requests awaiting review.'
+                              : 'No requests match the selected filter.'}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    identityEditRequests
+                      .filter(r => identityRequestFilter === 'ALL' || r.status === identityRequestFilter)
+                      .map((req) => {
+                        const rf = req.requestedFields || {};
+                        const cv = req.currentValues || {};
+                        return (
+                          <tr key={req._id || req.id}>
+                            <td style={{ fontSize: '0.8rem', color: '#64748B', whiteSpace: 'nowrap' }}>
+                              {req.createdAt ? new Date(req.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A'}
+                            </td>
+                            <td>
+                              <div style={{ fontWeight: 700, color: '#0B2545' }}>{req.studentName}</div>
+                              <div style={{ fontSize: '0.78rem', color: '#64748B' }}>{req.registerNumber}</div>
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem' }}>
+                                {rf.fullName && (
+                                  <div>
+                                    <span style={{ color: '#64748B' }}>Name:</span>{' '}
+                                    <span style={{ textDecoration: 'line-through', color: '#94A3B8' }}>{cv.fullName || '—'}</span>{' '}
+                                    <strong style={{ color: '#0B2545' }}>➔ {rf.fullName}</strong>
+                                  </div>
+                                )}
+                                {rf.registerNumber && (
+                                  <div>
+                                    <span style={{ color: '#64748B' }}>Reg No:</span>{' '}
+                                    <span style={{ textDecoration: 'line-through', color: '#94A3B8' }}>{cv.registerNumber || '—'}</span>{' '}
+                                    <strong style={{ color: '#0B2545' }}>➔ {rf.registerNumber}</strong>
+                                  </div>
+                                )}
+                                {rf.departmentName && (
+                                  <div>
+                                    <span style={{ color: '#64748B' }}>Dept:</span>{' '}
+                                    <span style={{ textDecoration: 'line-through', color: '#94A3B8' }}>{cv.departmentName || '—'}</span>{' '}
+                                    <strong style={{ color: '#0B2545' }}>➔ {rf.departmentName}</strong>
+                                  </div>
+                                )}
+                                {rf.batchName && (
+                                  <div>
+                                    <span style={{ color: '#64748B' }}>Batch:</span>{' '}
+                                    <span style={{ textDecoration: 'line-through', color: '#94A3B8' }}>{cv.batchName || '—'}</span>{' '}
+                                    <strong style={{ color: '#0B2545' }}>➔ {rf.batchName}</strong>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td style={{ maxWidth: '240px' }}>
+                              <div style={{ fontSize: '0.82rem', color: '#334155', fontStyle: 'italic', background: '#F8FAFC', padding: '6px 8px', borderRadius: '4px' }}>
+                                "{req.reason || 'No justification provided'}"
+                              </div>
+                            </td>
+                            <td>
+                              {req.status === 'PENDING' && (
+                                <span className="badge badge-warning" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                  <Clock size={12} /> Pending Review
+                                </span>
+                              )}
+                              {req.status === 'APPROVED' && (
+                                <span className="badge badge-success" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                  <CheckCircle2 size={12} /> Approved
+                                </span>
+                              )}
+                              {req.status === 'REJECTED' && (
+                                <span className="badge badge-danger" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                  <X size={12} /> Rejected
+                                </span>
+                              )}
+                            </td>
+                            <td style={{ fontSize: '0.78rem', color: '#64748B' }}>
+                              {req.status !== 'PENDING' ? (
+                                <div>
+                                  <div>By: <strong>{req.reviewerName || 'Administrator'}</strong></div>
+                                  {req.reviewedAt && (
+                                    <div>On: {new Date(req.reviewedAt).toLocaleDateString('en-IN')}</div>
+                                  )}
+                                  {req.adminComments && (
+                                    <div style={{ color: '#475569', fontStyle: 'italic', marginTop: '2px' }}>
+                                      Note: "{req.adminComments}"
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <span style={{ color: '#94A3B8' }}>Awaiting decision</span>
+                              )}
+                            </td>
+                            <td>
+                              {req.status === 'PENDING' ? (
+                                <button
+                                  className="btn btn-primary btn-sm"
+                                  onClick={() => {
+                                    setSelectedEditRequest(req);
+                                    setReviewAction('APPROVED');
+                                    setReviewNotes('');
+                                  }}
+                                  style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                >
+                                  <FileCheck size={14} /> Review Request
+                                </button>
+                              ) : (
+                                <button
+                                  className="btn btn-secondary btn-sm"
+                                  onClick={() => {
+                                    setSelectedEditRequest(req);
+                                    setReviewAction(req.status === 'APPROVED' ? 'APPROVED' : 'REJECTED');
+                                    setReviewNotes(req.adminComments || '');
+                                  }}
+                                  style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                >
+                                  <Eye size={14} /> View Details
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL: Add Student (Admin creates basic login account identity only) */}
       <Modal
@@ -2950,6 +3214,208 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 {deletingFaculty ? 'Deleting Faculty...' : 'Permanently Delete Faculty'}
               </button>
             </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* MODAL: Review Identity Edit Request */}
+      <Modal
+        isOpen={!!selectedEditRequest}
+        onClose={() => setSelectedEditRequest(null)}
+        title={selectedEditRequest?.status === 'PENDING' ? 'Review Student Identity Correction' : 'Student Identity Request Details'}
+      >
+        {selectedEditRequest && (
+          <div>
+            <div style={{ backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', padding: '1rem', borderRadius: '8px', marginBottom: '1.25rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', fontSize: '0.85rem' }}>
+                <div>
+                  <span style={{ color: '#64748B', display: 'block' }}>Student Name</span>
+                  <strong style={{ color: '#0B2545', fontSize: '0.95rem' }}>{selectedEditRequest.studentName}</strong>
+                </div>
+                <div>
+                  <span style={{ color: '#64748B', display: 'block' }}>Register Number</span>
+                  <strong style={{ color: '#0B2545', fontSize: '0.95rem' }}>{selectedEditRequest.registerNumber}</strong>
+                </div>
+                <div>
+                  <span style={{ color: '#64748B', display: 'block' }}>Requested On</span>
+                  <span>{new Date(selectedEditRequest.createdAt).toLocaleString('en-IN')}</span>
+                </div>
+                <div>
+                  <span style={{ color: '#64748B', display: 'block' }}>Request Status</span>
+                  <span className={`badge ${selectedEditRequest.status === 'APPROVED' ? 'badge-success' : selectedEditRequest.status === 'REJECTED' ? 'badge-danger' : 'badge-warning'}`}>
+                    {selectedEditRequest.status}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '1.25rem' }}>
+              <label style={{ fontSize: '0.85rem', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '0.5rem' }}>
+                Requested Modifications:
+              </label>
+              <div style={{ border: '1px solid #E2E8F0', borderRadius: '8px', overflow: 'hidden' }}>
+                <table className="table" style={{ margin: 0, fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr style={{ background: '#F1F5F9' }}>
+                      <th>Field</th>
+                      <th>Current Value</th>
+                      <th>Requested Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedEditRequest.requestedFields?.fullName && (
+                      <tr>
+                        <td style={{ fontWeight: 600 }}>Full Name</td>
+                        <td style={{ color: '#64748B' }}>{selectedEditRequest.currentValues?.fullName || '—'}</td>
+                        <td><strong style={{ color: '#059669' }}>{selectedEditRequest.requestedFields.fullName}</strong></td>
+                      </tr>
+                    )}
+                    {selectedEditRequest.requestedFields?.registerNumber && (
+                      <tr>
+                        <td style={{ fontWeight: 600 }}>Register Number</td>
+                        <td style={{ color: '#64748B' }}>{selectedEditRequest.currentValues?.registerNumber || '—'}</td>
+                        <td><strong style={{ color: '#059669' }}>{selectedEditRequest.requestedFields.registerNumber}</strong></td>
+                      </tr>
+                    )}
+                    {selectedEditRequest.requestedFields?.departmentName && (
+                      <tr>
+                        <td style={{ fontWeight: 600 }}>Department</td>
+                        <td style={{ color: '#64748B' }}>{selectedEditRequest.currentValues?.departmentName || '—'}</td>
+                        <td><strong style={{ color: '#059669' }}>{selectedEditRequest.requestedFields.departmentName}</strong></td>
+                      </tr>
+                    )}
+                    {selectedEditRequest.requestedFields?.batchName && (
+                      <tr>
+                        <td style={{ fontWeight: 600 }}>Academic Batch</td>
+                        <td style={{ color: '#64748B' }}>{selectedEditRequest.currentValues?.batchName || '—'}</td>
+                        <td><strong style={{ color: '#059669' }}>{selectedEditRequest.requestedFields.batchName}</strong></td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '1.25rem' }}>
+              <label style={{ fontSize: '0.85rem', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '0.35rem' }}>
+                Student's Reason / Justification:
+              </label>
+              <div style={{ background: '#F8FAFC', padding: '0.75rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.85rem', color: '#1E293B' }}>
+                {selectedEditRequest.reason || 'No written explanation provided.'}
+              </div>
+            </div>
+
+            {selectedEditRequest.status === 'PENDING' ? (
+              <form onSubmit={handleReviewEditRequest}>
+                <div style={{ marginBottom: '1.25rem' }}>
+                  <label style={{ fontSize: '0.85rem', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '0.5rem' }}>
+                    Administrative Action *
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                    <button
+                      type="button"
+                      className={`btn ${reviewAction === 'APPROVED' ? 'btn-primary' : 'btn-secondary'}`}
+                      style={{
+                        padding: '0.75rem',
+                        fontWeight: 700,
+                        backgroundColor: reviewAction === 'APPROVED' ? '#059669' : undefined,
+                        borderColor: reviewAction === 'APPROVED' ? '#059669' : undefined,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                      }}
+                      onClick={() => setReviewAction('APPROVED')}
+                    >
+                      <CheckCircle2 size={16} /> Approve & Apply Changes
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn ${reviewAction === 'REJECTED' ? 'btn-danger' : 'btn-secondary'}`}
+                      style={{
+                        padding: '0.75rem',
+                        fontWeight: 700,
+                        backgroundColor: reviewAction === 'REJECTED' ? '#DC2626' : undefined,
+                        borderColor: reviewAction === 'REJECTED' ? '#DC2626' : undefined,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                      }}
+                      onClick={() => setReviewAction('REJECTED')}
+                    >
+                      <X size={16} /> Reject Correction
+                    </button>
+                  </div>
+                </div>
+
+                <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+                  <label className="form-label">
+                    Administrator Review Notes / Resolution Remark {reviewAction === 'REJECTED' && <span style={{ color: '#DC2626' }}>*</span>}
+                  </label>
+                  <textarea
+                    className="form-control"
+                    rows={3}
+                    placeholder={
+                      reviewAction === 'APPROVED'
+                        ? 'e.g., Verified with original admission record and official Anna University register.'
+                        : 'e.g., Register number does not match admission certificate.'
+                    }
+                    value={reviewNotes}
+                    onChange={(e) => setReviewNotes(e.target.value)}
+                    required={reviewAction === 'REJECTED'}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setSelectedEditRequest(null)}
+                    disabled={submittingReview}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className={`btn ${reviewAction === 'APPROVED' ? 'btn-primary' : 'btn-danger'}`}
+                    style={{
+                      backgroundColor: reviewAction === 'APPROVED' ? '#059669' : '#DC2626',
+                      borderColor: reviewAction === 'APPROVED' ? '#059669' : '#DC2626',
+                    }}
+                    disabled={submittingReview}
+                  >
+                    {submittingReview
+                      ? 'Submitting Decision...'
+                      : reviewAction === 'APPROVED'
+                      ? 'Confirm & Apply Official Update'
+                      : 'Reject Request'}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div>
+                <div style={{ backgroundColor: '#F8FAFC', padding: '0.85rem', borderRadius: '6px', border: '1px solid #E2E8F0', marginBottom: '1rem', fontSize: '0.85rem' }}>
+                  <div style={{ fontWeight: 600, color: '#334155', marginBottom: '4px' }}>Review Record:</div>
+                  <div>Reviewed By: <strong>{selectedEditRequest.reviewerName || 'Administrator'}</strong></div>
+                  <div>Decision Date: {selectedEditRequest.reviewedAt ? new Date(selectedEditRequest.reviewedAt).toLocaleString('en-IN') : 'N/A'}</div>
+                  {selectedEditRequest.adminComments && (
+                    <div style={{ marginTop: '4px' }}>
+                      Admin Notes: <em>"{selectedEditRequest.adminComments}"</em>
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setSelectedEditRequest(null)}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Modal>

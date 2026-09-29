@@ -126,6 +126,19 @@ export const api = {
       }),
     removeAssignment: (assignmentId: string) =>
       request(`/admin/mentor-assignments/${assignmentId}/remove`, { method: 'PATCH' }),
+    getEditRequests: (status?: string) => {
+      const q = status ? `?status=${status}` : '';
+      return request(`/admin/identity-edit-requests${q}`);
+    },
+    reviewEditRequest: (id: string, data: { status: 'APPROVED' | 'REJECTED'; reviewNotes?: string; action?: 'APPROVE' | 'REJECT'; adminComments?: string }) =>
+      request(`/admin/identity-edit-requests/${id}/review`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          action: data.action || (data.status === 'APPROVED' ? 'APPROVE' : 'REJECT'),
+          adminComments: data.adminComments || data.reviewNotes || '',
+          ...data,
+        }),
+      }),
   },
 
 
@@ -152,6 +165,10 @@ export const api = {
       request(`/students/${id}/toggle-status`, { method: 'PATCH' }),
     delete: (id: string) =>
       request(`/students/${id}`, { method: 'DELETE' }),
+    requestEdit: (data: { requestedChanges: { fullName?: string; registerNumber?: string; department?: string; batch?: string }; reason: string }) =>
+      request('/students/identity-edit-request', { method: 'POST', body: JSON.stringify(data) }),
+    getMyEditRequests: () =>
+      request('/students/identity-edit-request/my'),
   },
 
   // Mentorship (Assignment & Reassignment History)
@@ -262,6 +279,8 @@ export const api = {
       request<any[]>(`/documents/student/${studentId}`),
     delete: (documentId: string) =>
       request(`/documents/${documentId}`, { method: 'DELETE' }),
+    deleteAll: (studentId: string) =>
+      request(`/documents/student/${studentId}/all`, { method: 'DELETE' }),
     verify: (
       documentId: string,
       data: { verificationStatus: 'Pending' | 'Verified' | 'Rejected'; rejectionReason?: string }

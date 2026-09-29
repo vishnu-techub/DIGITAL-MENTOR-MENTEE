@@ -48,6 +48,8 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
     department_name: dept.name || '',
     department_code: dept.code || '',
     batch_name: batch.name || '',
+    year: studentDoc.year ? `Year ${studentDoc.year}` : '',
+    section: studentDoc.section || '',
     residential_type: studentDoc.residentialType || 'DAY_SCHOLAR',
     blood_group: studentDoc.bloodGroup || 'B+ve',
     mobile_number: studentDoc.mobileNumber || '',
@@ -78,8 +80,9 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
     twelfth_mark: sc.twelfthMark,
     twelfth_school: sc.twelfthSchool || '',
     cutoff_mark: sc.cutoffMark,
-    admission_type: sc.admissionType || 'COUNSELLING',
-    scholarship_details: sc.scholarshipDetails || '',
+    admission_type: studentDoc.admissionType || sc.admissionType || 'COUNSELLING',
+    scholarship_details: studentDoc.scholarshipDetails || sc.scholarshipDetails || '',
+    lateral_entry: (studentDoc as any).lateralEntry || null,
   };
 
   // 5. Fetch Semesters 1 to 8
@@ -270,7 +273,8 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
   doc.setFontSize(9);
   doc.setTextColor(darkTextColor[0], darkTextColor[1], darkTextColor[2]);
   doc.text(`Department: B.E. ${student.department_name} (${student.department_code})`, margin + 4, currentY + 12);
-  doc.text(`Academic Batch: ${student.batch_name}`, pageWidth - margin - 4, currentY + 12, { align: 'right' });
+  const acadExtra = [student.batch_name, student.year, student.section ? `Sec ${student.section}` : ''].filter(Boolean).join(' • ');
+  doc.text(`Academic Batch: ${acadExtra}`, pageWidth - margin - 4, currentY + 12, { align: 'right' });
 
   doc.text(`Residential: ${student.residential_type?.replace('_', ' ') || 'DAY SCHOLAR'}  |  Blood Group: ${student.blood_group || 'N/A'}  |  Mobile: ${student.mobile_number || 'N/A'}`, margin + 4, currentY + 18);
   doc.text(`Active Mentor: ${currentMentor ? currentMentor.mentor_name : 'Pending Allocation'}`, pageWidth - margin - 4, currentY + 18, { align: 'right' });
@@ -329,10 +333,18 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
         { content: 'TNEA Cut-off Mark:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
         school?.cutoff_mark ? `${school.cutoff_mark} / 200` : 'N/A',
         { content: 'Admission Mode:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
-        school?.admission_type || 'COUNSELLING',
+        school?.admission_type === 'LATERAL_ENTRY' ? 'LATERAL ENTRY' : school?.admission_type === 'MANAGEMENT' ? 'MANAGEMENT' : 'COUNSELLING',
       ],
+      ...(school?.admission_type === 'LATERAL_ENTRY' && school?.lateral_entry ? [
+        [
+          { content: 'Lateral Entry College:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
+          `${school.lateral_entry.previousCollegeName || school.lateral_entry.previousInstitution || 'N/A'} (${school.lateral_entry.previousCourse || 'Diploma'})`,
+          { content: 'Qual Details & Adm Year:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
+          `${school.lateral_entry.previousQualificationDetails || 'N/A'} (Adm: ${school.lateral_entry.admissionYear || 'N/A'})`,
+        ] as any
+      ] : []),
       [
-        { content: 'Scholarship Details:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+        { content: 'Scholarship Details:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
         { content: school?.scholarship_details || 'Nil', colSpan: 3 },
       ],
     ],
@@ -346,7 +358,8 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
     const s = semesters.find((x: any) => x.semester_number === num);
     const arrearsCountDisplay = s ? `${s.arrears_count}` : '0';
     const subjectsDisplay = s ? (s.arrears_subjects || '—') : '—';
-    const statusDisplay = s ? (s.clearance_remarks || s.status_label || 'Clear / Regular') : 'Clear / Regular';
+    const hasStanding = s ? Boolean(s.has_active_arrear || s.arrears_count > 0) : false;
+    const statusDisplay = hasStanding ? 'Active Arrear' : 'Clear';
 
     return [
       `Semester 0${num}`,

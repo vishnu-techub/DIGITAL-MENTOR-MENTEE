@@ -335,6 +335,10 @@ export async function getStudentById(req: AuthRequest, res: Response) {
       department_code: dept?.code || '',
       batch_id: batch?._id?.toString() || '',
       batch_name: batch?.name || '',
+      year: student.year || 2,
+      section: student.section || 'A',
+      admission_type: student.school?.admissionType || 'COUNSELLING',
+      lateral_entry: student.school?.lateralEntry || null,
       dob: student.dob || null,
       blood_group: student.bloodGroup || 'B+ve',
       residential_type: student.residentialType,
@@ -370,6 +374,7 @@ export async function getStudentById(req: AuthRequest, res: Response) {
         cutoff_mark: student.school?.cutoffMark || 0,
         admission_type: student.school?.admissionType || 'COUNSELLING',
         scholarship_details: student.school?.scholarshipDetails || 'Nil',
+        lateral_entry: student.school?.lateralEntry || null,
       },
       semesters: formattedSemesters,
       cleared_subjects: arrearStats.clearedSubjects,
@@ -556,8 +561,34 @@ export async function submitStudentProfile(req: AuthRequest, res: Response) {
       cutoffMark,
       admissionType,
       scholarshipDetails,
+      lateralEntry,
+      year,
+      section,
       semesters,
     } = req.body;
+
+    if (mobileNumber) {
+      const cleanMobile = String(mobileNumber).trim();
+      if (!/^[0-9]{10}$/.test(cleanMobile)) {
+        return sendError(res, 'Mobile number must be exactly 10 digits.', 400);
+      }
+    }
+
+    if (Array.isArray(semesters)) {
+      for (const sem of semesters) {
+        const semNum = parseInt(sem.semesterNumber || sem.semester_number, 10);
+        if (semNum >= 1 && semNum <= 8) {
+          const rawCgpa = sem.cgpa !== undefined && sem.cgpa !== '' ? parseFloat(sem.cgpa) : undefined;
+          const rawSgpa = sem.sgpa !== undefined && sem.sgpa !== '' ? parseFloat(sem.sgpa) : undefined;
+          if (rawCgpa !== undefined && (isNaN(rawCgpa) || rawCgpa < 0 || rawCgpa > 10)) {
+            return sendError(res, `Semester ${semNum}: CGPA must be strictly between 0.0 and 10.0`, 400);
+          }
+          if (rawSgpa !== undefined && (isNaN(rawSgpa) || rawSgpa < 0 || rawSgpa > 10)) {
+            return sendError(res, `Semester ${semNum}: SGPA must be strictly between 0.0 and 10.0`, 400);
+          }
+        }
+      }
+    }
 
     // Validate school selection: accept selected school from database OR entered school name
     let tenthSchoolDoc = null;
@@ -632,12 +663,19 @@ export async function submitStudentProfile(req: AuthRequest, res: Response) {
     }
 
     // Update student personal and subdocument fields
-    student.mobileNumber = mobileNumber || student.mobileNumber;
-    student.email = email || student.email;
+    student.mobileNumber = mobileNumber ? String(mobileNumber).trim() : student.mobileNumber;
+    student.email = email ? String(email).trim().toLowerCase() : student.email;
     student.dob = dob || student.dob;
     student.bloodGroup = bloodGroup || student.bloodGroup;
     student.residentialType = residentialType || student.residentialType;
     student.address = address || student.address;
+    if (year !== undefined) {
+      const y = parseInt(year, 10);
+      if (y >= 1 && y <= 4) student.year = y;
+    }
+    if (section !== undefined && String(section).trim()) {
+      student.section = String(section).trim().toUpperCase();
+    }
     student.profileCompleted = true;
     student.profileCompletedAt = new Date();
 
@@ -660,6 +698,7 @@ export async function submitStudentProfile(req: AuthRequest, res: Response) {
         }));
     }
 
+    const effectiveAdmissionType = admissionType || student.school?.admissionType || 'COUNSELLING';
     student.school = {
       tenthMark: tenthMark !== undefined && tenthMark !== '' ? parseFloat(tenthMark) : student.school?.tenthMark || 0,
       tenthSchool: finalTenthSchoolName,
@@ -668,15 +707,22 @@ export async function submitStudentProfile(req: AuthRequest, res: Response) {
       twelfthSchool: finalTwelfthSchoolName,
       twelfthSchoolId: twelfthSchoolDoc?._id || (mongoose.Types.ObjectId.isValid(twelfthSchoolId) ? twelfthSchoolId : null) || student.school?.twelfthSchoolId || null,
       cutoffMark: cutoffMark !== undefined && cutoffMark !== '' ? parseFloat(cutoffMark) : student.school?.cutoffMark || 0,
-      admissionType: admissionType || student.school?.admissionType || 'COUNSELLING',
-      scholarshipDetails: scholarshipDetails || student.school?.scholarshipDetails || 'Nil',
+      admissionType: effectiveAdmissionType,
+      scholarshipDetails: (scholarshipDetails || student.school?.scholarshipDetails || 'Nil').trim(),
+      lateralEntry: effectiveAdmissionType === 'LATERAL_ENTRY' ? {
+        previousCollegeName: lateralEntry?.previousCollegeName || lateralEntry?.previous_college_name || student.school?.lateralEntry?.previousCollegeName || '',
+        previousCourseDiploma: lateralEntry?.previousCourseDiploma || lateralEntry?.previous_course_diploma || student.school?.lateralEntry?.previousCourseDiploma || '',
+        previousInstitution: lateralEntry?.previousInstitution || lateralEntry?.previous_institution || student.school?.lateralEntry?.previousInstitution || '',
+        previousQualificationDetails: lateralEntry?.previousQualificationDetails || lateralEntry?.previous_qualification_details || student.school?.lateralEntry?.previousQualificationDetails || '',
+        admissionYear: lateralEntry?.admissionYear || lateralEntry?.admission_year || student.school?.lateralEntry?.admissionYear || undefined,
+      } : undefined,
     };
 
     await student.save();
 
     // Update user email if provided
-    if (email) {
-      await User.findByIdAndUpdate(student.user, { email });
+    if (student.email) {
+      await User.findByIdAndUpdate(student.user, { email: student.email });
     }
 
     // Update semester 1 to 8 academic grades
@@ -837,12 +883,68 @@ export async function updateStudent(req: AuthRequest, res: Response) {
     if (dob) student.dob = dob;
     if (bloodGroup) student.bloodGroup = bloodGroup;
     if (residentialType) student.residentialType = residentialType;
-    if (mobileNumber) student.mobileNumber = mobileNumber;
-    if (email) {
-      student.email = email;
-      await User.findByIdAndUpdate(student.user, { email });
+    if (mobileNumber !== undefined) {
+      const cleanMobile = String(mobileNumber).trim();
+      if (cleanMobile && !/^[0-9]{10}$/.test(cleanMobile)) {
+        return sendError(res, 'Mobile number must be exactly 10 digits.', 400);
+      }
+      student.mobileNumber = cleanMobile;
+    }
+    if (email !== undefined) {
+      const cleanEmail = String(email).trim().toLowerCase();
+      if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        return sendError(res, 'Invalid email address format.', 400);
+      }
+      student.email = cleanEmail;
+      if (cleanEmail) {
+        await User.findByIdAndUpdate(student.user, { email: cleanEmail });
+      }
     }
     if (address) student.address = address;
+
+    if (req.body.year !== undefined) {
+      const y = parseInt(req.body.year, 10);
+      if (y >= 1 && y <= 4) student.year = y;
+    }
+    if (req.body.section !== undefined && String(req.body.section).trim()) {
+      student.section = String(req.body.section).trim().toUpperCase();
+    }
+
+    if (req.body.admissionType !== undefined || req.body.admission_type !== undefined) {
+      const admType = req.body.admissionType || req.body.admission_type;
+      if (!student.school) student.school = {};
+      if (admType === 'LATERAL_ENTRY') {
+        student.school.admissionType = 'LATERAL_ENTRY';
+        const lat = req.body.lateralEntry || req.body.lateral_entry || {};
+        student.school.lateralEntry = {
+          previousCollegeName: lat.previousCollegeName || lat.previous_college_name || student.school.lateralEntry?.previousCollegeName || '',
+          previousCourseDiploma: lat.previousCourseDiploma || lat.previous_course_diploma || student.school.lateralEntry?.previousCourseDiploma || '',
+          previousInstitution: lat.previousInstitution || lat.previous_institution || student.school.lateralEntry?.previousInstitution || '',
+          previousQualificationDetails: lat.previousQualificationDetails || lat.previous_qualification_details || student.school.lateralEntry?.previousQualificationDetails || '',
+          admissionYear: lat.admissionYear || lat.admission_year || student.school.lateralEntry?.admissionYear || undefined,
+        };
+      } else {
+        student.school.admissionType = admType === 'MANAGEMENT' ? 'MANAGEMENT' : 'COUNSELLING';
+        student.school.lateralEntry = undefined;
+      }
+    } else if (req.body.lateralEntry || req.body.lateral_entry) {
+      const lat = req.body.lateralEntry || req.body.lateral_entry;
+      if (!student.school) student.school = {};
+      if (student.school.admissionType === 'LATERAL_ENTRY') {
+        student.school.lateralEntry = {
+          previousCollegeName: lat.previousCollegeName || lat.previous_college_name || student.school.lateralEntry?.previousCollegeName || '',
+          previousCourseDiploma: lat.previousCourseDiploma || lat.previous_course_diploma || student.school.lateralEntry?.previousCourseDiploma || '',
+          previousInstitution: lat.previousInstitution || lat.previous_institution || student.school.lateralEntry?.previousInstitution || '',
+          previousQualificationDetails: lat.previousQualificationDetails || lat.previous_qualification_details || student.school.lateralEntry?.previousQualificationDetails || '',
+          admissionYear: lat.admissionYear || lat.admission_year || student.school.lateralEntry?.admissionYear || undefined,
+        };
+      }
+    }
+
+    if (req.body.scholarshipDetails !== undefined || req.body.scholarship_details !== undefined) {
+      if (!student.school) student.school = {};
+      student.school.scholarshipDetails = (req.body.scholarshipDetails ?? req.body.scholarship_details ?? '').trim() || 'Nil';
+    }
 
     if (fatherName || fatherContact || fatherOccupation || motherName || motherContact || motherOccupation) {
       student.parent = {
@@ -921,7 +1023,11 @@ export async function updateStudentAcademics(req: AuthRequest, res: Response) {
     twelfthSchool,
     twelfthSchoolId,
     cutoffMark,
+    admissionType,
     scholarshipDetails,
+    lateralEntry,
+    year,
+    section,
   } = req.body;
 
   try {
@@ -930,13 +1036,30 @@ export async function updateStudentAcademics(req: AuthRequest, res: Response) {
       return sendError(res, 'Student not found.', 404);
     }
 
+    // RBAC: Student can update their own academics; Mentor & Admin can also update
+    if (req.user?.role === ROLES.STUDENT) {
+      if (req.user.studentId !== student._id.toString() && req.user.id !== student.user.toString()) {
+        return sendError(res, 'You are not authorized to update these academic records.', 403);
+      }
+    }
+
+    if (year !== undefined) {
+      const y = parseInt(year, 10);
+      if (y >= 1 && y <= 4) student.year = y;
+    }
+    if (section !== undefined && String(section).trim()) {
+      student.section = String(section).trim().toUpperCase();
+    }
+
     if (
       tenthMark !== undefined ||
       tenthSchoolId !== undefined ||
       twelfthMark !== undefined ||
       twelfthSchoolId !== undefined ||
       cutoffMark !== undefined ||
-      scholarshipDetails !== undefined
+      scholarshipDetails !== undefined ||
+      admissionType !== undefined ||
+      lateralEntry !== undefined
     ) {
       let tenthSchoolDoc = null;
       if (tenthSchoolId) {
@@ -947,6 +1070,7 @@ export async function updateStudentAcademics(req: AuthRequest, res: Response) {
         twelfthSchoolDoc = await School.findById(twelfthSchoolId);
       }
 
+      const effectiveAdmissionType = admissionType || student.school?.admissionType || 'COUNSELLING';
       student.school = {
         tenthMark: tenthMark !== undefined && tenthMark !== '' ? parseFloat(tenthMark) : student.school?.tenthMark,
         tenthSchool: (tenthSchoolDoc?.displayName || tenthSchool) ?? student.school?.tenthSchool,
@@ -955,10 +1079,33 @@ export async function updateStudentAcademics(req: AuthRequest, res: Response) {
         twelfthSchool: (twelfthSchoolDoc?.displayName || twelfthSchool) ?? student.school?.twelfthSchool,
         twelfthSchoolId: twelfthSchoolDoc?._id || student.school?.twelfthSchoolId,
         cutoffMark: cutoffMark !== undefined && cutoffMark !== '' ? parseFloat(cutoffMark) : student.school?.cutoffMark,
-        admissionType: student.school?.admissionType || 'COUNSELLING',
-        scholarshipDetails: scholarshipDetails ?? student.school?.scholarshipDetails,
+        admissionType: effectiveAdmissionType,
+        scholarshipDetails: scholarshipDetails !== undefined ? (scholarshipDetails || 'Nil').trim() : student.school?.scholarshipDetails,
+        lateralEntry: effectiveAdmissionType === 'LATERAL_ENTRY' ? {
+          previousCollegeName: lateralEntry?.previousCollegeName || lateralEntry?.previous_college_name || student.school?.lateralEntry?.previousCollegeName || '',
+          previousCourseDiploma: lateralEntry?.previousCourseDiploma || lateralEntry?.previous_course_diploma || student.school?.lateralEntry?.previousCourseDiploma || '',
+          previousInstitution: lateralEntry?.previousInstitution || lateralEntry?.previous_institution || student.school?.lateralEntry?.previousInstitution || '',
+          previousQualificationDetails: lateralEntry?.previousQualificationDetails || lateralEntry?.previous_qualification_details || student.school?.lateralEntry?.previousQualificationDetails || '',
+          admissionYear: lateralEntry?.admissionYear || lateralEntry?.admission_year || student.school?.lateralEntry?.admissionYear || undefined,
+        } : undefined,
       };
       await student.save();
+    }
+
+    if (Array.isArray(semesters)) {
+      for (const sem of semesters) {
+        const semNum = parseInt(sem.semesterNumber || sem.semester_number, 10);
+        if (semNum >= 1 && semNum <= 8) {
+          const rawCgpa = sem.cgpa !== undefined && sem.cgpa !== '' ? parseFloat(sem.cgpa) : undefined;
+          const rawSgpa = sem.sgpa !== undefined && sem.sgpa !== '' ? parseFloat(sem.sgpa) : undefined;
+          if (rawCgpa !== undefined && (isNaN(rawCgpa) || rawCgpa < 0 || rawCgpa > 10)) {
+            return sendError(res, `Semester ${semNum}: CGPA must be strictly between 0.0 and 10.0`, 400);
+          }
+          if (rawSgpa !== undefined && (isNaN(rawSgpa) || rawSgpa < 0 || rawSgpa > 10)) {
+            return sendError(res, `Semester ${semNum}: SGPA must be strictly between 0.0 and 10.0`, 400);
+          }
+        }
+      }
     }
 
     if (Array.isArray(semesters)) {

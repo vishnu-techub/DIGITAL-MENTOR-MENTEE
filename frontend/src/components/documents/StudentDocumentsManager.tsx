@@ -56,11 +56,16 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
   const { user } = useAuth();
   const toast = useToast();
   const isStudent = user?.role === 'STUDENT';
+  const isAdmin = user?.role === 'ADMIN';
 
   const [documents, setDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<'ALL' | 'FORM' | 'CERTIFICATES' | 'OTHER'>('ALL');
+
+  // Delete all documents state (Admin only)
+  const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
 
   // Upload modal state
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -227,6 +232,25 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
     }
   };
 
+  const handleDeleteAll = async () => {
+    if (!studentId) return;
+    setDeletingAll(true);
+    try {
+      const res = await api.documents.deleteAll(studentId);
+      if (res.success) {
+        toast.success(res.message || 'All student documents have been permanently deleted.');
+        setShowDeleteAllModal(false);
+        fetchDocuments();
+      } else {
+        toast.error(res.message || 'Failed to delete all documents.');
+      }
+    } catch (err: any) {
+      toast.error('Failed to delete all documents: ' + err.message);
+    } finally {
+      setDeletingAll(false);
+    }
+  };
+
   const handleVerifySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedDocForVerify) return;
@@ -309,22 +333,42 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
           </p>
         </div>
 
-        {!readOnly && (
-          <button
-            className="btn btn-primary"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              fontWeight: 700,
-              padding: '0.55rem 1.15rem',
-              borderRadius: '8px',
-            }}
-            onClick={() => setShowUploadModal(true)}
-          >
-            <Upload size={16} /> Upload Certificate
-          </button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {isAdmin && documents.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-danger"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontWeight: 700,
+                padding: '0.55rem 1.15rem',
+                borderRadius: '8px',
+              }}
+              onClick={() => setShowDeleteAllModal(true)}
+            >
+              <Trash2 size={16} /> Delete All Documents
+            </button>
+          )}
+
+          {!readOnly && (
+            <button
+              className="btn btn-primary"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontWeight: 700,
+                padding: '0.55rem 1.15rem',
+                borderRadius: '8px',
+              }}
+              onClick={() => setShowUploadModal(true)}
+            >
+              <Upload size={16} /> Upload Certificate
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Filter Tabs */}
@@ -439,7 +483,7 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
         >
           <Award size={48} style={{ color: '#94A3B8', margin: '0 auto 1rem' }} />
           <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#1E293B', marginBottom: '0.25rem' }}>
-            No documents found in this section.
+            {documents.length === 0 ? 'No documents uploaded.' : 'No documents found in this section.'}
           </h3>
           <p style={{ fontSize: '0.825rem', color: '#64748B', maxWidth: '420px', margin: '0 auto 1.25rem' }}>
             {activeFilter === 'FORM'
@@ -748,8 +792,8 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
                       </button>
                     )}
 
-                    {/* Delete Certificate (Student only; never delete Student Details Form) */}
-                    {!readOnly && !isPrimaryForm && (
+                    {/* Delete Certificate (Admin or Student; never delete Student Details Form) */}
+                    {(isAdmin || (!readOnly && isStudent)) && !isPrimaryForm && (
                       <button
                         type="button"
                         className="btn btn-sm btn-danger"
@@ -1088,6 +1132,51 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
               </a>
               <button className="btn btn-secondary btn-sm" onClick={() => setPreviewDoc(null)}>
                 Close
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* DELETE ALL CONFIRMATION MODAL (Admin only) */}
+      {showDeleteAllModal && (
+        <Modal
+          isOpen={showDeleteAllModal}
+          title="Confirm Permanent Deletion of All Documents"
+          onClose={() => {
+            if (!deletingAll) setShowDeleteAllModal(false);
+          }}
+        >
+          <div style={{ padding: '0.5rem 0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#DC2626', marginBottom: '1rem' }}>
+              <AlertTriangle size={24} />
+              <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>
+                Permanent Deletion Warning
+              </h4>
+            </div>
+            <p style={{ fontSize: '0.875rem', color: '#475569', lineHeight: 1.5, margin: '0 0 1.25rem 0' }}>
+              Are you sure you want to permanently delete <strong>ALL</strong> uploaded documents and certificates for this student?
+              This will remove all document records from MongoDB and permanently delete all physical files from disk.
+              This action cannot be undone.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={deletingAll}
+                onClick={() => setShowDeleteAllModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={deletingAll}
+                onClick={handleDeleteAll}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              >
+                <Trash2 size={14} />
+                {deletingAll ? 'Deleting All Documents...' : 'Delete All'}
               </button>
             </div>
           </div>

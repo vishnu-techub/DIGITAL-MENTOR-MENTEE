@@ -56,6 +56,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, isOpe
               <GraduationCap size={18} /> Students Master
             </button>
             <button
+              className={`nav-item ${currentTab === 'identity-requests' ? 'active' : ''}`}
+              onClick={() => handleSelect('identity-requests')}
+            >
+              <FileCheck size={18} /> Identity Edit Requests
+            </button>
+            <button
               className={`nav-item ${currentTab === 'faculty' ? 'active' : ''}`}
               onClick={() => handleSelect('faculty')}
             >
