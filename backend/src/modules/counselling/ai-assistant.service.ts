@@ -361,9 +361,30 @@ function runRuleBasedGrammarEngine(raw: string): string {
   str = str.replace(/\bshe need improve\b/gi, 'she needs to improve');
   str = str.replace(/\bthey need improve\b/gi, 'they need to improve');
   str = str.replace(/\bstudent need improve\b/gi, 'student needs to improve');
-  str = str.replace(/\bneed to improve presentation skill\b/gi, 'needs to improve presentation skills');
+  str = str.replace(/\bto developed\b/gi, 'to develop');
+  str = str.replace(/\bwanted to developed\b/gi, 'wanted to develop');
+  str = str.replace(/\bwant to developed\b/gi, 'want to develop');
+  str = str.replace(/\bto improved\b/gi, 'to improve');
+  str = str.replace(/\bto completed\b/gi, 'to complete');
+  str = str.replace(/\bto attended\b/gi, 'to attend');
+  str = str.replace(/\bto participated\b/gi, 'to participate');
+  str = str.replace(/\bto cleared\b/gi, 'to clear');
+  str = str.replace(/\bto submitted\b/gi, 'to submit');
+  str = str.replace(/\bto solved\b/gi, 'to solve');
+  str = str.replace(/\bto practiced\b/gi, 'to practice');
+  str = str.replace(/\bto scored\b/gi, 'to score');
+  str = str.replace(/\bto learned\b/gi, 'to learn');
+  str = str.replace(/\bto studied\b/gi, 'to study');
+  str = str.replace(/\bto prepared\b/gi, 'to prepare');
+
+  str = str.replace(/\bpractice presentation\b/gi, 'practice presentations');
+  str = str.replace(/\bpracticing presentation\b/gi, 'practicing presentations');
   str = str.replace(/\bpresentation skill\b/gi, 'presentation skills');
   str = str.replace(/\bcommunication skill\b/gi, 'communication skills');
+  str = str.replace(/\btechnical skill\b/gi, 'technical skills');
+  str = str.replace(/\bprogramming skill\b/gi, 'programming skills');
+  str = str.replace(/\bcoding skill\b/gi, 'coding skills');
+
   str = str.replace(/\bhe need to\b/gi, 'he needs to');
   str = str.replace(/\bshe need to\b/gi, 'she needs to');
   str = str.replace(/\bstudent need to\b/gi, 'student needs to');

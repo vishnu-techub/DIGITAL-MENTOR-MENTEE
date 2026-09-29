@@ -11,7 +11,8 @@
     "db:bootstrap": "tsx src/database/bootstrap.ts",
     "db:clean": "tsx src/database/clean-demo-data.ts",
     "test:critical": "tsx src/tests/critical-reassignment.test.ts",
-    "test:export": "tsx src/tests/overall-mentee-export.test.ts"
+    "test:export": "tsx src/tests/overall-mentee-export.test.ts",
+    "test:grammar": "tsx src/tests/grammar-test.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

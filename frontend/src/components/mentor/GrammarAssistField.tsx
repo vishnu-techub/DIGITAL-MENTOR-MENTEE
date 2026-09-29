@@ -9,8 +9,11 @@ interface GrammarAssistFieldProps {
   placeholder?: string;
   rows?: number;
   required?: boolean;
-  fieldId?: string;
+  fieldId: string;
   error?: string;
+  activeAiField?: string | null;
+  onActiveFieldChange?: (fieldId: string | null) => void;
+  onUseCorrection?: (fieldId: string, correctedText: string) => void;
 }
 
 export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
@@ -22,14 +25,20 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
   required = false,
   fieldId,
   error,
+  activeAiField,
+  onActiveFieldChange,
+  onUseCorrection,
 }) => {
   const [checking, setChecking] = useState(false);
   const [suggestedCorrection, setSuggestedCorrection] = useState<string | null>(null);
+  const [capturedOriginal, setCapturedOriginal] = useState<string>('');
   const [showSuggestion, setShowSuggestion] = useState(false);
-  const [lastCheckedValue, setLastCheckedValue] = useState('');
   const [appliedFeedback, setAppliedFeedback] = useState(false);
   const [noIssuesFeedback, setNoIssuesFeedback] = useState(false);
+  
+  const lastCheckedValueRef = useRef<string>('');
   const debounceTimerRef = useRef<any>(null);
+  const feedbackTimerRef = useRef<any>(null);
 
   // Debounced check (900ms) after mentor stops typing
   useEffect(() => {
@@ -38,25 +47,28 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
     }
 
     const trimmed = value.trim();
-    if (!trimmed || trimmed === lastCheckedValue || trimmed.length < 5) {
-      setSuggestedCorrection(null);
-      setShowSuggestion(false);
+    if (!trimmed || trimmed === lastCheckedValueRef.current || trimmed.length < 5) {
       return;
     }
 
     debounceTimerRef.current = setTimeout(async () => {
       try {
         const res = await api.counselling.checkGrammar(trimmed);
+        lastCheckedValueRef.current = trimmed;
         if (res.success && res.data && res.data.hasCorrections) {
           const corrected = res.data.corrected.trim();
-          if (corrected !== trimmed) {
+          if (corrected && corrected !== trimmed) {
+            setCapturedOriginal(trimmed);
             setSuggestedCorrection(corrected);
-            setLastCheckedValue(trimmed);
+            setShowSuggestion(true);
+            onActiveFieldChange?.(fieldId);
           } else {
             setSuggestedCorrection(null);
+            setShowSuggestion(false);
           }
         } else {
           setSuggestedCorrection(null);
+          setShowSuggestion(false);
         }
       } catch (err) {
         // Silent fail on background debounce
@@ -68,7 +80,15 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [value, lastCheckedValue]);
+  }, [value, fieldId, onActiveFieldChange]);
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    };
+  }, []);
 
   // Manual trigger
   const handleManualCheck = async () => {
@@ -77,10 +97,21 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
     setChecking(true);
     try {
       const res = await api.counselling.checkGrammar(trimmed);
+      lastCheckedValueRef.current = trimmed;
       if (res.success && res.data && res.data.hasCorrections) {
-        setSuggestedCorrection(res.data.corrected.trim());
-        setShowSuggestion(true);
-        setNoIssuesFeedback(false);
+        const corrected = res.data.corrected.trim();
+        if (corrected && corrected !== trimmed) {
+          setCapturedOriginal(trimmed);
+          setSuggestedCorrection(corrected);
+          setShowSuggestion(true);
+          setNoIssuesFeedback(false);
+          onActiveFieldChange?.(fieldId);
+        } else {
+          setSuggestedCorrection(null);
+          setShowSuggestion(false);
+          setNoIssuesFeedback(true);
+          setTimeout(() => setNoIssuesFeedback(false), 2500);
+        }
       } else {
         setSuggestedCorrection(null);
         setShowSuggestion(false);
@@ -95,18 +126,46 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
   };
 
   const handleUseCorrection = () => {
-    if (suggestedCorrection) {
-      onChange(suggestedCorrection);
-      setSuggestedCorrection(null);
-      setShowSuggestion(false);
-      setAppliedFeedback(true);
-      setTimeout(() => setAppliedFeedback(false), 2000);
+    if (!suggestedCorrection) return;
+
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
     }
+
+    const corrected = suggestedCorrection;
+    // Mark as checked to prevent re-triggering debounce on the newly applied text
+    lastCheckedValueRef.current = corrected.trim();
+
+    // Update parent React state (source of truth)
+    if (onUseCorrection && fieldId) {
+      onUseCorrection(fieldId, corrected);
+    } else {
+      onChange(corrected);
+    }
+
+    // Dismiss suggestion panel
+    setShowSuggestion(false);
+    setSuggestedCorrection(null);
+    onActiveFieldChange?.(null);
+
+    // Show "Correction applied" success feedback
+    setAppliedFeedback(true);
+    if (feedbackTimerRef.current) {
+      clearTimeout(feedbackTimerRef.current);
+    }
+    feedbackTimerRef.current = setTimeout(() => {
+      setAppliedFeedback(false);
+    }, 3000);
   };
 
   const handleKeepOriginal = () => {
-    setSuggestedCorrection(null);
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    // Dismiss suggestion panel without modifying the textarea
     setShowSuggestion(false);
+    setSuggestedCorrection(null);
+    onActiveFieldChange?.(null);
   };
 
   return (
@@ -119,8 +178,22 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
           {appliedFeedback && (
-            <span style={{ fontSize: '0.75rem', color: '#16A34A', fontWeight: 700 }}>
-              ✓ Correction Applied
+            <span
+              id={`applied-feedback-${fieldId}`}
+              style={{
+                fontSize: '0.75rem',
+                color: '#16A34A',
+                backgroundColor: '#DCFCE7',
+                padding: '0.15rem 0.5rem',
+                borderRadius: '4px',
+                border: '1px solid #BBF7D0',
+                fontWeight: 700,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.25rem',
+              }}
+            >
+              <Check size={12} color="#16A34A" /> Correction applied
             </span>
           )}
 
@@ -133,7 +206,10 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
           {suggestedCorrection && !showSuggestion && (
             <button
               type="button"
-              onClick={() => setShowSuggestion(true)}
+              onClick={() => {
+                setShowSuggestion(true);
+                onActiveFieldChange?.(fieldId);
+              }}
               className="btn btn-sm"
               style={{
                 backgroundColor: '#EFF6FF',
@@ -198,7 +274,10 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
         required={required}
         placeholder={placeholder}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          setAppliedFeedback(false);
+          onChange(e.target.value);
+        }}
         style={{
           width: '100%',
           boxSizing: 'border-box',
@@ -222,6 +301,7 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
       {showSuggestion && suggestedCorrection && (
         <div
           className="grammar-suggestion-card"
+          data-testid={`grammar-suggestion-${fieldId}`}
           style={{
             marginTop: '0.5rem',
             padding: '0.75rem 1rem',
@@ -229,23 +309,28 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
             border: '1px solid #BAE6FD',
             borderRadius: '8px',
             animation: 'fadeIn 0.15s ease-out',
+            boxShadow: '0 2px 4px rgba(2, 132, 199, 0.08)',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.4rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.45rem' }}>
             <Sparkles size={14} color="#0284C7" />
-            <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#0369A1', textTransform: 'uppercase' }}>
+            <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
               Writing Assistant Suggestion
             </span>
           </div>
 
-          <div style={{ fontSize: '0.82rem', marginBottom: '0.5rem' }}>
-            <div style={{ color: '#64748B', fontSize: '0.74rem', fontWeight: 600 }}>Original:</div>
-            <div style={{ color: '#475569', fontStyle: 'italic', marginBottom: '0.35rem' }}>
-              "{value}"
+          <div style={{ fontSize: '0.84rem', marginBottom: '0.65rem' }}>
+            <div style={{ color: '#64748B', fontSize: '0.74rem', fontWeight: 700, textTransform: 'uppercase', marginBottom: '0.15rem' }}>
+              Original:
+            </div>
+            <div style={{ color: '#475569', fontStyle: 'italic', marginBottom: '0.45rem', paddingLeft: '0.25rem' }}>
+              "{capturedOriginal || value}"
             </div>
 
-            <div style={{ color: '#0369A1', fontSize: '0.74rem', fontWeight: 700 }}>Corrected Version:</div>
-            <div style={{ color: '#0C4A6E', fontWeight: 600 }}>
+            <div style={{ color: '#0369A1', fontSize: '0.74rem', fontWeight: 700, textTransform: 'uppercase', marginBottom: '0.15rem' }}>
+              Corrected Version:
+            </div>
+            <div style={{ color: '#0C4A6E', fontWeight: 600, paddingLeft: '0.25rem' }}>
               "{suggestedCorrection}"
             </div>
           </div>
@@ -253,38 +338,43 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <button
               type="button"
+              id={`use-correction-btn-${fieldId}`}
               onClick={handleUseCorrection}
               className="btn btn-sm btn-primary"
               style={{
                 backgroundColor: '#0284C7',
                 borderColor: '#0284C7',
                 color: '#ffffff',
-                fontSize: '0.75rem',
+                fontSize: '0.78rem',
                 fontWeight: 700,
-                padding: '0.25rem 0.75rem',
+                padding: '0.3rem 0.85rem',
+                borderRadius: '6px',
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '0.25rem',
+                gap: '0.35rem',
                 cursor: 'pointer',
+                boxShadow: '0 1px 2px rgba(2, 132, 199, 0.2)',
               }}
             >
-              <Check size={13} /> Use Correction
+              <Check size={14} /> Use Correction
             </button>
 
             <button
               type="button"
+              id={`keep-original-btn-${fieldId}`}
               onClick={handleKeepOriginal}
               className="btn btn-sm btn-secondary"
               style={{
-                fontSize: '0.75rem',
-                padding: '0.25rem 0.65rem',
+                fontSize: '0.78rem',
+                padding: '0.3rem 0.75rem',
+                borderRadius: '6px',
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '0.25rem',
+                gap: '0.35rem',
                 cursor: 'pointer',
               }}
             >
-              <X size={13} /> Keep Original
+              <X size={14} /> Keep Original
             </button>
           </div>
         </div>
@@ -292,3 +382,4 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
     </div>
   );
 };
+

@@ -124,6 +124,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
   });
   const [submittingCounselling, setSubmittingCounselling] = useState(false);
   const [counsellingErrors, setCounsellingErrors] = useState<Record<string, string>>({});
+  const [activeAiField, setActiveAiField] = useState<string | null>(null);
 
   const [showClearArrearModal, setShowClearArrearModal] = useState(false);
   const [clearArrearForm, setClearArrearForm] = useState({
@@ -254,9 +255,22 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
     }
   };
 
+  // Handle applying writing assistant suggestion directly into React state
+  const handleUseCorrection = (fieldKey: string, correctedText: string) => {
+    if (!correctedText || !fieldKey) return;
+    setCounsellingForm((prev) => ({
+      ...prev,
+      [fieldKey]: correctedText,
+    }));
+    if (counsellingErrors[fieldKey]) {
+      setCounsellingErrors((prev) => ({ ...prev, [fieldKey]: undefined }));
+    }
+  };
+
   // Open modal for creating new counselling record
   const handleOpenAddCounselling = () => {
     setEditingCounsellingId(null);
+    setActiveAiField(null);
     setCounsellingErrors({});
     setCounsellingForm({
       counsellingDate: new Date().toISOString().split('T')[0],
@@ -275,6 +289,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
   // Open modal for editing existing counselling record (preserves selections)
   const handleEditCounselling = (c: any) => {
     setEditingCounsellingId(c.id || c._id);
+    setActiveAiField(null);
     setCounsellingErrors({});
     const existingCats = Array.isArray(c.categories) && c.categories.length > 0
       ? c.categories
@@ -350,6 +365,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
 
       setShowCounsellingModal(false);
       setEditingCounsellingId(null);
+      setActiveAiField(null);
       setCounsellingErrors({});
       setCounsellingForm({
         counsellingDate: new Date().toISOString().split('T')[0],
@@ -2132,7 +2148,8 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 required
                 value={counsellingForm.counsellingDate}
                 onChange={(e) => {
-                  setCounsellingForm({ ...counsellingForm, counsellingDate: e.target.value });
+                  const val = e.target.value;
+                  setCounsellingForm((prev) => ({ ...prev, counsellingDate: val }));
                   if (counsellingErrors.counsellingDate) {
                     setCounsellingErrors((prev) => ({ ...prev, counsellingDate: undefined }));
                   }
@@ -2154,7 +2171,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             <CounsellingCategorySelect
               selectedCategories={counsellingForm.categories}
               onChange={(cats) => {
-                setCounsellingForm({ ...counsellingForm, categories: cats });
+                setCounsellingForm((prev) => ({ ...prev, categories: cats }));
                 if (counsellingErrors.categories && cats.length > 0) {
                   setCounsellingErrors((prev) => ({ ...prev, categories: undefined }));
                 }
@@ -2171,8 +2188,11 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               rows={3}
               placeholder="e.g. Low attendance in Anna University theory subjects / difficulty in core programming..."
               value={counsellingForm.concernReason}
+              activeAiField={activeAiField}
+              onActiveFieldChange={setActiveAiField}
+              onUseCorrection={handleUseCorrection}
               onChange={(val) => {
-                setCounsellingForm({ ...counsellingForm, concernReason: val });
+                setCounsellingForm((prev) => ({ ...prev, concernReason: val }));
                 if (counsellingErrors.concernReason && val.trim()) {
                   setCounsellingErrors((prev) => ({ ...prev, concernReason: undefined }));
                 }
@@ -2188,8 +2208,11 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               rows={3}
               placeholder="Record mentor discussion points, student's explanation, and observed behavior..."
               value={counsellingForm.discussionObservation}
+              activeAiField={activeAiField}
+              onActiveFieldChange={setActiveAiField}
+              onUseCorrection={handleUseCorrection}
               onChange={(val) => {
-                setCounsellingForm({ ...counsellingForm, discussionObservation: val });
+                setCounsellingForm((prev) => ({ ...prev, discussionObservation: val }));
                 if (counsellingErrors.discussionObservation && val.trim()) {
                   setCounsellingErrors((prev) => ({ ...prev, discussionObservation: undefined }));
                 }
@@ -2204,7 +2227,10 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               rows={2}
               placeholder="e.g. Communication, presentation skills, time management, analytical thinking..."
               value={counsellingForm.skillNeedingImprovement}
-              onChange={(val) => setCounsellingForm({ ...counsellingForm, skillNeedingImprovement: val })}
+              activeAiField={activeAiField}
+              onActiveFieldChange={setActiveAiField}
+              onUseCorrection={handleUseCorrection}
+              onChange={(val) => setCounsellingForm((prev) => ({ ...prev, skillNeedingImprovement: val }))}
             />
 
             {/* Field 6: Action Plan * */}
@@ -2215,8 +2241,11 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               rows={3}
               placeholder="Concrete steps agreed upon: daily revision routine, problem sets to solve, practice vivas..."
               value={counsellingForm.actionPlan}
+              activeAiField={activeAiField}
+              onActiveFieldChange={setActiveAiField}
+              onUseCorrection={handleUseCorrection}
               onChange={(val) => {
-                setCounsellingForm({ ...counsellingForm, actionPlan: val });
+                setCounsellingForm((prev) => ({ ...prev, actionPlan: val }));
                 if (counsellingErrors.actionPlan && val.trim()) {
                   setCounsellingErrors((prev) => ({ ...prev, actionPlan: undefined }));
                 }
@@ -2242,7 +2271,10 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   type="date"
                   className="form-control"
                   value={counsellingForm.followUpDate}
-                  onChange={(e) => setCounsellingForm({ ...counsellingForm, followUpDate: e.target.value })}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setCounsellingForm((prev) => ({ ...prev, followUpDate: val }));
+                  }}
                   style={{ fontSize: '0.88rem', minHeight: '42px' }}
                 />
               </div>
@@ -2254,7 +2286,10 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 <select
                   className="form-control"
                   value={counsellingForm.status}
-                  onChange={(e) => setCounsellingForm({ ...counsellingForm, status: e.target.value })}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setCounsellingForm((prev) => ({ ...prev, status: val }));
+                  }}
                   style={{ fontSize: '0.88rem', minHeight: '42px' }}
                 >
                   <option value="Completed">Completed</option>
