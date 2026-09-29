@@ -10,6 +10,8 @@ import {
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
+import { ROLES } from '../../config/constants.js';
+import { generateMentorMenteesExcel } from './mentor-export.service.js';
 
 // Initial Mentor Allocation
 export async function assignMentor(req: AuthRequest, res: Response) {
@@ -318,3 +320,77 @@ export async function getMentorshipHistory(req: AuthRequest, res: Response) {
     return sendError(res, 'Failed to fetch mentor history.', 500);
   }
 }
+
+/**
+ * Export Overall Mentee Data as Institutional Excel (.xlsx)
+ * Strictly verifies the authenticated mentor ID (Mentor-Specific Security).
+ * Faculty can only download their own active mentees.
+ * Admin/HOD can export specified mentor or all.
+ */
+export async function exportMentorMenteesExcel(req: AuthRequest, res: Response) {
+  try {
+    let targetMentorId: string | null = null;
+
+    if (req.user?.role === ROLES.FACULTY) {
+      if (req.user.facultyId) {
+        targetMentorId = req.user.facultyId;
+      } else {
+        const fac = await Faculty.findOne({ user: req.user.id });
+        if (fac) targetMentorId = fac._id.toString();
+      }
+    } else if (req.user?.role === ROLES.ADMIN || req.user?.role === ROLES.HOD) {
+      const queryMentorId = req.query.mentorId as string;
+      if (queryMentorId) {
+        targetMentorId = queryMentorId;
+      } else if (req.user.facultyId) {
+        targetMentorId = req.user.facultyId;
+      } else if (req.user.role === ROLES.ADMIN) {
+        targetMentorId = 'ALL';
+      } else {
+        const fac = await Faculty.findOne({ user: req.user.id });
+        if (fac) targetMentorId = fac._id.toString();
+      }
+    }
+
+    if (!targetMentorId) {
+      return sendError(res, 'Target mentor ID could not be identified.', 400);
+    }
+
+    const requestedYear = req.query.academicYear as string;
+    const result = await generateMentorMenteesExcel(targetMentorId, requestedYear);
+
+    if (result.count === 0 || !result.buffer) {
+      return sendError(res, 'No mentees are currently assigned to you.', 404);
+    }
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.filename}"`
+    );
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    await logAudit({
+      userId: req.user!.id,
+      action: 'EXPORT_MENTOR_MENTEES_EXCEL',
+      entity: 'MENTOR_ASSIGNMENT',
+      details: {
+        mentorId: targetMentorId,
+        menteeCount: result.count,
+        filename: result.filename,
+      },
+      req,
+    });
+
+    return res.status(200).send(result.buffer);
+  } catch (err: any) {
+    console.error('exportMentorMenteesExcel error:', err);
+    return sendError(res, err.message || 'Failed to generate mentor mentee Excel report.', 500);
+  }
+}
+

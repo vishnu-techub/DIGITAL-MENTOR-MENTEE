@@ -161,6 +161,42 @@ export const api = {
     reassign: (data: { studentId: string; newMentorId: string; effectiveDate?: string; reasonForChange: string }) =>
       request('/mentorship/reassign', { method: 'POST', body: JSON.stringify(data) }),
     getHistory: (studentId: string) => request(`/mentorship/history/${studentId}`),
+    downloadOverallMenteesExcel: async (params?: { mentorId?: string; academicYear?: string }) => {
+      const token = getAuthToken();
+      const q = new URLSearchParams();
+      if (params?.mentorId) q.append('mentorId', params.mentorId);
+      if (params?.academicYear) q.append('academicYear', params.academicYear);
+
+      const endpoint = `${API_BASE}/mentor/export/mentees${q.toString() ? `?${q.toString()}` : ''}`;
+      const res = await fetch(endpoint, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (!res.ok) {
+        const errorJson = await res.json().catch(() => null);
+        throw new Error(errorJson?.message || 'Failed to download overall mentee data.');
+      }
+
+      let filename = 'KSRCE_Mentor_Mentee_List.xlsx';
+      const disposition = res.headers.get('content-disposition');
+      if (disposition && disposition.includes('filename=')) {
+        const match = disposition.match(/filename="?([^";]+)"?/);
+        if (match && match[1]) {
+          filename = match[1];
+        }
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      return { success: true, filename };
+    },
   },
 
   // Saturday Meetings

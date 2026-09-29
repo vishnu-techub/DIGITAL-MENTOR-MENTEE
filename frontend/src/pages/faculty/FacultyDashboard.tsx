@@ -30,7 +30,9 @@ import {
   GraduationCap,
   Plus,
   Folder,
+  FileSpreadsheet,
 } from 'lucide-react';
+import { useToast } from '../../context/ToastContext';
 
 interface FacultyDashboardProps {
   currentTab: string;
@@ -62,6 +64,67 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
 
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [studentInitialTab, setStudentInitialTab] = useState<StudentDetailsTab>('overview');
+
+  const toast = useToast();
+  // Download Overall Mentee Data (Excel) state (Requirements 10 & 14)
+  const [downloadExcelState, setDownloadExcelState] = useState<'idle' | 'generating' | 'downloading' | 'complete' | 'error'>('idle');
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportAcademicYear, setExportAcademicYear] = useState('');
+
+  const handleDownloadOverallExcel = async (customYear?: string) => {
+    if (downloadExcelState === 'generating' || downloadExcelState === 'downloading') return;
+
+    if (!mentees || mentees.length === 0) {
+      toast.error('No mentees are currently assigned to you.', 'Export Not Available');
+      return;
+    }
+
+    try {
+      setDownloadExcelState('generating');
+      // Smooth visual progression: Generating Excel... -> Downloading... -> Download Complete
+      const timer = setTimeout(() => {
+        setDownloadExcelState((prev) => (prev === 'generating' ? 'downloading' : prev));
+      }, 600);
+
+      const res = await api.mentorship.downloadOverallMenteesExcel({
+        mentorId: user?.facultyId || '',
+        academicYear: customYear || exportAcademicYear || undefined,
+      });
+
+      clearTimeout(timer);
+      setDownloadExcelState('complete');
+      toast.success(
+        `Overall mentee dataset successfully generated & downloaded (${res.filename}).`,
+        'Download Complete'
+      );
+      setShowExportModal(false);
+
+      setTimeout(() => {
+        setDownloadExcelState('idle');
+      }, 2500);
+    } catch (err: any) {
+      setDownloadExcelState('error');
+      console.error('Error downloading overall mentee excel:', err);
+      const safeMsg = err?.message || 'Unable to generate the report. Please try again.';
+      toast.error(safeMsg, 'Export Error');
+      setTimeout(() => {
+        setDownloadExcelState('idle');
+      }, 3000);
+    }
+  };
+
+  const getDownloadButtonLabel = () => {
+    switch (downloadExcelState) {
+      case 'generating':
+        return 'Generating Excel...';
+      case 'downloading':
+        return 'Downloading...';
+      case 'complete':
+        return 'Download Complete';
+      default:
+        return 'Download Overall Data';
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -251,6 +314,63 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
             >
               <Download size={14} /> Download Student PDF
             </button>
+            {/* Download Overall Mentee Data (Excel .xlsx) Button */}
+            <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+              <button
+                className="btn btn-sm"
+                onClick={() => handleDownloadOverallExcel()}
+                disabled={downloadExcelState === 'generating' || downloadExcelState === 'downloading'}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  fontWeight: 600,
+                  backgroundColor: downloadExcelState === 'complete' ? '#059669' : '#0B2545',
+                  borderColor: downloadExcelState === 'complete' ? '#059669' : '#0B2545',
+                  color: '#ffffff',
+                  borderTopRightRadius: 0,
+                  borderBottomRightRadius: 0,
+                }}
+                title="Download Overall Data (Excel .xlsx) for all assigned mentees"
+              >
+                {downloadExcelState === 'generating' || downloadExcelState === 'downloading' ? (
+                  <span className="spinner-border spinner-border-sm" style={{ width: 13, height: 13 }} />
+                ) : downloadExcelState === 'complete' ? (
+                  <CheckCircle2 size={14} />
+                ) : (
+                  <FileSpreadsheet size={14} />
+                )}
+                <span>{getDownloadButtonLabel()}</span>
+                <span
+                  style={{
+                    fontSize: '0.65rem',
+                    padding: '1px 5px',
+                    borderRadius: '3px',
+                    backgroundColor: 'rgba(255,255,255,0.2)',
+                  }}
+                >
+                  .xlsx
+                </span>
+              </button>
+              <button
+                className="btn btn-sm"
+                onClick={() => setShowExportModal(true)}
+                disabled={downloadExcelState === 'generating' || downloadExcelState === 'downloading'}
+                style={{
+                  backgroundColor: '#071A30',
+                  borderColor: '#0B2545',
+                  color: '#ffffff',
+                  borderTopLeftRadius: 0,
+                  borderBottomLeftRadius: 0,
+                  paddingLeft: '6px',
+                  paddingRight: '6px',
+                  borderLeft: '1px solid rgba(255,255,255,0.15)',
+                }}
+                title="Export Options & Academic Year"
+              >
+                ▾
+              </button>
+            </div>
           </div>
 
           {/* Stat Cards - 7 Key Mentor Metrics (Section 7) */}
@@ -522,7 +642,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
               <button
                 className="btn btn-outline btn-sm"
                 onClick={() => setShowQuickCounsellingModal(true)}
@@ -535,6 +655,64 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
               >
                 <Download size={14} /> Download Dossier PDF
               </button>
+
+              {/* Download Overall Mentee Data (Excel .xlsx) Button */}
+              <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                <button
+                  className="btn btn-sm"
+                  onClick={() => handleDownloadOverallExcel()}
+                  disabled={downloadExcelState === 'generating' || downloadExcelState === 'downloading'}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    fontWeight: 600,
+                    backgroundColor: downloadExcelState === 'complete' ? '#059669' : '#0B2545',
+                    borderColor: downloadExcelState === 'complete' ? '#059669' : '#0B2545',
+                    color: '#ffffff',
+                    borderTopRightRadius: 0,
+                    borderBottomRightRadius: 0,
+                  }}
+                  title="Download Overall Mentee Data as Excel (.xlsx)"
+                >
+                  {downloadExcelState === 'generating' || downloadExcelState === 'downloading' ? (
+                    <span className="spinner-border spinner-border-sm" style={{ width: 13, height: 13 }} />
+                  ) : downloadExcelState === 'complete' ? (
+                    <CheckCircle2 size={14} />
+                  ) : (
+                    <FileSpreadsheet size={14} />
+                  )}
+                  <span>{getDownloadButtonLabel()}</span>
+                  <span
+                    style={{
+                      fontSize: '0.65rem',
+                      padding: '1px 5px',
+                      borderRadius: '3px',
+                      backgroundColor: 'rgba(255,255,255,0.2)',
+                    }}
+                  >
+                    .xlsx
+                  </span>
+                </button>
+                <button
+                  className="btn btn-sm"
+                  onClick={() => setShowExportModal(true)}
+                  disabled={downloadExcelState === 'generating' || downloadExcelState === 'downloading'}
+                  style={{
+                    backgroundColor: '#071A30',
+                    borderColor: '#0B2545',
+                    color: '#ffffff',
+                    borderTopLeftRadius: 0,
+                    borderBottomLeftRadius: 0,
+                    paddingLeft: '6px',
+                    paddingRight: '6px',
+                    borderLeft: '1px solid rgba(255,255,255,0.15)',
+                  }}
+                  title="Download Options & Academic Year"
+                >
+                  ▾
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1413,6 +1591,144 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
           </div>
         </div>
       </Modal>
+
+      {/* Download Overall Mentee Data (Excel .xlsx) Modal (Requirements 1, 8, 9, 10, 13, 14) */}
+      {showExportModal && (
+        <Modal
+          isOpen={showExportModal}
+          onClose={() => setShowExportModal(false)}
+          title="Download Overall Mentee Data (Excel .xlsx)"
+          maxWidth="560px"
+        >
+          <div style={{ padding: '0.5rem 0' }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '1rem',
+                padding: '1rem',
+                background: '#F0FDF4',
+                border: '1px solid #BBF7D0',
+                borderRadius: '8px',
+                marginBottom: '1.25rem',
+              }}
+            >
+              <div
+                style={{
+                  width: '40px',
+                  height: '40px',
+                  borderRadius: '8px',
+                  backgroundColor: '#059669',
+                  color: '#ffffff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                <FileSpreadsheet size={22} />
+              </div>
+              <div>
+                <h4 style={{ margin: '0 0 4px', fontSize: '0.95rem', fontWeight: 700, color: '#065F46' }}>
+                  K.S.R. College of Engineering — Domain-Wise Mentee Ledger
+                </h4>
+                <p style={{ margin: 0, fontSize: '0.825rem', color: '#047857', lineHeight: 1.4 }}>
+                  Generates an institutional spreadsheet (.xlsx) for all <strong>{mentees.length}</strong> assigned mentees formatted to exact reference specifications.
+                </p>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '1.25rem' }}>
+              <label
+                style={{
+                  display: 'block',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  color: '#1E293B',
+                  marginBottom: '0.4rem',
+                }}
+              >
+                Academic Year (Optional)
+              </label>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="e.g. 2025-2026 (Leave empty for automatic current year)"
+                value={exportAcademicYear}
+                onChange={(e) => setExportAcademicYear(e.target.value)}
+                style={{ fontSize: '0.85rem' }}
+              />
+              <span style={{ fontSize: '0.75rem', color: '#64748B', display: 'block', marginTop: '4px' }}>
+                Default automatically detects the current autonomous collegiate academic cycle.
+              </span>
+            </div>
+
+            <div
+              style={{
+                background: '#F8FAFC',
+                border: '1px solid #E2E8F0',
+                borderRadius: '8px',
+                padding: '0.85rem 1rem',
+                marginBottom: '1.5rem',
+                fontSize: '0.8rem',
+                color: '#475569',
+              }}
+            >
+              <div style={{ fontWeight: 600, color: '#0B2545', marginBottom: '6px' }}>
+                16 Institutional Columns Included:
+              </div>
+              <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: 1.5 }}>
+                <li>S.NO &bull; MENTOR NAME &bull; S.NO &bull; REG NUMBER &bull; STUDENT NAME &bull; CLASS & SECTION</li>
+                <li>NPTEL COMPLETED &bull; GLOBAL CERTIFICATION &bull; ALL CLEAR (Live Arrear Status)</li>
+                <li>FINAL YEAR PLACED &bull; HACKATHON &bull; SYMPOSIUM &bull; OTHER STATE PROGRAMS</li>
+                <li>EXTENSION ACTIVITIES &bull; EXTRA CURRICULAR &bull; AWARDS</li>
+              </ol>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setShowExportModal(false)}
+                disabled={downloadExcelState === 'generating' || downloadExcelState === 'downloading'}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => handleDownloadOverallExcel()}
+                disabled={downloadExcelState === 'generating' || downloadExcelState === 'downloading'}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.45rem',
+                  backgroundColor: downloadExcelState === 'complete' ? '#059669' : '#0B2545',
+                  borderColor: downloadExcelState === 'complete' ? '#059669' : '#0B2545',
+                  fontWeight: 600,
+                }}
+              >
+                {downloadExcelState === 'generating' || downloadExcelState === 'downloading' ? (
+                  <>
+                    <span className="spinner-border spinner-border-sm" style={{ width: 14, height: 14 }} />
+                    <span>{getDownloadButtonLabel()}</span>
+                  </>
+                ) : downloadExcelState === 'complete' ? (
+                  <>
+                    <CheckCircle2 size={16} />
+                    <span>Download Complete</span>
+                  </>
+                ) : (
+                  <>
+                    <Download size={16} />
+                    <span>Download Excel (.xlsx)</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
     </div>
   );

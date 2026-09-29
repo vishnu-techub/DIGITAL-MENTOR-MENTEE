@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { assignMentor, reassignMentor, getMentorshipHistory } from './mentorship.controller.js';
+import { assignMentor, reassignMentor, getMentorshipHistory, exportMentorMenteesExcel } from './mentorship.controller.js';
 import {
   getAiCounsellingSuggestion,
   askMentorAiBotController,
@@ -12,6 +12,9 @@ import { ROLES } from '../../config/constants.js';
 const router = Router();
 
 router.use(authenticate);
+
+// Download Overall Mentee Data as Institutional Excel (.xlsx) (Faculty, Admin, HOD)
+router.get('/export/mentees', authorize(ROLES.FACULTY, ROLES.HOD, ROLES.ADMIN), exportMentorMenteesExcel);
 
 // Initial allocation (Admin or HOD)
 router.post('/assign', authorize(ROLES.ADMIN, ROLES.HOD), assignMentor);

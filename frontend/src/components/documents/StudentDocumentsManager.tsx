@@ -33,13 +33,18 @@ const DOCUMENT_CATEGORIES = [
   'Hackathon Certificate',
   'SIH Certificate',
   'NPTEL Certificate',
+  'Global Certification',
   'MOOC Certificate',
   'Internship Certificate',
   'Paper Presentation',
   'Symposium',
+  'Symposium Certificate',
   'Technical Event',
   'Award',
+  'Award Certificate',
   'Achievement',
+  'Extension Activity',
+  'Extra Curricular',
   'Other',
 ];
 
