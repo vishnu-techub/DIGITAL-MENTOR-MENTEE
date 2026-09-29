@@ -3,6 +3,7 @@ import { api, ApiError } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { StudentDocumentsManager } from '../../components/documents/StudentDocumentsManager';
+import { StudentProgressView } from '../../components/student/StudentProgressView';
 import { EmptyState } from '../../components/common/EmptyState';
 import { Skeleton } from '../../components/common/Skeleton';
 import {
@@ -1133,6 +1134,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
             </div>
           </div>
         </div>
+      )}
+
+      {/* My Progress Tab */}
+      {currentTab === 'my-progress' && (
+        <StudentProgressView />
       )}
 
       {/* Documents / Certificates Tab */}

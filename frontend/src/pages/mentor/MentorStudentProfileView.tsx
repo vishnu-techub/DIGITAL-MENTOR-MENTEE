@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { Modal } from '../../components/common/Modal';
 import { StudentDocumentsManager } from '../../components/documents/StudentDocumentsManager';
+import { MenteeProgressDashboard } from '../../components/mentor/MenteeProgressDashboard';
 import { StudentProfileSkeleton } from '../../components/common/SkeletonLoader';
 import { StudentNotFound } from '../error/StudentNotFound';
 import { NetworkErrorState } from '../error/NetworkErrorState';
@@ -51,6 +52,7 @@ export type MentorProfileTab =
   | 'parent'
   | 'mentor'
   | 'counselling'
+  | 'progress'
   | 'documents'
   | 'meeting'
   | 'skills';
@@ -76,6 +78,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
   const [activeTab, setActiveTab] = useState<MentorProfileTab>(
     (initialTab as MentorProfileTab) || 'overview'
   );
+  const [docSubTab, setDocSubTab] = useState<'progress' | 'files'>('progress');
   const [pdfDownloading, setPdfDownloading] = useState(false);
   const [saturdaySchedule, setSaturdaySchedule] = useState<any>(null);
 
@@ -164,6 +167,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
         'parent',
         'mentor',
         'counselling',
+        'progress',
         'documents',
         'meeting',
         'skills',
@@ -502,9 +506,10 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
     { id: 'parent', label: '4. Parent Details', icon: <Home size={16} /> },
     { id: 'mentor', label: '5. Mentor History', icon: <History size={16} /> },
     { id: 'counselling', label: '6. Counselling', icon: <BookOpen size={16} /> },
-    { id: 'documents', label: '7. Documents / Certificates', icon: <FileCheck size={16} /> },
-    { id: 'meeting', label: '8. Meeting History', icon: <CalendarCheck2 size={16} /> },
-    { id: 'skills', label: '9. Progress & Skills', icon: <Award size={16} /> },
+    { id: 'progress', label: '7. My Progress', icon: <Award size={16} /> },
+    { id: 'documents', label: '8. Documents / Certificates', icon: <FileCheck size={16} /> },
+    { id: 'meeting', label: '9. Meeting History', icon: <CalendarCheck2 size={16} /> },
+    { id: 'skills', label: '10. Progress & Skills', icon: <Star size={16} /> },
   ];
 
   return (
@@ -1767,24 +1772,96 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
       )}
 
       {/* ============================================================
-          11. DOCUMENTS / CERTIFICATES TAB
+          7. MY PROGRESS TAB (Auto-synced Achievements & Certificates)
+          ============================================================ */}
+      {activeTab === 'progress' && (
+        <MenteeProgressDashboard
+          studentId={student.id}
+          studentName={student.full_name}
+        />
+      )}
+
+      {/* ============================================================
+          8. DOCUMENTS / CERTIFICATES TAB
           ============================================================ */}
       {activeTab === 'documents' && (
-        <div className="card" style={{ padding: '1.5rem', backgroundColor: '#ffffff' }}>
-          <div style={{ marginBottom: '1.5rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
-              Mentee Certificates & Documents
-            </h2>
-            <p style={{ fontSize: '0.82rem', color: '#64748B', margin: '4px 0 0 0' }}>
-              Review, verify, and manage certificates uploaded by {student.full_name}.
-            </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          {/* Sub-tab switcher */}
+          <div
+            style={{
+              display: 'flex',
+              gap: '0.5rem',
+              backgroundColor: '#F1F5F9',
+              padding: '4px',
+              borderRadius: '10px',
+              width: 'fit-content',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setDocSubTab('progress')}
+              className="btn btn-sm"
+              style={{
+                borderRadius: '8px',
+                padding: '0.45rem 1rem',
+                fontSize: '0.85rem',
+                fontWeight: 700,
+                backgroundColor: docSubTab === 'progress' ? '#ffffff' : 'transparent',
+                color: docSubTab === 'progress' ? '#0B2545' : '#64748B',
+                boxShadow: docSubTab === 'progress' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                border: 'none',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+              }}
+            >
+              <Award size={15} /> Student Progress & Achievements (Auto-Sync to Excel)
+            </button>
+            <button
+              type="button"
+              onClick={() => setDocSubTab('files')}
+              className="btn btn-sm"
+              style={{
+                borderRadius: '8px',
+                padding: '0.45rem 1rem',
+                fontSize: '0.85rem',
+                fontWeight: 700,
+                backgroundColor: docSubTab === 'files' ? '#ffffff' : 'transparent',
+                color: docSubTab === 'files' ? '#0B2545' : '#64748B',
+                boxShadow: docSubTab === 'files' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                border: 'none',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+              }}
+            >
+              <FileCheck size={15} /> General Uploads & Primary Form
+            </button>
           </div>
 
-          <StudentDocumentsManager
-            studentId={student.id}
-            readOnly={false}
-            canVerify={true}
-          />
+          {docSubTab === 'progress' ? (
+            <MenteeProgressDashboard
+              studentId={student.id}
+              studentName={student.full_name}
+            />
+          ) : (
+            <div className="card" style={{ padding: '1.5rem', backgroundColor: '#ffffff' }}>
+              <div style={{ marginBottom: '1.5rem' }}>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
+                  Mentee Certificates & Documents
+                </h2>
+                <p style={{ fontSize: '0.82rem', color: '#64748B', margin: '4px 0 0 0' }}>
+                  Review, verify, and manage certificates uploaded by {student.full_name}.
+                </p>
+              </div>
+
+              <StudentDocumentsManager
+                studentId={student.id}
+                readOnly={false}
+                canVerify={true}
+              />
+            </div>
+          )}
         </div>
       )}
 

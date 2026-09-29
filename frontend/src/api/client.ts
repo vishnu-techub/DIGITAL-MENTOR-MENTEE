@@ -390,4 +390,32 @@ export const api = {
         method: 'DELETE',
       }),
   },
+
+  // Student Progress & Achievements (My Progress -> Mentor -> Excel Sync)
+  studentProgress: {
+    getMyProgress: () =>
+      request<{ records: any[]; categoryCounts: Record<string, number>; totalCount: number }>('/student/progress'),
+    create: (formData: FormData) =>
+      request<any>('/student/progress', {
+        method: 'POST',
+        body: formData,
+      }),
+    update: (id: string, formData: FormData) =>
+      request<any>(`/student/progress/${id}`, {
+        method: 'PUT',
+        body: formData,
+      }),
+    delete: (id: string) =>
+      request<any>(`/student/progress/${id}`, {
+        method: 'DELETE',
+      }),
+    getMenteeProgress: (studentId: string) =>
+      request<{ records: any[]; summary: any }>(`/mentor/mentees/${studentId}/progress`),
+    verifyMenteeProgress: (studentId: string, id: string, status: string, rejectionReason?: string) =>
+      request<any>(`/mentor/mentees/${studentId}/progress/${id}/verify`, {
+        method: 'PUT',
+        body: JSON.stringify({ status, rejectionReason }),
+      }),
+  },
 };
+

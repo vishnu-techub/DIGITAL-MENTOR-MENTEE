@@ -266,6 +266,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, isOpe
               <History size={18} /> Mentoring & Counselling
             </button>
             <button
+              className={`nav-item ${currentTab === 'my-progress' ? 'active' : ''}`}
+              onClick={() => handleSelect('my-progress')}
+            >
+              <Award size={18} /> My Progress
+            </button>
+            <button
               className={`nav-item ${currentTab === 'documents' ? 'active' : ''}`}
               onClick={() => handleSelect('documents')}
             >

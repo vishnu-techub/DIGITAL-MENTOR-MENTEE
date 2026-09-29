@@ -5,6 +5,10 @@ import {
   askMentorAiBotController,
   grammarCheckController,
 } from '../counselling/counselling.controller.js';
+import {
+  getMenteeProgressForMentor,
+  verifyMenteeProgress,
+} from '../student-progress/student-progress.controller.js';
 import { authenticate } from '../../middleware/auth.middleware.js';
 import { authorize } from '../../middleware/rbac.middleware.js';
 import { ROLES } from '../../config/constants.js';
@@ -44,6 +48,19 @@ router.post(
   '/students/:studentId/counselling/ai-suggestion',
   authorize(ROLES.FACULTY, ROLES.HOD, ROLES.ADMIN),
   getAiCounsellingSuggestion
+);
+
+// Mentee Progress & Achievements (Faculty, Admin, HOD)
+router.get(
+  '/mentees/:studentId/progress',
+  authorize(ROLES.FACULTY, ROLES.HOD, ROLES.ADMIN),
+  getMenteeProgressForMentor
+);
+
+router.put(
+  '/mentees/:studentId/progress/:id/verify',
+  authorize(ROLES.FACULTY, ROLES.HOD, ROLES.ADMIN),
+  verifyMenteeProgress
 );
 
 export default router;

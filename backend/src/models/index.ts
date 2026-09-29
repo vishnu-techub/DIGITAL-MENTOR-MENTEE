@@ -13,3 +13,4 @@ export * from './AuditLog.model.js';
 export * from './SystemSetting.model.js';
 export * from './StudentDocument.model.js';
 export * from './School.model.js';
+export * from './StudentProgress.model.js';

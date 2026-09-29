@@ -10,9 +10,18 @@ import {
   CounsellingRecord,
   StudentDocument,
   MonthlyProgress,
+  StudentProgress,
   COUNSELLING_5_CATEGORIES,
 } from '../../models/index.js';
 import { calculateArrearStatistics } from '../../utils/arrears.util.js';
+
+function getProgressCategoryEntries(list: any[], category: string): string[] {
+  return list
+    .filter((p) => p.category === category)
+    .map((p) => (p.activityName || p.eventName || '').trim())
+    .filter(Boolean);
+}
+
 
 export interface ExportResult {
   count: number;
@@ -161,13 +170,14 @@ export async function generateMentorMenteesExcel(
     .sort({ registerNumber: 1 });
 
   // 4. Batch Fetch Associated Academic, Documents, Counselling & Progress Records
-  const [academicRecords, studentDocuments, counsellingRecords, monthlyProgressList] = await Promise.all([
+  const [academicRecords, studentDocuments, counsellingRecords, monthlyProgressList, studentProgressList] = await Promise.all([
     AcademicRecord.find({ student: { $in: studentIds } }),
     StudentDocument.find({ studentId: { $in: studentIds } }),
     CounsellingRecord.find({
       $or: [{ student: { $in: studentIds } }, { studentId: { $in: studentIds } }],
     }).sort({ sessionDate: -1, date: -1 }),
     MonthlyProgress.find({ student: { $in: studentIds } }).sort({ academicYear: -1, monthName: -1 }),
+    StudentProgress.find({ studentId: { $in: studentIds } }).sort({ date: -1, createdAt: -1 }),
   ]);
 
   // Group records by student ID
@@ -175,6 +185,7 @@ export async function generateMentorMenteesExcel(
   const documentsMap = new Map<string, any[]>();
   const counsellingMap = new Map<string, any[]>();
   const progressMap = new Map<string, any[]>();
+  const studentProgressMap = new Map<string, any[]>();
 
   academicRecords.forEach((r) => {
     const sId = r.student.toString();
@@ -200,6 +211,12 @@ export async function generateMentorMenteesExcel(
     const sId = p.student.toString();
     if (!progressMap.has(sId)) progressMap.set(sId, []);
     progressMap.get(sId)!.push(p);
+  });
+
+  studentProgressList.forEach((sp) => {
+    const sId = sp.studentId.toString();
+    if (!studentProgressMap.has(sId)) studentProgressMap.set(sId, []);
+    studentProgressMap.get(sId)!.push(sp);
   });
 
   // 5. Initialize Professional ExcelJS Workbook
@@ -337,6 +354,7 @@ export async function generateMentorMenteesExcel(
     const stuDocs = documentsMap.get(sId) || [];
     const stuCounselling = counsellingMap.get(sId) || [];
     const stuProgress = progressMap.get(sId) || [];
+    const stuStudentProgress = studentProgressMap.get(sId) || [];
 
     // 1. ALL CLEAR Calculation
     const arrearStats = calculateArrearStatistics(
@@ -356,7 +374,8 @@ export async function generateMentorMenteesExcel(
     const section = student.section || 'A';
     const classSection = `${yr} ${deptCode} ${section}`.trim();
 
-    // 3. NPTEL Completed
+    // 3. NPTEL Completed (Prioritize StudentProgress collection)
+    const nptelProgress = getProgressCategoryEntries(stuStudentProgress, 'NPTEL Certificate');
     const nptelDocs = stuDocs.filter(
       (d) =>
         d.category === 'NPTEL Certificate' ||
@@ -364,16 +383,19 @@ export async function generateMentorMenteesExcel(
         (d.eventName && /nptel/i.test(d.eventName))
     );
     let nptelValue = 'NIL';
-    if (nptelDocs.length > 0) {
+    if (nptelProgress.length > 0) {
+      nptelValue = nptelProgress.join('\n');
+    } else if (nptelDocs.length > 0) {
       nptelValue = nptelDocs
-        .map((d) => d.title || d.eventName || 'NPTEL Certified')
+        .map((d) => (d.title || d.eventName || 'NPTEL Certified').trim())
         .filter(Boolean)
-        .join(', ');
-    } else if ((student as any).nptelCourses && Array.isArray((student as any).nptelCourses)) {
-      nptelValue = (student as any).nptelCourses.join(', ') || 'NIL';
+        .join('\n');
+    } else if ((student as any).nptelCourses && Array.isArray((student as any).nptelCourses) && (student as any).nptelCourses.length > 0) {
+      nptelValue = (student as any).nptelCourses.filter(Boolean).join('\n') || 'NIL';
     }
 
-    // 4. Global Certification
+    // 4. Global Certification (Prioritize StudentProgress collection)
+    const globalCertProgress = getProgressCategoryEntries(stuStudentProgress, 'Global Certification');
     const globalCertDocs = stuDocs.filter(
       (d) =>
         d.category === 'Global Certification' ||
@@ -381,13 +403,15 @@ export async function generateMentorMenteesExcel(
         (d.title && /aws|azure|oracle|gcp|cisco|redhat|certification|meta|coursera/i.test(d.title))
     );
     let globalCertValue = 'NIL';
-    if (globalCertDocs.length > 0) {
+    if (globalCertProgress.length > 0) {
+      globalCertValue = globalCertProgress.join('\n');
+    } else if (globalCertDocs.length > 0) {
       globalCertValue = globalCertDocs
-        .map((d) => d.title || d.eventName || 'Certified')
+        .map((d) => (d.title || d.eventName || 'Certified').trim())
         .filter(Boolean)
-        .join(', ');
-    } else if ((student as any).globalCertifications && Array.isArray((student as any).globalCertifications)) {
-      globalCertValue = (student as any).globalCertifications.join(', ') || 'NIL';
+        .join('\n');
+    } else if ((student as any).globalCertifications && Array.isArray((student as any).globalCertifications) && (student as any).globalCertifications.length > 0) {
+      globalCertValue = (student as any).globalCertifications.filter(Boolean).join('\n') || 'NIL';
     }
 
     // 5. Final Year Placed
@@ -429,7 +453,8 @@ export async function generateMentorMenteesExcel(
       placementValue = 'NIL';
     }
 
-    // 6. Hackathon Participation
+    // 6. Hackathon Participation (Prioritize StudentProgress collection)
+    const hackathonProgress = getProgressCategoryEntries(stuStudentProgress, 'Hackathon Certificate');
     const hackathonDocs = stuDocs.filter(
       (d) =>
         d.category === 'Hackathon Certificate' ||
@@ -438,16 +463,19 @@ export async function generateMentorMenteesExcel(
         (d.eventName && /hackathon|sih|codeathon/i.test(d.eventName))
     );
     let hackathonValue = 'NIL';
-    if (hackathonDocs.length > 0) {
+    if (hackathonProgress.length > 0) {
+      hackathonValue = hackathonProgress.join('\n');
+    } else if (hackathonDocs.length > 0) {
       hackathonValue = hackathonDocs
-        .map((d) => d.title || d.eventName || 'Hackathon Participation')
+        .map((d) => (d.title || d.eventName || 'Hackathon Participation').trim())
         .filter(Boolean)
-        .join(', ');
-    } else if ((student as any).hackathons && Array.isArray((student as any).hackathons)) {
-      hackathonValue = (student as any).hackathons.join(', ') || 'NIL';
+        .join('\n');
+    } else if ((student as any).hackathons && Array.isArray((student as any).hackathons) && (student as any).hackathons.length > 0) {
+      hackathonValue = (student as any).hackathons.filter(Boolean).join('\n') || 'NIL';
     }
 
-    // 7. Symposium Participation
+    // 7. Symposium Participation (Prioritize StudentProgress collection)
+    const symposiumProgress = getProgressCategoryEntries(stuStudentProgress, 'Symposium Certificate');
     const symposiumDocs = stuDocs.filter(
       (d) =>
         d.category === 'Symposium' ||
@@ -457,16 +485,19 @@ export async function generateMentorMenteesExcel(
         (d.eventName && /symposium|paper presentation/i.test(d.eventName))
     );
     let symposiumValue = 'NIL';
-    if (symposiumDocs.length > 0) {
+    if (symposiumProgress.length > 0) {
+      symposiumValue = symposiumProgress.join('\n');
+    } else if (symposiumDocs.length > 0) {
       symposiumValue = symposiumDocs
-        .map((d) => d.title || d.eventName || 'Symposium')
+        .map((d) => (d.title || d.eventName || 'Symposium').trim())
         .filter(Boolean)
-        .join(', ');
-    } else if ((student as any).symposiums && Array.isArray((student as any).symposiums)) {
-      symposiumValue = (student as any).symposiums.join(', ') || 'NIL';
+        .join('\n');
+    } else if ((student as any).symposiums && Array.isArray((student as any).symposiums) && (student as any).symposiums.length > 0) {
+      symposiumValue = (student as any).symposiums.filter(Boolean).join('\n') || 'NIL';
     }
 
-    // 8. Program Attended in Other State
+    // 8. Program Attended in Other State (Prioritize StudentProgress collection)
+    const otherStateProgress = getProgressCategoryEntries(stuStudentProgress, 'Program attended in other state');
     const otherStateDocs = stuDocs.filter((d) => {
       const text = `${d.title} ${d.eventName} ${d.organizer} ${d.description}`.toLowerCase();
       return (
@@ -485,16 +516,19 @@ export async function generateMentorMenteesExcel(
       );
     });
     let otherStateValue = 'NIL';
-    if (otherStateDocs.length > 0) {
+    if (otherStateProgress.length > 0) {
+      otherStateValue = otherStateProgress.join('\n');
+    } else if (otherStateDocs.length > 0) {
       otherStateValue = otherStateDocs
-        .map((d) => d.title || d.eventName || 'External State Event')
+        .map((d) => (d.title || d.eventName || 'External State Event').trim())
         .filter(Boolean)
-        .join(', ');
-    } else if ((student as any).otherStatePrograms && Array.isArray((student as any).otherStatePrograms)) {
-      otherStateValue = (student as any).otherStatePrograms.join(', ') || 'NIL';
+        .join('\n');
+    } else if ((student as any).otherStatePrograms && Array.isArray((student as any).otherStatePrograms) && (student as any).otherStatePrograms.length > 0) {
+      otherStateValue = (student as any).otherStatePrograms.filter(Boolean).join('\n') || 'NIL';
     }
 
-    // 9. Extension Activities
+    // 9. Extension Activities (Prioritize StudentProgress collection)
+    const extensionProgress = getProgressCategoryEntries(stuStudentProgress, 'Extension Activity');
     const extensionDocs = stuDocs.filter((d) => {
       const text = `${d.title} ${d.eventName} ${d.category} ${d.description}`.toLowerCase();
       return (
@@ -510,16 +544,22 @@ export async function generateMentorMenteesExcel(
       );
     });
     let extensionValue = 'NIL';
-    if (extensionDocs.length > 0) {
+    if (extensionProgress.length > 0) {
+      extensionValue = extensionProgress.join('\n');
+    } else if (extensionDocs.length > 0) {
       extensionValue = extensionDocs
-        .map((d) => d.title || d.eventName || 'Community / Extension')
+        .map((d) => (d.title || d.eventName || 'Community / Extension').trim())
         .filter(Boolean)
-        .join(', ');
-    } else if ((student as any).extensionActivities && Array.isArray((student as any).extensionActivities)) {
-      extensionValue = (student as any).extensionActivities.join(', ') || 'NIL';
+        .join('\n');
+    } else if ((student as any).extensionActivities && Array.isArray((student as any).extensionActivities) && (student as any).extensionActivities.length > 0) {
+      extensionValue = (student as any).extensionActivities.filter(Boolean).join('\n') || 'NIL';
     }
 
-    // 10. Extra Curricular
+    // 10. Extra Curricular (Prioritize StudentProgress collection)
+    const extraCurrProgress = [
+      ...getProgressCategoryEntries(stuStudentProgress, 'Extra Curricular'),
+      ...getProgressCategoryEntries(stuStudentProgress, 'Event Certificate'),
+    ];
     const ecDocs = stuDocs.filter((d) => {
       const text = `${d.title} ${d.eventName} ${d.category} ${d.description}`.toLowerCase();
       return (
@@ -544,17 +584,20 @@ export async function generateMentorMenteesExcel(
     const ecProgress = stuProgress.find((p) => p.ecNotes && p.ecNotes.trim() && p.ecNotes !== 'Active participation.');
 
     let extraCurricularValue = 'NIL';
-    if (ecDocs.length > 0) {
-      extraCurricularValue = ecDocs.map((d) => d.title || d.eventName).filter(Boolean).join(', ');
+    if (extraCurrProgress.length > 0) {
+      extraCurricularValue = extraCurrProgress.join('\n');
+    } else if (ecDocs.length > 0) {
+      extraCurricularValue = ecDocs.map((d) => (d.title || d.eventName).trim()).filter(Boolean).join('\n');
     } else if (ecProgress && ecProgress.ecNotes) {
       extraCurricularValue = ecProgress.ecNotes;
     } else if (ecCounselling.length > 0 && ecCounselling[0].correctiveAction) {
       extraCurricularValue = ecCounselling[0].correctiveAction;
-    } else if ((student as any).extraCurricular && Array.isArray((student as any).extraCurricular)) {
-      extraCurricularValue = (student as any).extraCurricular.join(', ') || 'NIL';
+    } else if ((student as any).extraCurricular && Array.isArray((student as any).extraCurricular) && (student as any).extraCurricular.length > 0) {
+      extraCurricularValue = (student as any).extraCurricular.filter(Boolean).join('\n') || 'NIL';
     }
 
-    // 11. Award
+    // 11. Award (Prioritize StudentProgress collection)
+    const awardProgress = getProgressCategoryEntries(stuStudentProgress, 'Award Certificate');
     const awardDocs = stuDocs.filter(
       (d) =>
         d.category === 'Award' ||
@@ -564,18 +607,33 @@ export async function generateMentorMenteesExcel(
         (d.description && /prize|winner|award/i.test(d.description))
     );
     let awardValue = 'NIL';
-    if (awardDocs.length > 0) {
+    if (awardProgress.length > 0) {
+      awardValue = awardProgress.join('\n');
+    } else if (awardDocs.length > 0) {
       awardValue = awardDocs
-        .map((d) => d.title || d.eventName || 'Award / Prize')
+        .map((d) => (d.title || d.eventName || 'Award / Prize').trim())
         .filter(Boolean)
-        .join(', ');
-    } else if ((student as any).awards && Array.isArray((student as any).awards)) {
-      awardValue = (student as any).awards.join(', ') || 'NIL';
+        .join('\n');
+    } else if ((student as any).awards && Array.isArray((student as any).awards) && (student as any).awards.length > 0) {
+      awardValue = (student as any).awards.filter(Boolean).join('\n') || 'NIL';
     }
 
     // Populate Row
     const dataRow = ws.getRow(currentRowIndex);
-    dataRow.height = 24;
+
+    // Compute dynamic row height based on multi-line cell entries
+    const maxCellLines = Math.max(
+      1,
+      nptelValue.split('\n').length,
+      globalCertValue.split('\n').length,
+      hackathonValue.split('\n').length,
+      symposiumValue.split('\n').length,
+      otherStateValue.split('\n').length,
+      extensionValue.split('\n').length,
+      extraCurricularValue.split('\n').length,
+      awardValue.split('\n').length
+    );
+    dataRow.height = Math.max(24, Math.min(120, maxCellLines * 18));
 
     const mentorMapping = assignmentMentorMap.get(sId);
     const rowMentorSNo = mentorMapping ? mentorMapping.mentorSNo : 1;
@@ -857,6 +915,52 @@ export async function generateMentorMenteesExcel(
         [d.eventName, d.organizer].filter(Boolean).join(' - ') || '—',
         d.eventDate || (d.uploadedAt ? new Date(d.uploadedAt).toISOString().split('T')[0] : '—'),
         d.verificationStatus || 'Pending',
+      ];
+
+      dVals.forEach((val, idx) => {
+        const cell = row.getCell(idx + 1);
+        cell.value = val;
+        cell.font = { name: 'Calibri', size: 9 };
+        if (idx === 0 || idx === 1 || idx === 6 || idx === 7) {
+          cell.alignment = { vertical: 'middle', horizontal: 'center' };
+          if (idx === 1) cell.numFmt = '@';
+          if (idx === 7) {
+            cell.font = {
+              name: 'Calibri',
+              size: 9,
+              bold: true,
+              color: { argb: val === 'Verified' ? 'FF059669' : val === 'Rejected' ? 'FFDC2626' : 'FFD97706' },
+            };
+          }
+        } else {
+          cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+        }
+        cell.border = {
+          top: { style: 'thin', color: { argb: BORDER_COLOR } },
+          bottom: { style: 'thin', color: { argb: BORDER_COLOR } },
+          left: { style: 'thin', color: { argb: BORDER_COLOR } },
+          right: { style: 'thin', color: { argb: BORDER_COLOR } },
+        };
+      });
+
+      dRowIdx++;
+    });
+
+    // Also include Student Progress achievement submissions in Sheet 3
+    const progressRecords = studentProgressMap.get(sId) || [];
+    progressRecords.forEach((p) => {
+      const row = wsDocs.getRow(dRowIdx);
+      row.height = 22;
+
+      const dVals = [
+        dSeq++,
+        String(student.registerNumber),
+        student.fullName,
+        p.activityName || p.fileName || 'Achievement',
+        p.category || 'Other',
+        [p.eventName, p.organization].filter(Boolean).join(' - ') || '—',
+        p.date || (p.createdAt ? new Date(p.createdAt).toISOString().split('T')[0] : '—'),
+        p.status || 'Pending',
       ];
 
       dVals.forEach((val, idx) => {

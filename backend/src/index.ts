@@ -19,6 +19,7 @@ import auditRoutes from './modules/audit/audit.routes.js';
 import reportRoutes from './modules/reports/report.routes.js';
 import documentRoutes from './modules/documents/document.routes.js';
 import schoolRoutes from './modules/schools/school.routes.js';
+import studentProgressRoutes from './modules/student-progress/student-progress.routes.js';
 
 dotenv.config();
 
@@ -88,6 +89,8 @@ app.use('/api/audit-logs', auditRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/schools', schoolRoutes);
+app.use('/api/student/progress', studentProgressRoutes);
+app.use('/api/students/progress', studentProgressRoutes);
 
 // Catch-all 404 for unmatched API routes
 app.all('/api/*', (req, res) => {
