@@ -80,6 +80,13 @@ async function findStudentByIdOrReg(idOrReg: string) {
   return await Student.findOne({ registerNumber: idOrReg }).populate('department batch user school.tenthSchoolId school.twelfthSchoolId');
 }
 
+/**
+ * Largest page size a client may request on the student directory. This is a
+ * *page* bound, never a cap on the dataset: every student stays reachable by
+ * walking `pages`.
+ */
+export const MAX_STUDENT_PAGE_SIZE = 250;
+
 // Get list of students with comprehensive search & filtering
 export async function getStudents(req: AuthRequest, res: Response) {
   try {
@@ -91,7 +98,7 @@ export async function getStudents(req: AuthRequest, res: Response) {
       assignmentStatus,
       isActive,
       page = '1',
-      limit = '50',
+      limit,
     } = req.query as Record<string, string>;
 
     const filter: any = {};
@@ -143,107 +150,196 @@ export async function getStudents(req: AuthRequest, res: Response) {
       filter._id = { $in: studentIds };
     }
 
-    const pageNum = Math.max(1, parseInt(page, 10));
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10)));
-    const skip = (pageNum - 1) * limitNum;
+    // ---- Pagination -------------------------------------------------------
+    // `page`/`limit` are optional. When `limit` is omitted the *entire* filtered
+    // set is returned (no silent truncation). When `limit` is supplied the query
+    // is paged, and the real total is always reported via countDocuments().
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const parsedLimit = limit === undefined || limit === '' ? null : parseInt(limit, 10);
+    const limitNum =
+      parsedLimit === null || Number.isNaN(parsedLimit)
+        ? null
+        : Math.min(MAX_STUDENT_PAGE_SIZE, Math.max(1, parsedLimit));
+    const skip = limitNum === null ? 0 : (pageNum - 1) * limitNum;
 
-    const total = await Student.countDocuments(filter);
-    const students = await Student.find(filter)
+    const baseQuery = Student.find(filter)
       .populate('department', 'name code')
       .populate('batch', 'name')
       .sort({ registerNumber: 1 })
-      .skip(skip)
-      .limit(limitNum);
+      .skip(skip);
+    if (limitNum !== null) baseQuery.limit(limitNum);
 
-    // Populate active mentor and academic aggregations for each student
-    const enriched = await Promise.all(
-      students.map(async (s) => {
-        const activeAsg = await MentorAssignment.findOne({
-          student: s._id,
-          status: 'ACTIVE',
-        }).populate({
-          path: 'mentor',
-          populate: { path: 'user', select: 'fullName' },
-        });
+    // The total is the count of everything matching the filter — NOT the length
+    // of this page. This is what makes the whole directory reachable.
+    const [students, total] = await Promise.all([baseQuery, Student.countDocuments(filter)]);
 
-        const activeMentor = activeAsg?.mentor as any;
-        const mentorUser = activeMentor?.user as any;
+    const totalPages =
+      limitNum === null ? 1 : Math.max(1, Math.ceil(total / limitNum));
 
-        const [meetingCount, counsellingCount, academicRecords, latestMeeting, docCount] = await Promise.all([
-          Meeting.countDocuments({ student: s._id, meetingStatus: 'COMPLETED' }),
-          CounsellingRecord.countDocuments({ student: s._id }),
-          AcademicRecord.find({ student: s._id }).sort({ semesterNumber: -1 }),
-          Meeting.findOne({ student: s._id }).sort({ meetingDate: -1 }),
-          StudentDocument.countDocuments({ student: s._id }),
-        ]);
+    if (students.length === 0) {
+      return sendSuccess(
+        res,
+        {
+          students: [],
+          total,
+          page: pageNum,
+          limit: limitNum,
+          pages: totalPages,
+          hasMore: limitNum !== null && pageNum < totalPages,
+        },
+        'Students list fetched successfully.'
+      );
+    }
 
-        const arrearStats = calculateArrearStatistics(
-          academicRecords,
-          s.clearedSubjects || [],
-          s.arrearHistory || []
-        );
-        const totalArrears = arrearStats.activeArrearsCount;
-        const latestWithCgpa = academicRecords.find((r) => (r.cgpa || 0) > 0);
-        const currentCgpa = latestWithCgpa ? latestWithCgpa.cgpa : 0.0;
+    const studentIds = students.map((s) => s._id);
 
-        // Profile completion percentage calculation
-        let completionPercent = 0;
-        if (s.profileCompleted) {
-          completionPercent = 100;
-        } else {
-          if (s.fullName && s.registerNumber) completionPercent += 25;
-          if (s.mobileNumber && s.email && s.dob) completionPercent += 25;
-          if (s.parent?.fatherName || s.parent?.motherName) completionPercent += 25;
-          if (s.school?.tenthMark || s.school?.twelfthMark) completionPercent += 25;
-        }
+    // ---- Batched enrichment ----------------------------------------------
+    // Resolved in a fixed number of round trips for the whole page instead of
+    // ~7 queries per student, so a 250-row page is no slower than a 50-row one.
+    const [
+      activeAssignments,
+      completedMeetingCounts,
+      counsellingCounts,
+      academicRecords,
+      latestMeetings,
+      documentCounts,
+    ] = await Promise.all([
+      MentorAssignment.find({ student: { $in: studentIds }, status: 'ACTIVE' }).populate({
+        path: 'mentor',
+        populate: { path: 'user', select: 'fullName' },
+      }),
+      Meeting.aggregate([
+        { $match: { student: { $in: studentIds }, meetingStatus: 'COMPLETED' } },
+        { $group: { _id: '$student', count: { $sum: 1 } } },
+      ]),
+      CounsellingRecord.aggregate([
+        { $match: { student: { $in: studentIds } } },
+        { $group: { _id: '$student', count: { $sum: 1 } } },
+      ]),
+      AcademicRecord.find({ student: { $in: studentIds } }).lean(),
+      Meeting.find({ student: { $in: studentIds } }).lean(),
+      StudentDocument.aggregate([
+        { $match: { student: { $in: studentIds } } },
+        { $group: { _id: '$student', count: { $sum: 1 } } },
+      ]),
+    ]);
 
-        const dept = s.department as any;
-        const batch = s.batch as any;
-
-        return {
-          id: s._id.toString(),
-          _id: s._id.toString(),
-          register_number: s.registerNumber,
-          full_name: s.fullName,
-          department_id: dept?._id?.toString() || '',
-          department_name: dept?.name || '',
-          department_code: dept?.code || '',
-          batch_id: batch?._id?.toString() || '',
-          batch_name: batch?.name || '',
-          year: s.year || 2,
-          section: s.section || 'A',
-          dob: s.dob || '',
-          blood_group: s.bloodGroup || '',
-          residential_type: s.residentialType,
-          mobile_number: s.mobileNumber || '',
-          email: canonicalStudentEmail(s),
-          is_active: s.isActive ? 1 : 0,
-          profile_completed: s.profileCompleted ? 1 : 0,
-          profile_completion_percentage: completionPercent,
-          profile_completed_at: s.profileCompletedAt || null,
-          current_mentor_name: mentorUser?.fullName || 'Not Assigned',
-          mentor_cabin: activeMentor?.cabinLocation || null,
-          assignment_id: activeAsg?._id?.toString() || null,
-          assignment_status: activeAsg?.status || 'UNASSIGNED',
-          completed_meetings_count: meetingCount,
-          counselling_count: counsellingCount,
-          document_count: docCount,
-          total_arrears: totalArrears,
-          active_arrears: arrearStats.activeArrearsCount,
-          historical_arrears: arrearStats.historicalArrearsCount,
-          cleared_arrears: arrearStats.clearedCount,
-          arrear_status_label: arrearStats.statusLabel,
-          cgpa: currentCgpa,
-          // Never a fabricated date: null means "no meeting recorded yet".
-          next_meeting_date: latestMeeting?.meetingDate || null,
-          meeting_status: latestMeeting?.meetingStatus || 'SCHEDULED',
-        };
-      })
+    const assignmentByStudent = new Map<string, any>(
+      activeAssignments.map((a: any) => [a.student?._id?.toString?.() ?? String(a.student), a])
     );
+    const meetingCountByStudent = new Map<string, number>(
+      completedMeetingCounts.map((r: any) => [String(r._id), r.count])
+    );
+    const counsellingCountByStudent = new Map<string, number>(
+      counsellingCounts.map((r: any) => [String(r._id), r.count])
+    );
+    const documentCountByStudent = new Map<string, number>(
+      documentCounts.map((r: any) => [String(r._id), r.count])
+    );
+    const academicsByStudent = new Map<string, any[]>();
+    for (const rec of academicRecords) {
+      const key = String(rec.student);
+      const list = academicsByStudent.get(key) || [];
+      list.push(rec);
+      academicsByStudent.set(key, list);
+    }
+    // Newest semester first — mirrors the previous per-student `.sort()`.
+    for (const list of academicsByStudent.values()) {
+      list.sort((a: any, b: any) => (b.semesterNumber || 0) - (a.semesterNumber || 0));
+    }
+    // meetingDate is a 'YYYY-MM-DD' string, so a lexicographic max is a
+    // chronological max. Ties resolve to the most recently stored row, matching
+    // the previous `findOne().sort({ meetingDate: -1 })` behaviour.
+    const latestMeetingByStudent = new Map<string, any>();
+    for (const m of latestMeetings) {
+      const key = String(m.student);
+      const current = latestMeetingByStudent.get(key);
+      if (!current || String(m.meetingDate || '') > String(current.meetingDate || '')) {
+        latestMeetingByStudent.set(key, m);
+      }
+    }
+
+    const enriched = students.map((s) => {
+      const sKey = s._id.toString();
+      const activeAsg = assignmentByStudent.get(sKey);
+      const activeMentor = activeAsg?.mentor as any;
+      const mentorUser = activeMentor?.user as any;
+      const latestMeeting = latestMeetingByStudent.get(sKey);
+      const records = academicsByStudent.get(sKey) || [];
+
+      const arrearStats = calculateArrearStatistics(
+        records,
+        s.clearedSubjects || [],
+        s.arrearHistory || []
+      );
+      const totalArrears = arrearStats.activeArrearsCount;
+      const latestWithCgpa = records.find((r: any) => (r.cgpa || 0) > 0);
+      const currentCgpa = latestWithCgpa ? latestWithCgpa.cgpa : 0.0;
+
+      // Profile completion percentage calculation
+      let completionPercent = 0;
+      if (s.profileCompleted) {
+        completionPercent = 100;
+      } else {
+        if (s.fullName && s.registerNumber) completionPercent += 25;
+        if (s.mobileNumber && s.email && s.dob) completionPercent += 25;
+        if (s.parent?.fatherName || s.parent?.motherName) completionPercent += 25;
+        if (s.school?.tenthMark || s.school?.twelfthMark) completionPercent += 25;
+      }
+
+      const dept = s.department as any;
+      const batch = s.batch as any;
+
+      return {
+        id: s._id.toString(),
+        _id: s._id.toString(),
+        register_number: s.registerNumber,
+        full_name: s.fullName,
+        department_id: dept?._id?.toString() || '',
+        department_name: dept?.name || '',
+        department_code: dept?.code || '',
+        batch_id: batch?._id?.toString() || '',
+        batch_name: batch?.name || '',
+        year: s.year || 2,
+        section: s.section || 'A',
+        dob: s.dob || '',
+        blood_group: s.bloodGroup || '',
+        residential_type: s.residentialType,
+        mobile_number: s.mobileNumber || '',
+        email: canonicalStudentEmail(s),
+        is_active: s.isActive ? 1 : 0,
+        profile_completed: s.profileCompleted ? 1 : 0,
+        profile_completion_percentage: completionPercent,
+        profile_completed_at: s.profileCompletedAt || null,
+        current_mentor_name: mentorUser?.fullName || 'Not Assigned',
+        mentor_cabin: activeMentor?.cabinLocation || null,
+        assignment_id: activeAsg?._id?.toString() || null,
+        assignment_status: activeAsg?.status || 'UNASSIGNED',
+        completed_meetings_count: meetingCountByStudent.get(sKey) || 0,
+        counselling_count: counsellingCountByStudent.get(sKey) || 0,
+        document_count: documentCountByStudent.get(sKey) || 0,
+        total_arrears: totalArrears,
+        active_arrears: arrearStats.activeArrearsCount,
+        historical_arrears: arrearStats.historicalArrearsCount,
+        cleared_arrears: arrearStats.clearedCount,
+        arrear_status_label: arrearStats.statusLabel,
+        cgpa: currentCgpa,
+        // Never a fabricated date: null means "no meeting recorded yet".
+        next_meeting_date: latestMeeting?.meetingDate || null,
+        meeting_status: latestMeeting?.meetingStatus || 'SCHEDULED',
+      };
+    });
 
     return sendSuccess(
       res,
-      enriched,
+      {
+        students: enriched,
+        total,
+        page: pageNum,
+        limit: limitNum,
+        pages: totalPages,
+        hasMore: limitNum !== null && pageNum < totalPages,
+      },
       'Students list fetched successfully.'
     );
   } catch (err: any) {

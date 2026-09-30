@@ -11,6 +11,26 @@ export interface ApiResponse<T = any> {
   meta?: { timestamp: string };
 }
 
+/**
+ * `GET /api/students` — a genuinely paginated directory listing.
+ *
+ * `total` is the real number of students matching the filter (from
+ * `countDocuments()`), not the length of the current page. `limit` is `null`
+ * when the caller omitted it, in which case the whole filtered set is returned
+ * in a single page (`pages === 1`).
+ */
+export interface StudentsListResponse {
+  students: any[];
+  total: number;
+  page: number;
+  limit: number | null;
+  pages: number;
+  hasMore: boolean;
+}
+
+/** Page sizes offered by the Students Master directory selector. */
+export const STUDENT_PAGE_SIZES = [25, 50, 100, 250] as const;
+
 const rawApiUrl = (import.meta.env.VITE_API_URL || '').trim();
 const normalizedApiUrl = rawApiUrl
   ? (rawApiUrl.startsWith('http') ? rawApiUrl : `https://${rawApiUrl}`).replace(/\/$/, '')
@@ -159,9 +179,14 @@ export const api = {
 
   // Students
   students: {
+    /**
+     * Directory listing. Pass `page` + `limit` for server-side pagination.
+     * Omit `limit` entirely to receive every matching student in one response
+     * (used by the HOD / Faculty dashboards, which need the whole roster).
+     */
     list: (params: Record<string, string> = {}) => {
       const q = new URLSearchParams(params).toString();
-      return request(`/students${q ? `?${q}` : ''}`);
+      return request<StudentsListResponse>(`/students${q ? `?${q}` : ''}`);
     },
     getById: (id: string) => request(`/students/${id}`),
     create: (data: any) =>

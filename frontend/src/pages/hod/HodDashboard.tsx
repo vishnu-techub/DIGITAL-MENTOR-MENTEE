@@ -63,7 +63,7 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
         api.meetings.list(),
       ]);
 
-      if (stuRes.success) setStudents(stuRes.data);
+      if (stuRes.success) setStudents(stuRes.data?.students || []);
       if (facRes.success) setFaculty(facRes.data);
       if (meetRes.success) setMeetings(meetRes.data);
     } catch (err: any) {

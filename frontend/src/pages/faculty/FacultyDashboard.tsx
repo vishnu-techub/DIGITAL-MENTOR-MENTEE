@@ -136,7 +136,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
         api.meetings.getSchedule(),
       ]);
 
-      if (menteesRes.success) setMentees(menteesRes.data);
+      if (menteesRes.success) setMentees(menteesRes.data?.students || []);
       if (meetingsRes.success) setMeetings(meetingsRes.data);
       if (scheduleRes.success) setSchedule(scheduleRes.data);
     } catch (err: any) {

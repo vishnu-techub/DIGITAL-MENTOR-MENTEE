@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { api, ApiError } from '../../api/client';
+import { api, ApiError, STUDENT_PAGE_SIZES } from '../../api/client';
 import { useToast } from '../../context/ToastContext';
 import { Modal } from '../../components/common/Modal';
 import { EmptyState } from '../../components/common/EmptyState';
@@ -47,6 +47,8 @@ import {
   AlertCircle,
   Send,
   Sparkles,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -86,6 +88,83 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDept, setSelectedDept] = useState('');
   const [selectedBatch, setSelectedBatch] = useState('');
+
+  // -------------------------------------------------------------------------
+  // Students Master directory — server-side pagination over the FULL dataset.
+  // These are intentionally separate from `searchQuery`/`filteredStudents`
+  // above, which still drive the (client-side) Student Documents tab.
+  // -------------------------------------------------------------------------
+  const [directoryRows, setDirectoryRows] = useState<any[]>([]);
+  const [directoryTotal, setDirectoryTotal] = useState(0);
+  const [directoryPage, setDirectoryPage] = useState(1);
+  const [directoryLimit, setDirectoryLimit] = useState(50);
+  const [directoryTotalPages, setDirectoryTotalPages] = useState(1);
+  const [directorySearchInput, setDirectorySearchInput] = useState('');
+  const [directorySearch, setDirectorySearch] = useState('');
+  const [directoryDept, setDirectoryDept] = useState('');
+  const [directoryBatch, setDirectoryBatch] = useState('');
+  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [directoryError, setDirectoryError] = useState<string | null>(null);
+
+  // Search and the department/batch filters are resolved by the API so that they
+  // cover the whole dataset, not just the rows already on screen. The backend
+  // returns the real `total` from countDocuments(), which drives both the header
+  // count and the "Showing X-Y of Z students" range.
+  const loadDirectory = useCallback(async () => {
+    setDirectoryLoading(true);
+    setDirectoryError(null);
+    try {
+      const params: Record<string, string> = {
+        page: String(directoryPage),
+        limit: String(directoryLimit),
+      };
+      if (directorySearch.trim()) params.search = directorySearch.trim();
+      if (directoryDept) params.departmentId = directoryDept;
+      if (directoryBatch) params.batchId = directoryBatch;
+      // NOTE: `isActive` is deliberately never sent - inactive/deactivated
+      // students must stay visible because no explicit filter is selected.
+
+      const res = await api.students.list(params);
+      if (res.success) {
+        setDirectoryRows(res.data?.students || []);
+        setDirectoryTotal(res.data?.total || 0);
+        const maxPage = Math.max(1, res.data?.pages || 1);
+        setDirectoryTotalPages(maxPage);
+        // Guard against a page that no longer exists (rows removed, or a filter
+        // narrowed the result set while we were sitting on a later page).
+        if (directoryPage > maxPage) {
+          setDirectoryPage(maxPage);
+          return;
+        }
+      }
+    } catch (err: any) {
+      console.error('Failed to load student directory:', err);
+      setDirectoryError(err?.message || 'Failed to load students directory.');
+      setDirectoryRows([]);
+      setDirectoryTotal(0);
+      setDirectoryTotalPages(1);
+    } finally {
+      setDirectoryLoading(false);
+    }
+  }, [directoryPage, directoryLimit, directorySearch, directoryDept, directoryBatch]);
+
+  // Debounce the search box so typing does not fire a request per keystroke.
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDirectorySearch(directorySearchInput);
+      setDirectoryPage(1);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [directorySearchInput]);
+
+  useEffect(() => {
+    if (currentTab !== 'students') return;
+    loadDirectory();
+  }, [currentTab, loadDirectory]);
+
+  // "Showing X-Y of Z students" bounds.
+  const directoryFrom = directoryTotal === 0 ? 0 : (directoryPage - 1) * directoryLimit + 1;
+  const directoryTo = Math.min(directoryPage * directoryLimit, directoryTotal);
 
   // Identity Edit Requests
   const [identityEditRequests, setIdentityEditRequests] = useState<any[]>([]);
@@ -213,7 +292,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
         await fetchEditRequests();
         // Refresh students list to reflect changes immediately
         const studentsRes = await api.students.list();
-        if (studentsRes.success) setStudents(studentsRes.data);
+        if (studentsRes.success) setStudents(studentsRes.data?.students || []);
       } else {
         toast.error(res.message || 'Failed to review request.');
       }
@@ -243,7 +322,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
         ]);
 
       if (statsRes.success) setStats(statsRes.data);
-      if (studentsRes.success) setStudents(studentsRes.data);
+      // No `limit` => the API returns the complete roster, not a truncated page.
+      // This feeds the non-directory tabs (assignment, reassignment,
+      // counselling, meetings, notifications, documents).
+      if (studentsRes.success) setStudents(studentsRes.data?.students || []);
       if (facultyRes.success) setFaculty(facultyRes.data);
       if (editReqsRes.success && editReqsRes.data) setIdentityEditRequests(editReqsRes.data);
       if (deptsRes.success) {
@@ -295,6 +377,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       const res = await api.students.create(payload);
       setShowAddStudentModal(false);
       loadData();
+      loadDirectory();
       if (res.success && res.data) {
         const deptObj = departments.find(d => d.id === newStudentForm.departmentId);
         const batchObj = batches.find(b => b.id === newStudentForm.batchId);
@@ -377,6 +460,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
         toast.success(`Student "${editStudentForm.fullName}" updated successfully.`);
         setEditStudentTarget(null);
         loadData();
+        loadDirectory();
       } else {
         toast.error(res.message || 'Failed to update student.');
       }
@@ -393,6 +477,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       const res = await api.students.toggleStatus(studentId);
       if (res.success) {
         loadData();
+        loadDirectory();
       } else {
         toast.error(res.message || 'Failed to toggle status.');
       }
@@ -421,6 +506,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       const res = await api.mentorship.reassign(reassignForm);
       setShowReassignModal(false);
       loadData();
+      loadDirectory();
       toast.success(res.message || 'Mentor reassigned successfully. All historical records remain intact.');
     } catch (err: any) {
       toast.error('Reassignment failed: ' + err.message);
@@ -473,6 +559,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
         toast.success(res.message || 'Student and all associated records deleted permanently.');
         setDeleteStudentTarget(null);
         loadData();
+        loadDirectory();
       } else {
         toast.error(res.message || 'Failed to delete student.');
       }
@@ -544,7 +631,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
     return <ServerErrorState onRetry={loadData} fullPage={false} />;
   }
 
-  // Filtered students
+  // Client-side filter for the Student Documents tab only. The Students Master
+  // directory is filtered and paginated by the API (see `loadDirectory`).
   const filteredStudents = students.filter((s) => {
     const matchesSearch =
       !searchQuery ||
@@ -751,9 +839,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Student Master Tab */}
       {currentTab === 'students' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              Institutional Student Directory ({filteredStudents.length} Students)
+              Institutional Student Directory ({directoryTotal.toLocaleString()} Students)
             </h2>
             <button className="btn btn-primary btn-sm" onClick={() => setShowAddStudentModal(true)}>
               <Plus size={16} /> Add Student with Permanent ID
@@ -770,16 +858,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                   className="form-control"
                   style={{ paddingLeft: '2rem' }}
                   placeholder="Search by Name or Register Number..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  value={directorySearchInput}
+                  onChange={(e) => setDirectorySearchInput(e.target.value)}
                 />
               </div>
 
               <select
                 className="form-control"
                 style={{ width: '180px' }}
-                value={selectedDept}
-                onChange={(e) => setSelectedDept(e.target.value)}
+                value={directoryDept}
+                onChange={(e) => {
+                  setDirectoryDept(e.target.value);
+                  setDirectoryPage(1);
+                }}
               >
                 <option value="">All Departments</option>
                 {departments.map((d) => (
@@ -790,8 +881,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
               <select
                 className="form-control"
                 style={{ width: '150px' }}
-                value={selectedBatch}
-                onChange={(e) => setSelectedBatch(e.target.value)}
+                value={directoryBatch}
+                onChange={(e) => {
+                  setDirectoryBatch(e.target.value);
+                  setDirectoryPage(1);
+                }}
               >
                 <option value="">All Batches</option>
                 {batches.map((b) => (
@@ -819,19 +913,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredStudents.length === 0 ? (
+                  {directoryRows.length === 0 ? (
                     <tr>
                       <td colSpan={9} style={{ padding: '1.5rem', border: 'none' }}>
                         <EmptyState
                           icon={<GraduationCap size={28} />}
-                          title="No Students Found"
-                          description={searchQuery ? "No student records matched your search query or filters." : "No student records currently enrolled."}
+                          title={directoryLoading ? 'Loading Students...' : 'No Students Found'}
+                          description={
+                            directoryLoading
+                              ? 'Fetching the student directory from the server.'
+                              : directoryError
+                                ? directoryError
+                                : directorySearchInput
+                                  ? "No student records matched your search query or filters."
+                                  : "No student records currently enrolled."
+                          }
                           compact
                         />
                       </td>
                     </tr>
                   ) : (
-                    filteredStudents.map((s) => (
+                    directoryRows.map((s) => (
                     <tr key={s.id}>
                       <td style={{ fontWeight: 700, color: '#0B2545' }}>{s.register_number}</td>
                       <td>
@@ -958,12 +1060,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
 
             {/* Mobile Cards View */}
             <div className="mobile-only" style={{ flexDirection: 'column', gap: '0.85rem', padding: '0.85rem' }}>
-              {filteredStudents.length === 0 ? (
+              {directoryRows.length === 0 ? (
                 <div style={{ padding: '1.5rem', textAlign: 'center', color: '#64748B' }}>
-                  No students found.
+                  {directoryLoading ? 'Loading students...' : directoryError || 'No students found.'}
                 </div>
               ) : (
-                filteredStudents.map((s) => (
+                directoryRows.map((s) => (
                   <div
                     key={s.id}
                     className="card"
@@ -1070,6 +1172,59 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                   </div>
                 ))
               )}
+            </div>
+
+            {/* Pagination Bar — every student is reachable by walking `pages`.
+                The range and total come from the API, not from this page's length. */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '0.75rem 1rem',
+                borderTop: '1px solid #e2e8f0',
+                backgroundColor: '#f8fafc',
+                flexWrap: 'wrap',
+                gap: '0.5rem',
+              }}
+            >
+              <div style={{ fontSize: '0.85rem', color: '#64748b' }}>
+                Showing <strong>{directoryFrom.toLocaleString()}&ndash;{directoryTo.toLocaleString()}</strong> of{' '}
+                <strong>{directoryTotal.toLocaleString()}</strong> students
+                {directoryTotalPages > 1 && (
+                  <span> (Page {directoryPage} of {directoryTotalPages})</span>
+                )}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <select
+                  className="form-control"
+                  aria-label="Students per page"
+                  style={{ width: 'auto', padding: '0.25rem 0.5rem', fontSize: '0.85rem' }}
+                  value={directoryLimit}
+                  onChange={(e) => {
+                    setDirectoryLimit(parseInt(e.target.value, 10));
+                    setDirectoryPage(1);
+                  }}
+                >
+                  {STUDENT_PAGE_SIZES.map((size) => (
+                    <option key={size} value={size}>{size} / page</option>
+                  ))}
+                </select>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  disabled={directoryPage <= 1 || directoryLoading}
+                  onClick={() => setDirectoryPage((prev) => Math.max(1, prev - 1))}
+                >
+                  <ChevronLeft size={16} /> Prev
+                </button>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  disabled={directoryPage >= directoryTotalPages || directoryLoading}
+                  onClick={() => setDirectoryPage((prev) => Math.min(directoryTotalPages, prev + 1))}
+                >
+                  Next <ChevronRight size={16} />
+                </button>
+              </div>
             </div>
           </div>
         </div>
