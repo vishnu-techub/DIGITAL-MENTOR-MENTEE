@@ -127,6 +127,47 @@ Related: `PROJECT_PROGRESS.md` (overall project status / deployment state).
 - **Unrelated paths left alone:** `document.controller.ts` and `document.routes.ts` are **unmodified**,
   so normal single-document deletion and the per-student bulk delete behave exactly as before.
 
+### ENTRY-003 — Student "My Profile": non-identity sections could not be saved at all
+- **Date/time:** 2026-09-30.
+- **Severity:** High — every "Save Profile Changes" on the student My Profile page failed with HTTP 403.
+- **Symptom:** the page *looked* correct — Institutional Identity was properly read-only, and Personal
+  Information / Academic & Admission Details / Family Information were all marked "Editable" or
+  "Directly Editable" with live inputs. But submitting the form returned
+  `403 Access denied: students cannot modify admissionType, scholarshipDetails from this endpoint.`
+  and **nothing saved at all**, including the Personal and Family fields.
+- **Root cause:** the whole My Profile page is a **single `<form>`** (one "Save Profile Changes" button),
+  so `handleSaveProfile` always submits the Academic & Admission fields together with the personal and
+  family ones. The student allow-list in `backend/src/modules/students/student.controller.ts`
+  (`updateStudent`) was missing exactly those keys:
+
+  | Field sent by the form | In allow-list before this fix |
+  |---|---|
+  | `mobileNumber`, `email`, `dob`, `bloodGroup`, `residentialType`, `address`, `year`, `section` | yes |
+  | `fatherName`, `fatherContact`, `fatherOccupation`, `motherName`, `motherContact`, `motherOccupation` | yes |
+  | `admissionType` | **NO → 403** |
+  | `scholarshipDetails` | **NO → 403** |
+  | `lateralEntry` (only when admission type is LATERAL_ENTRY) | **NO → 403** |
+
+  The guard rejects the request when *any* key is not allow-listed, so a couple of missing keys failed
+  the **whole** save. The bug was invisible to the existing suite because no test submitted those fields.
+- **Fix (single source change):** added `admissionType`/`admission_type`, `lateralEntry`/`lateral_entry`
+  and `scholarshipDetails`/`scholarship_details` to the student allow-list in `updateStudent`.
+- **Explicitly NOT changed, and why:**
+  - `fullName`, `registerNumber`, `departmentId`, `batchId` are still **absent** from the allow-list, so a
+    student still gets 403. Institutional Identity remains locked; the only route to change it stays the
+    existing "Request Edit" workflow (`POST /api/students/identity-edit-request` → admin approval).
+  - `cgpa` / `sgpa` / `arrearsCount` remain rejected; they still require an Academic Edit Request
+    approved by the mentor. Access control was not weakened anywhere.
+  - `checkStudentAccess` (student = self only), `authorize(...)` guards, validation, and the onboarding
+    wizard (`POST /complete-profile`) are untouched.
+- **Frontend required no change.** `frontend/src/pages/student/StudentDashboard.tsx` already rendered
+  Institutional Identity with `disabled` inputs, a `Lock` icon, a "Locked by Administration" badge and
+  the single "Request Edit" button, and the other three sections were already directly editable with no
+  request/pending gate. Nothing was redesigned, restyled or removed.
+- **Files changed:** `backend/src/modules/students/student.controller.ts` (fix),
+  `backend/src/tests/runtime-verification.test.ts` (new regression check).
+- **Schema changes:** none.
+
 ### ENTRY-000 (earlier session) — UTF-8 mojibake / encoding remediation
 - Removed corrupted characters from `MentorStudentProfileView.tsx` (`â€¢`, `â€”`, `â†’`, etc.).
 - Fixed duplicate `"+ +"` button text; corrected CSV `Content-Type` charset.
@@ -135,6 +176,34 @@ Related: `PROJECT_PROGRESS.md` (overall project status / deployment state).
 ---
 
 ## 3. Verification Results
+
+Verification for **ENTRY-003** (recorded 2026-09-30). The suite boots the real `src/index.ts` against a
+real in-memory mongod and drives real HTTP as real role users, asserting both the response **and** the
+stored MongoDB document.
+
+| Check | Result |
+|---|---|
+| Root build (`npm run build`: backend `tsc` + frontend `tsc` + `vite build`) | **PASS** — 1643 modules, no type errors |
+| Non-identity sections save directly (Personal + Family + Academic & Admission) | **PASS** — full My Profile payload → 200; Mongo `admissionType`, `scholarshipDetails="Post-Matric"`, `year=2/C`, `fatherName` all persisted |
+| Conditional "Lateral Entry Details" block saves (`lateralEntry` nested object) | **PASS** — → 200; Mongo college = "Government Polytechnic Tiruchengode" |
+| Institutional Identity cannot be edited/saved by a student | **PASS** — `fullName`/`registerNumber`/`departmentId`/`batchId` → 403; Mongo unchanged, `fullName` still "Bhavana Sri" |
+| Rejected request leaks no partial write | **PASS** — mobile stayed `9445566778` after the 403 |
+| Grades still blocked (Academic Edit Request path preserved) | **PASS** — `cgpa`/`sgpa` → 403 |
+| Request Update still works for Institutional Identity only | **PASS** — suite checks 13/14/15 (identity request → admin approval syncs Student, User, Progress, Assignment; only admin can review) |
+| Cross-student write still blocked | **PASS** — 403 |
+| Full runtime suite regression | **PASS 34/34** (was 33/33; the 1 new check is the My Profile matrix) |
+| `student-directory-pagination.test.ts` | **PASS 16/16** |
+| `student-dashboard-500.repro.ts` | **PASS 5/5** — all scenarios RENDERS |
+
+**Deliberately NOT run:** `test:critical`, `test:export`, `arrear-api.test.ts`,
+`arrear-clearance.test.ts`. All four call `connectDB()`, which resolves `MONGODB_URI` from `.env` — i.e.
+the **production** database — and they write to it. They were skipped to avoid mutating live data; none
+of them covers the changed allow-list. `test:export` is also a known pre-existing failure (§4).
+
+Note on a pre-existing behaviour observed while testing: sending `lateralEntry: {}` does **not** fail
+validation — `updateStudent` falls back to the already-persisted lateral values before validating, so an
+empty object means "leave unchanged". That is pre-existing and unrelated to access control, so it was
+left alone and is not asserted.
 
 Verification for **ENTRY-002** (recorded 2026-09-30):
 
@@ -266,3 +335,4 @@ Render-specific environmental constraints to keep in mind:
 | 000 | — | PASS | UTF-8 mojibake / CSV charset fixes; both builds green. |
 | 001 | 2026-09-30 | PASS | Render boot crash on read-only FS — root cause found, fixed (`5888d25`), verified locally. Express 5 and Sapling ruled out with evidence. Awaiting redeploy confirmation. |
 | 002 | 2026-09-30 | PASS | Admin-only global "Delete All Documents" — atomic record purge + stored-file removal via the existing storage helper, partial failures reported, audit-logged, admin-gated UI. Build green; 401/403 verified. |
+| 003 | 2026-09-30 | PASS | Student "My Profile" - the Academic & Admission fields were missing from the student allow-list, so the single page-wide form always 403'd and *no* section could save. Allow-list corrected; Institutional Identity stays locked behind the existing Request Edit workflow. Runtime suite 34/34, directory 16/16, dashboard repro 5/5. |

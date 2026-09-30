@@ -1183,6 +1183,13 @@ export async function updateStudent(req: AuthRequest, res: Response) {
         'motherContact', 'mother_contact',
         'motherOccupation', 'mother_occupation',
         'year', 'section',
+        // Academic & Admission Details — directly editable by the student (no
+        // approval workflow). These are the same fields the "Academic & Admission
+        // Details" card on the My Profile page submits, so omitting them here
+        // would reject the student's entire profile save.
+        'admissionType', 'admission_type',
+        'lateralEntry', 'lateral_entry',
+        'scholarshipDetails', 'scholarship_details',
       ]);
       const rejected = Object.keys(req.body || {}).filter((k) => !allowedForStudent.has(k));
       if (rejected.length) {

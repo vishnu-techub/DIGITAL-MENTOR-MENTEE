@@ -366,6 +366,151 @@ async function main() {
       fix: 'updateStudentYearSection + allowlist + User.email sync' };
   });
 
+  // 5b. My Profile access-control matrix.
+  //
+  // The whole My Profile page is ONE form, so every "Save Profile Changes"
+  // submits the Academic & Admission fields (admissionType, scholarshipDetails,
+  // lateralEntry) together with the personal/family ones. Those three used to be
+  // missing from the student allow-list in `updateStudent`, which rejected the
+  // ENTIRE save with 403 and made Personal/Family Information uneditable too.
+  // This check pins both halves of the required rule: everything outside
+  // Institutional Identity saves directly, and Institutional Identity does not.
+  await check('My Profile: non-identity sections save directly, Institutional Identity does not', async () => {
+    const before: any = await Student.findById(stuA._id).lean();
+
+    // Exactly the payload StudentDashboard.handleSaveProfile() sends.
+    const admType = before?.school?.admissionType || 'COUNSELLING';
+    const keepLateral = before?.school?.lateralEntry || {};
+    const payload: any = {
+      mobileNumber: '9445566778',
+      email: 'bhavana.profile@ksrce.test',
+      dob: '2004-04-11',
+      bloodGroup: 'O+ve',
+      residentialType: 'HOSTELLER',
+      address: '12 Gandhi Street, Tiruchengode',
+      year: 2,
+      section: 'c',
+      admissionType: admType,
+      scholarshipDetails: 'Post-Matric',
+      fatherName: 'Bhavana Father',
+      fatherContact: '9000000001',
+      fatherOccupation: 'Farmer',
+      motherName: 'Bhavana Mother',
+      motherContact: '9000000002',
+      motherOccupation: 'Teacher',
+    };
+    if (admType === 'LATERAL_ENTRY') {
+      payload.lateralEntry = {
+        previousCollegeName: keepLateral.previousCollegeName || 'Government Polytechnic',
+        previousCourseDiploma: keepLateral.previousCourseDiploma || 'Diploma in Computer Engineering',
+        previousInstitution: keepLateral.previousInstitution || 'Govt / Autonomous Polytechnic',
+        previousQualificationDetails: keepLateral.previousQualificationDetails || '88.5%',
+        admissionYear: keepLateral.admissionYear || 2023,
+      };
+    }
+
+    const save = await http('PUT', `/api/students/${stuA._id}`, { token: tokens.student, body: payload });
+    assert(save.status === 200, `non-identity profile save expected 200 got ${save.status}: ${JSON.stringify(save.body)}`);
+
+    const after: any = await Student.findById(stuA._id).lean();
+    // Personal + Family Information (direct edit)
+    assert(after!.mobileNumber === '9445566778', `mobile not saved: ${after!.mobileNumber}`);
+    assert(after!.address === '12 Gandhi Street, Tiruchengode', `address not saved: ${after!.address}`);
+    assert(after!.bloodGroup === 'O+ve' && after!.residentialType === 'HOSTELLER', 'blood group / residential type not saved');
+    assert(after!.year === 2 && after!.section === 'C', `year/section = ${after!.year}/${after!.section}`);
+    assert(after!.parent?.fatherName === 'Bhavana Father', `fatherName not saved: ${after!.parent?.fatherName}`);
+    assert(after!.parent?.motherName === 'Bhavana Mother', `motherName not saved: ${after!.parent?.motherName}`);
+    // Academic & Admission Details (direct edit — the fields that used to 403)
+    assert(after!.school?.admissionType === admType, `admissionType not saved: ${after!.school?.admissionType}`);
+    assert(after!.school?.scholarshipDetails === 'Post-Matric', `scholarshipDetails not saved: ${after!.school?.scholarshipDetails}`);
+    if (admType === 'LATERAL_ENTRY') {
+      assert(after!.school?.lateralEntry?.previousCourseDiploma === payload.lateralEntry.previousCourseDiploma,
+        `lateralEntry not saved: ${after!.school?.lateralEntry?.previousCourseDiploma}`);
+    }
+
+    // Institutional Identity must still be refused for a student, and must not
+    // reach MongoDB even if the request also carries legal fields.
+    const identity = await http('PUT', `/api/students/${stuA._id}`, {
+      token: tokens.student,
+      body: {
+        fullName: 'Hacked Name',
+        registerNumber: 'HACKED01',
+        departmentId: String(before?.department || ''),
+        batchId: String(before?.batch || ''),
+        mobileNumber: '9009999999',
+      },
+    });
+    assert(identity.status === 403, `identity write expected 403 got ${identity.status}: ${JSON.stringify(identity.body)}`);
+
+    // Grades stay behind the academic request workflow.
+    const grades = await http('PUT', `/api/students/${stuA._id}`, {
+      token: tokens.student, body: { cgpa: 10, sgpa: 10 },
+    });
+    assert(grades.status === 403, `grade write expected 403 got ${grades.status}`);
+
+    // Another student's record stays unreachable.
+    const foreign = await http('PUT', `/api/students/${stuB?._id || stuA._id}`, {
+      token: tokens.student, body: { mobileNumber: '9009999999' },
+    });
+    if (stuB?._id && String(stuB._id) !== String(stuA._id)) {
+      assert(foreign.status === 403, `cross-student write expected 403 got ${foreign.status}`);
+    }
+
+    const final: any = await Student.findById(stuA._id).lean();
+    assert(final!.fullName === before!.fullName, `fullName mutated to ${final!.fullName}`);
+    assert(final!.registerNumber === before!.registerNumber, `registerNumber mutated to ${final!.registerNumber}`);
+    assert(String(final!.department) === String(before!.department), 'department mutated');
+    assert(String(final!.batch) === String(before!.batch), 'batch mutated');
+    assert(final!.mobileNumber === '9445566778', `rejected request leaked a write: ${final!.mobileNumber}`);
+
+    // The page reveals a conditional "Lateral Entry Details" block when the
+    // admission type is LATERAL_ENTRY, which submits a nested `lateralEntry`
+    // object. Exercise that path too, then restore the original admission type
+    // so the later checks still observe untouched fixture data.
+    const lateral = await http('PUT', `/api/students/${stuA._id}`, {
+      token: tokens.student,
+      body: {
+        mobileNumber: '9445566778',
+        email: 'bhavana.profile@ksrce.test',
+        year: 2,
+        section: 'C',
+        admissionType: 'LATERAL_ENTRY',
+        scholarshipDetails: 'Post-Matric',
+        lateralEntry: {
+          previousCollegeName: 'Government Polytechnic Tiruchengode',
+          previousCourseDiploma: 'Diploma in Computer Engineering',
+          previousInstitution: 'Govt / Autonomous Polytechnic',
+          previousQualificationDetails: '88.5%',
+          admissionYear: 2023,
+        },
+      },
+    });
+    assert(lateral.status === 200, `lateral-entry save expected 200 got ${lateral.status}: ${JSON.stringify(lateral.body)}`);
+    const latDoc: any = await Student.findById(stuA._id).lean();
+    assert(latDoc!.school?.admissionType === 'LATERAL_ENTRY', `admissionType not switched: ${latDoc!.school?.admissionType}`);
+    assert(latDoc!.school?.lateralEntry?.previousCollegeName === 'Government Polytechnic Tiruchengode',
+      `lateralEntry college not saved: ${latDoc!.school?.lateralEntry?.previousCollegeName}`);
+
+    // NB: an empty `lateralEntry: {}` is deliberately treated as "keep what is
+    // already stored" — the controller falls back to the persisted values before
+    // validating. That is pre-existing behaviour and unrelated to access control,
+    // so it is deliberately not asserted here.
+
+    // Restore the original admission type (test-hygiene only, not a behaviour claim).
+    await http('PUT', `/api/students/${stuA._id}`, {
+      token: tokens.student,
+      body: {
+        mobileNumber: '9445566778', email: 'bhavana.profile@ksrce.test', year: 2, section: 'C',
+        admissionType: admType, scholarshipDetails: 'Post-Matric',
+        lateralEntry: admType === 'LATERAL_ENTRY' ? payload.lateralEntry : undefined,
+      },
+    });
+
+    return { status: 'PASS',
+      evidence: `full My Profile payload -> 200 (Mongo admissionType=${after!.school?.admissionType}, scholarshipDetails="${after!.school?.scholarshipDetails}", year=${after!.year}/${after!.section}, father=${after!.parent?.fatherName}); LATERAL_ENTRY nested save -> 200 (college="${latDoc!.school?.lateralEntry?.previousCollegeName}"); fullName/registerNumber/department/batch write -> 403; cgpa/sgpa -> 403; Mongo fullName still "${final!.fullName}"`,
+      fix: 'student allow-list in student.controller.updateStudent now includes admissionType/lateralEntry/scholarshipDetails; identity + grades still rejected' };
+  });
+
   // 6. Academic edit request: create -> mine -> notify
   await check('Student raises one PENDING academic correction per semester', async () => {
     const r = await http('POST', '/api/students/academic-edit-request', {
