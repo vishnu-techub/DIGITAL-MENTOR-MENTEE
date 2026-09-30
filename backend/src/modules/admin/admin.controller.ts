@@ -1,5 +1,6 @@
 import { Response } from 'express';
 import bcrypt from 'bcryptjs';
+import fs from 'fs';
 import mongoose from 'mongoose';
 import {
   User,
@@ -20,6 +21,10 @@ import { sendSuccess, sendError } from '../../utils/response.js';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
 import { calculateArrearStatistics } from '../../utils/arrears.util.js';
+import { ROLES } from '../../config/constants.js';
+// Reuse the single existing uploads abstraction: this must never introduce a
+// second storage system or re-derive the uploads root.
+import { resolveStoredUploadPath } from '../../config/storage.js';
 
 // Dashboard Overview Statistics
 export async function getAdminDashboardStats(req: AuthRequest, res: Response) {
@@ -930,5 +935,129 @@ export async function removeAssignment(req: AuthRequest, res: Response) {
   } catch (err: any) {
     console.error('removeAssignment error:', err);
     return sendError(res, 'Failed to remove assignment.', 500);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Institutional Document Repository — global purge (ADMIN only)
+// ---------------------------------------------------------------------------
+
+/** Cap on how many failed file names are echoed back / written to the audit log. */
+const MAX_REPORTED_FILE_FAILURES = 50;
+
+/**
+ * Permanently delete EVERY Student Document record institution-wide together with
+ * its stored file on disk.
+ *
+ * Scope is deliberately narrow: only the `StudentDocument` collection and the
+ * files those records point at are touched. Students, Users, Faculty, academics,
+ * counselling, meetings and every other collection are left untouched.
+ *
+ * Partial-failure contract:
+ *  - the database delete is ONE atomic `deleteMany`, so records are never left
+ *    half-removed;
+ *  - file unlink failures cannot roll the database back, so they are collected
+ *    and reported explicitly instead of being swallowed or aborting the request.
+ * Reported numbers are therefore always truthful and never overstate what was
+ * actually removed.
+ */
+export async function deleteAllDocuments(req: AuthRequest, res: Response) {
+  // Defence in depth. The route already applies `authorize(ROLES.ADMIN)`; this
+  // re-check guarantees the handler cannot be reached by any other role even if
+  // it is ever re-mounted elsewhere. Authorisation is NEVER a frontend concern.
+  if (!req.user || req.user.role !== ROLES.ADMIN) {
+    return sendError(res, 'You are not authorized to perform this operation.', 403);
+  }
+
+  try {
+    // Snapshot file locations BEFORE the records disappear, so the on-disk
+    // cleanup still knows what to remove.
+    const docs = await StudentDocument.find({})
+      .select('_id fileName fileUrl')
+      .lean();
+
+    if (docs.length === 0) {
+      // Nothing to purge: a successful no-op, deliberately not audit-logged so
+      // the audit trail only ever records real destructive actions.
+      return sendSuccess(
+        res,
+        { documentsDeleted: 0, filesDeleted: 0, filesNotDeleted: 0, filesNotDeletedNames: [], filesAlreadyAbsent: 0 },
+        'No documents found.'
+      );
+    }
+
+    // One atomic database operation for the whole repository.
+    const { deletedCount } = await StudentDocument.deleteMany({});
+
+    let filesDeleted = 0;
+    let filesAlreadyAbsent = 0;
+    const filesNotDeletedNames: string[] = [];
+
+    for (const doc of docs) {
+      // Same traversal-safe resolver the upload / single-delete paths use.
+      const filePath = resolveStoredUploadPath(doc.fileUrl);
+      if (!filePath) {
+        // Not an `/uploads/...` location (legacy path or external URL): there is
+        // no local file for this record to remove.
+        filesAlreadyAbsent++;
+        continue;
+      }
+
+      try {
+        if (!fs.existsSync(filePath)) {
+          filesAlreadyAbsent++;
+          continue;
+        }
+        fs.unlinkSync(filePath);
+        filesDeleted++;
+      } catch (e: any) {
+        filesNotDeletedNames.push(String(doc.fileName || doc._id));
+        console.error('deleteAllDocuments: failed to unlink stored file:', filePath, e.message);
+      }
+    }
+
+    const filesNotDeleted = filesNotDeletedNames.length;
+
+    await logAudit({
+      userId: req.user.id,
+      action: 'DELETE_ALL_DOCUMENTS',
+      entity: 'DOCUMENT',
+      entityId: null,
+      // Counts and file NAMES only — never file contents or buffers.
+      details: {
+        documentsDeleted: deletedCount,
+        filesDeleted,
+        filesNotDeleted,
+        filesAlreadyAbsent,
+        failedFileNames: filesNotDeletedNames.slice(0, MAX_REPORTED_FILE_FAILURES),
+        failedFileNamesTruncated: filesNotDeleted > MAX_REPORTED_FILE_FAILURES,
+      },
+      req,
+    });
+
+    let message =
+      deletedCount === 0
+        ? 'No documents found.'
+        : `All documents deleted (${deletedCount} document record(s) and ${filesDeleted} stored file(s) removed).`;
+
+    if (filesNotDeleted > 0) {
+      message += ` ${filesNotDeleted} stored file(s) could not be removed from disk and must be cleared manually.`;
+    }
+
+    return sendSuccess(
+      res,
+      {
+        documentsDeleted: deletedCount,
+        filesDeleted,
+        filesNotDeleted,
+        filesNotDeletedNames: filesNotDeletedNames.slice(0, MAX_REPORTED_FILE_FAILURES),
+        filesNotDeletedNamesTruncated: filesNotDeleted > MAX_REPORTED_FILE_FAILURES,
+        filesAlreadyAbsent,
+      },
+      message
+    );
+  } catch (err: any) {
+    console.error('deleteAllDocuments error:', err);
+    return sendError(res, 'Failed to delete documents.', 500);
   }
 }

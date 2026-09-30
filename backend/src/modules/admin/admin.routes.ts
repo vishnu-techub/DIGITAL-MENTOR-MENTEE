@@ -15,6 +15,7 @@ import {
   getStudentsForAssignment,
   assignMenteesToMentor,
   removeAssignment,
+  deleteAllDocuments,
 } from './admin.controller.js';
 import { authenticate } from '../../middleware/auth.middleware.js';
 import { authorize } from '../../middleware/rbac.middleware.js';
@@ -51,6 +52,12 @@ router.patch('/mentor-assignments/:assignmentId/remove', authorize(ROLES.ADMIN),
 // Institutional Saturday Settings
 router.get('/settings', getSystemSettings);
 router.put('/settings', authorize(ROLES.ADMIN), updateSystemSettings);
+
+// Global purge of the Student Document repository.
+// `authenticate` is applied router-wide above; `authorize(ROLES.ADMIN)` is the
+// server-side guarantee that Student / Faculty / Mentor / HOD are rejected with
+// 403 regardless of what the frontend renders.
+router.delete('/documents/all', authorize(ROLES.ADMIN), deleteAllDocuments);
 
 // Mentee Institutional Identity Edit Requests (Admin review)
 import {

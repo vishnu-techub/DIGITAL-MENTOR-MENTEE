@@ -161,6 +161,9 @@ export const api = {
       }),
     removeAssignment: (assignmentId: string) =>
       request(`/admin/mentor-assignments/${assignmentId}/remove`, { method: 'PATCH' }),
+    // Global purge of the Student Document repository. Admin-only; the backend
+    // rejects every other role with 403 independently of the UI.
+    deleteAllDocuments: () => request('/admin/documents/all', { method: 'DELETE' }),
     getEditRequests: (status?: string) => {
       const q = status ? `?status=${status}` : '';
       return request(`/admin/identity-edit-requests${q}`);

@@ -85,6 +85,48 @@ Related: `PROJECT_PROGRESS.md` (overall project status / deployment state).
   `[storage] ... is not writable ... using <temp> instead`, and only fails later on the Mongo
   connection — behaving like any unhealthy service instead of dying at import.
 
+### ENTRY-002 — Admin-only global "Delete All Documents"
+- **Date/time:** 2026-09-30.
+- **Severity:** Feature request (destructive admin capability was missing entirely).
+- **Symptom:** an Admin could bulk-delete one student's documents, but there was no way to clear the
+  whole `StudentDocument` repository. Only `DELETE /api/documents/student/:studentId/all` existed, and
+  that per-student path deliberately **retains** the system-generated primary
+  `student_details_form`, so it can never purge everything.
+- **Fix:**
+  - `backend/src/modules/admin/admin.controller.ts` — new `deleteAllDocuments` handler:
+    - Snapshots `_id/fileName/fileUrl` **before** deleting, so on-disk cleanup still knows the targets.
+    - Deletes records with a **single atomic `StudentDocument.deleteMany({})`** — records are never
+      left half-removed.
+    - Removes each stored file through the **existing** `resolveStoredUploadPath` helper
+      (`backend/src/config/storage.ts`). No second storage system and no re-derived uploads root, so
+      the read-only/`/tmp` fallback from ENTRY-001 stays consistent. Its path-traversal containment
+      also applies to the purge.
+    - Partial failures are **collected, never swallowed**: a failed `unlink` is recorded and reported
+      instead of aborting the request, and reported counts never overstate what was removed.
+    - Returns `documentsDeleted`, `filesDeleted`, `filesNotDeleted` (+ capped `filesNotDeletedNames`,
+      `filesAlreadyAbsent`) and appends a manual-cleanup warning to the message when files remain.
+    - Zero documents -> HTTP 200 `"No documents found."`
+    - `logAudit` action `DELETE_ALL_DOCUMENTS` records counts and **file names only — never file
+      contents or buffers**. The no-op zero-document case is deliberately not audit-logged so the trail
+      only records real destructive actions.
+    - Defence in depth: the handler re-checks `req.user.role !== ROLES.ADMIN` and returns 403 even if
+    it were ever re-mounted elsewhere. Authorisation is never a frontend concern.
+  - `backend/src/modules/admin/admin.routes.ts` — `router.delete('/documents/all', authorize(ROLES.ADMIN), deleteAllDocuments)`
+    (`authenticate` is already applied router-wide).
+  - `frontend/src/api/client.ts` — `api.admin.deleteAllDocuments()`.
+  - `frontend/src/pages/admin/AdminDashboard.tsx` — "Delete All Documents" button in the Documents tab
+    header, gated on `isAdmin`; confirmation modal titled **"Delete ALL Documents?"** carrying the
+    explicit **"This action cannot be undone."** warning; `deletingAllDocs` disabled state plus a
+    `useRef` in-flight latch (`disabled` alone cannot stop two clicks landing before React re-renders);
+    UI state updates and `loadData()` refresh only **after** the backend reports success.
+- **Scope guarantee:** only `StudentDocument` records and their own files are touched. Students,
+  Users, Faculty, academics, counselling, meetings and every other collection are untouched.
+- **Files changed:** `backend/src/modules/admin/admin.controller.ts`,
+  `backend/src/modules/admin/admin.routes.ts`, `frontend/src/api/client.ts`,
+  `frontend/src/pages/admin/AdminDashboard.tsx`.
+- **Unrelated paths left alone:** `document.controller.ts` and `document.routes.ts` are **unmodified**,
+  so normal single-document deletion and the per-student bulk delete behave exactly as before.
+
 ### ENTRY-000 (earlier session) — UTF-8 mojibake / encoding remediation
 - Removed corrupted characters from `MentorStudentProfileView.tsx` (`â€¢`, `â€”`, `â†’`, etc.).
 - Fixed duplicate `"+ +"` button text; corrected CSV `Content-Type` charset.
@@ -93,6 +135,26 @@ Related: `PROJECT_PROGRESS.md` (overall project status / deployment state).
 ---
 
 ## 3. Verification Results
+
+Verification for **ENTRY-002** (recorded 2026-09-30):
+
+| Check | Result |
+|---|---|
+| Root build (`npm run build`: backend `tsc` + frontend `tsc` + `vite build`) | **PASS** — 1643 modules, no type errors |
+| Endpoint rejects missing token | **PASS** — 401 "Authentication token missing or invalid." |
+| Endpoint rejects malformed token | **PASS** — 401 |
+| Endpoint rejects STUDENT / FACULTY / MENTOR / HOD | **PASS 4/4** — 403 "You are not authorized to perform this operation." |
+| Route resolves to the real handler (not a 404 fallback) | **PASS** — the 403s above prove the route matched |
+| No read path exposed for the purge URL | **PASS** — `GET` returns 404 |
+| Normal single-document + per-student bulk delete unchanged | **PASS** — `document.controller.ts` / `document.routes.ts` not in the diff |
+| `btn-danger` / `Modal` / `useAuth` contracts match usage | **PASS** — verified against source |
+
+How the auth/role checks were run: the real `admin.routes.js` module was mounted in a throwaway
+in-process Express app and probed with a **test-only** `JWT_SECRET`; the script lived outside the
+repo (`%TEMP%`) and was deleted afterwards. **No `ADMIN` token was ever sent**, and
+`authenticate`/`authorize` both reject before the handler body, so the run performed **zero database
+writes and zero file deletions**. The destructive path itself was therefore not executed against real
+data.
 
 Verification for **ENTRY-001** (recorded 2026-09-30):
 
@@ -203,3 +265,4 @@ Render-specific environmental constraints to keep in mind:
 |---|------|--------|---------|
 | 000 | — | PASS | UTF-8 mojibake / CSV charset fixes; both builds green. |
 | 001 | 2026-09-30 | PASS | Render boot crash on read-only FS — root cause found, fixed (`5888d25`), verified locally. Express 5 and Sapling ruled out with evidence. Awaiting redeploy confirmation. |
+| 002 | 2026-09-30 | PASS | Admin-only global "Delete All Documents" — atomic record purge + stored-file removal via the existing storage helper, partial failures reported, audit-logged, admin-gated UI. Build green; 401/403 verified. |

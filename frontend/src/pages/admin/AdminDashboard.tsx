@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { api, ApiError, STUDENT_PAGE_SIZES } from '../../api/client';
 import { useToast } from '../../context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
 import { Modal } from '../../components/common/Modal';
 import { EmptyState } from '../../components/common/EmptyState';
 import { Skeleton } from '../../components/common/Skeleton';
@@ -49,6 +50,7 @@ import {
   Sparkles,
   ChevronLeft,
   ChevronRight,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -58,6 +60,10 @@ interface AdminDashboardProps {
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSelectTab }) => {
   const toast = useToast();
+  const { user } = useAuth();
+  // Server-side authorisation is the real gate (the endpoint returns 403 for any
+  // non-admin). This flag only keeps the control out of the UI for other roles.
+  const isAdmin = user?.role === 'ADMIN';
   const [stats, setStats] = useState<any>(null);
   const [students, setStudents] = useState<any[]>([]);
   const [faculty, setFaculty] = useState<any[]>([]);
@@ -365,6 +371,46 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
   useEffect(() => {
     loadData();
   }, []);
+
+  // ── Global "Delete All Documents" (Admin only) ────────────────────────────
+  const [showDeleteAllDocsModal, setShowDeleteAllDocsModal] = useState(false);
+  const [deletingAllDocs, setDeletingAllDocs] = useState(false);
+  // Synchronous in-flight latch: `disabled` alone cannot stop a double-click,
+  // because two clicks can both land before React re-renders with the new state.
+  const deleteAllDocsInFlight = useRef(false);
+
+  const handleDeleteAllDocuments = async () => {
+    if (!isAdmin) return;
+    if (deleteAllDocsInFlight.current) return;
+    deleteAllDocsInFlight.current = true;
+    setDeletingAllDocs(true);
+
+    try {
+      const res = await api.admin.deleteAllDocuments();
+      if (res.success) {
+        // Only update the UI after the backend operation has actually succeeded.
+        setShowDeleteAllDocsModal(false);
+
+        const d = res.data || {};
+        const summary: string[] = [`${d.documentsDeleted ?? 0} document record(s)`];
+        summary.push(`${d.filesDeleted ?? 0} file(s) removed`);
+        if (d.filesNotDeleted) {
+          summary.push(`${d.filesNotDeleted} file(s) could not be removed`);
+        }
+
+        toast.success(res.message || `All documents deleted: ${summary.join(', ')}.`);
+        // Refresh the document list and the Uploaded Documents count.
+        await loadData();
+      } else {
+        toast.error(res.message || 'Failed to delete all documents.');
+      }
+    } catch (err: any) {
+      toast.error('Failed to delete all documents: ' + (err?.message || 'Unknown error.'));
+    } finally {
+      deleteAllDocsInFlight.current = false;
+      setDeletingAllDocs(false);
+    }
+  };
 
   // Handle Add Student (Admin creates basic identity only)
   const handleAddStudent = async (e: React.FormEvent) => {
@@ -1907,10 +1953,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Student Documents Tab */}
       {currentTab === 'documents' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', gap: '1rem', flexWrap: 'wrap' }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
               Institutional Student Documents & Verification Desk
             </h2>
+
+            {isAdmin && (
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={deletingAllDocs}
+                onClick={() => setShowDeleteAllDocsModal(true)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontWeight: 700,
+                  padding: '0.55rem 1.15rem',
+                  borderRadius: '8px',
+                }}
+              >
+                <Trash2 size={16} />
+                {deletingAllDocs ? 'Deleting All Documents...' : 'Delete All Documents'}
+              </button>
+            )}
           </div>
 
           <div className="card" style={{ padding: '1rem', marginBottom: '1.25rem' }}>
@@ -1980,6 +2046,57 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
               </table>
             </div>
           </div>
+
+          {/* Global purge confirmation — explicit, admin-only, cannot be undone */}
+          <Modal
+            isOpen={showDeleteAllDocsModal}
+            onClose={() => {
+              if (deletingAllDocs) return;
+              setShowDeleteAllDocsModal(false);
+            }}
+            title="Delete ALL Documents?"
+            footer={
+              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={deletingAllDocs}
+                  onClick={() => setShowDeleteAllDocsModal(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  disabled={deletingAllDocs}
+                  onClick={handleDeleteAllDocuments}
+                  style={{ fontWeight: 700 }}
+                >
+                  {deletingAllDocs ? 'Deleting...' : 'Yes, Delete ALL Documents'}
+                </button>
+              </div>
+            }
+          >
+            <div
+              style={{
+                display: 'flex',
+                gap: '0.85rem',
+                alignItems: 'flex-start',
+                background: '#FEF2F2',
+                border: '1px solid #FECACA',
+                borderRadius: '8px',
+                padding: '1rem',
+              }}
+            >
+              <AlertTriangle size={22} color="#DC2626" style={{ flexShrink: 0, marginTop: 2 }} />
+              <div style={{ fontSize: '0.9rem', color: '#7F1D1D', lineHeight: 1.5 }}>
+                <strong style={{ display: 'block', marginBottom: '0.35rem' }}>This action cannot be undone.</strong>
+                This will permanently delete <strong>every student document record</strong> in the system
+                together with the corresponding files stored on the server. Students, staff and all other
+                records are not affected, but no deleted document can be recovered or re-verified.
+              </div>
+            </div>
+          </Modal>
         </div>
       )}
 
