@@ -360,6 +360,23 @@ export const api = {
       }),
     getByStudent: (studentId: string) =>
       request<any[]>(`/documents/student/${studentId}`),
+    // Edit / re-submit a certificate. The backend resets a student edit to
+    // Pending and refuses any edit of a mentor-confirmed (Verified) one.
+    update: (
+      documentId: string,
+      data: {
+        title?: string;
+        category?: string;
+        eventName?: string;
+        organizer?: string;
+        eventDate?: string;
+        description?: string;
+      }
+    ) =>
+      request(`/documents/${documentId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
     delete: (documentId: string) =>
       request(`/documents/${documentId}`, { method: 'DELETE' }),
     deleteAll: (studentId: string) =>
@@ -562,10 +579,10 @@ export const api = {
       }),
     getMenteeProgress: (studentId: string) =>
       request<{ records: any[]; summary: any }>(`/mentor/mentees/${studentId}/progress`),
-    verifyMenteeProgress: (studentId: string, id: string, status: string, rejectionReason?: string) =>
+    verifyMenteeProgress: (studentId: string, id: string, status: string, rejectionReason?: string, source?: 'DOCUMENT' | 'PROGRESS') =>
       request<any>(`/mentor/mentees/${studentId}/progress/${id}/verify`, {
         method: 'PUT',
-        body: JSON.stringify({ status, rejectionReason }),
+        body: JSON.stringify({ status, rejectionReason, source }),
       }),
   },
 };

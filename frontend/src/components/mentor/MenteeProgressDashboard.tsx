@@ -111,7 +111,8 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
         studentId,
         verifyTarget._id || verifyTarget.id,
         verifyStatus,
-        verifyStatus === 'Rejected' ? rejectionReason : undefined
+        verifyStatus === 'Rejected' ? rejectionReason : undefined,
+        verifyTarget.source
       );
 
       if (res.success) {
@@ -286,10 +287,12 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
         >
           <div>
             <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
-              Student Progress Records & Certificate Verifications
+              Student Progress & Certificate Verifications
             </h3>
             <p style={{ fontSize: '0.8rem', color: '#64748B', margin: '2px 0 0 0' }}>
-              All submitted achievements auto-sync into MongoDB and populate the Overall Excel Export.
+              Every certificate uploaded under Student Documents and every achievement submitted under Student
+              Progress is listed here as one review queue. Nothing is copied or duplicated: a certificate that exists
+              in both places is shown once.
             </p>
           </div>
 
@@ -386,13 +389,19 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '1.25rem' }}>
           {filteredRecords.map((r) => {
-            const isVerified = r.status === 'Verified';
-            const isRejected = r.status === 'Rejected';
-            const isPending = !isVerified && !isRejected;
+                    const isVerified = r.status === 'Verified';
+                    const isRejected = r.status === 'Rejected';
+                    const isPending = !isVerified && !isRejected;
+                    // A mentor-confirmed record is permanently locked. The
+                    // backend rejects any attempt to reopen it with HTTP 409, so
+                    // the buttons are removed here to match that behaviour
+                    // rather than offering a control that would only fail.
+                    const isLocked = isVerified;
+                    const key = `${r.source || 'RECORD'}-${r._id || r.id}`;
 
-            return (
-              <div
-                key={r._id || r.id}
+                    return (
+                      <div
+                        key={key}
                 className="card"
                 style={{
                   padding: '1.35rem',
@@ -433,8 +442,13 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                         borderRadius: '6px',
                         border: '1px solid #BFDBFE',
                       }}
+                      title={
+                        r.source === 'DOCUMENT'
+                          ? 'Uploaded through Student Documents'
+                          : 'Submitted through Student Progress'
+                      }
                     >
-                      {r.category}
+                      {r.rawCategory && r.rawCategory !== r.category ? `${r.category} · ${r.rawCategory}` : r.category}
                     </span>
 
                     <span
@@ -562,23 +576,41 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                     gap: '0.5rem',
                   }}
                 >
-                  {/* Certificate Link */}
+                  {/* Certificate Link. When the database record exists but the
+                      bytes are gone (uploads live on ephemeral local disk) the
+                      link is replaced by an honest explanation instead of a
+                      dead link that looks like a broken application. */}
                   {r.certificateUrl ? (
-                    <a
-                      href={getFullFileUrl(r.certificateUrl)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn btn-secondary btn-sm"
-                      style={{
-                        fontSize: '0.78rem',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '0.35rem',
-                        color: '#2563EB',
-                      }}
-                    >
-                      <Eye size={13} /> View Certificate <ExternalLink size={11} />
-                    </a>
+                    r.fileAvailable === false ? (
+                      <span
+                        style={{
+                          fontSize: '0.75rem',
+                          color: '#B45309',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.35rem',
+                        }}
+                        title={`Registered as ${r.certificateUrl}, but no file is present on the server.`}
+                      >
+                        <AlertTriangle size={13} /> File missing on server
+                      </span>
+                    ) : (
+                      <a
+                        href={getFullFileUrl(r.certificateUrl)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn btn-secondary btn-sm"
+                        style={{
+                          fontSize: '0.78rem',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.35rem',
+                          color: '#2563EB',
+                        }}
+                      >
+                        <Eye size={13} /> View Certificate <ExternalLink size={11} />
+                      </a>
+                    )
                   ) : (
                     <span style={{ fontSize: '0.75rem', color: '#94A3B8', fontStyle: 'italic' }}>
                       No certificate file attached
@@ -587,45 +619,63 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
 
                   {/* Verification Buttons */}
                   <div style={{ display: 'flex', gap: '0.4rem' }}>
-                    <button
-                      type="button"
-                      onClick={() => handleOpenVerifyModal(r, 'Verified')}
-                      className="btn btn-sm"
-                      style={{
-                        fontSize: '0.76rem',
-                        padding: '0.35rem 0.7rem',
-                        backgroundColor: isVerified ? '#DCFCE7' : '#F0FDF4',
-                        color: '#166534',
-                        borderColor: '#BBF7D0',
-                        fontWeight: 700,
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '3px',
-                      }}
-                      title="Verify Achievement"
-                    >
-                      <CheckCircle2 size={13} /> {isVerified ? 'Verified ✓' : 'Verify'}
-                    </button>
+                    {isLocked ? (
+                      <span
+                        className="badge badge-success"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          fontSize: '0.74rem',
+                          padding: '4px 9px',
+                        }}
+                        title="Confirmed by your mentor. This record is permanently locked and can no longer be edited, deleted or re-submitted."
+                      >
+                        <FileCheck size={12} /> Confirmed & Locked
+                      </span>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenVerifyModal(r, 'Verified')}
+                          className="btn btn-sm"
+                          style={{
+                            fontSize: '0.76rem',
+                            padding: '0.35rem 0.7rem',
+                            backgroundColor: '#F0FDF4',
+                            color: '#166534',
+                            borderColor: '#BBF7D0',
+                            fontWeight: 700,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '3px',
+                          }}
+                          title="Verify Achievement"
+                        >
+                          <CheckCircle2 size={13} /> Verify
+                        </button>
 
-                    <button
-                      type="button"
-                      onClick={() => handleOpenVerifyModal(r, 'Rejected')}
-                      className="btn btn-sm"
-                      style={{
-                        fontSize: '0.76rem',
-                        padding: '0.35rem 0.7rem',
-                        backgroundColor: isRejected ? '#FEE2E2' : '#FFF1F2',
-                        color: '#991B1B',
-                        borderColor: '#FECDD3',
-                        fontWeight: 700,
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '3px',
-                      }}
-                      title="Reject with Reason"
-                    >
-                      <XCircle size={13} /> {isRejected ? 'Rejected ✕' : 'Reject'}
-                    </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenVerifyModal(r, 'Rejected')}
+                          className="btn btn-sm"
+                          style={{
+                            fontSize: '0.76rem',
+                            padding: '0.35rem 0.7rem',
+                            backgroundColor: isRejected ? '#FEE2E2' : '#FFF1F2',
+                            color: '#991B1B',
+                            borderColor: '#FECDD3',
+                            fontWeight: 700,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '3px',
+                          }}
+                          title="Reject with Reason"
+                        >
+                          <XCircle size={13} /> {isRejected ? 'Rejected ✕' : 'Reject'}
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

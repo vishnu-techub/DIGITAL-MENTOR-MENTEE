@@ -17,7 +17,7 @@ import {
   formatMeetingDate,
   parseMeetingDate,
 } from '../../utils/meetingDate.util.js';
-import { checkStudentAccess, isActiveMentorOf, toIdString } from '../../utils/access.util.js';
+import { checkStudentAccess, isActiveMentorOf, resolveFacultyIdForUser } from '../../utils/access.util.js';
 
 /** Latest meeting record for a student (the one notifications are built from). */
 async function latestMeetingFor(studentId: any) {
@@ -235,11 +235,24 @@ export async function createMeetingRecord(req: AuthRequest, res: Response) {
     return sendError(res, 'Student ID and Saturday meeting date are required.', 400);
   }
 
+  if (!Object.values(ATTENDANCE_STATUS).includes(attendanceStatus)) {
+    return sendError(
+      res,
+      `Attendance must be one of: ${Object.values(ATTENDANCE_STATUS).join(', ')}.`,
+      400
+    );
+  }
+
+  if (!Object.values(MEETING_STATUS).includes(meetingStatus)) {
+    return sendError(res, `Meeting status must be one of: ${Object.values(MEETING_STATUS).join(', ')}.`, 400);
+  }
+
   // The meeting date must be a real, parseable calendar date.
   const parsedDate = parseMeetingDate(meetingDate);
   if (!parsedDate) {
-    return sendError(res, 'A valid meeting date (YYYY-MM-DD) is required.', 400);
+    return sendError(res, 'A valid meeting date (YYYY-MM-DD or DD-MM-YYYY) is required.', 400);
   }
+  const normalizedDate = `${parsedDate.getFullYear()}-${String(parsedDate.getMonth() + 1).padStart(2, '0')}-${String(parsedDate.getDate()).padStart(2, '0')}`;
 
   try {
     const student = mongoose.Types.ObjectId.isValid(studentId)
@@ -261,8 +274,9 @@ export async function createMeetingRecord(req: AuthRequest, res: Response) {
           403
         );
       }
-      const faculty = mongoose.Types.ObjectId.isValid(req.user.facultyId || '')
-        ? await Faculty.findById(req.user.facultyId)
+      const facId = await resolveFacultyIdForUser(req.user);
+      const faculty = facId
+        ? await Faculty.findById(facId)
         : await Faculty.findOne({ employeeId: req.user.facultyId });
       if (!faculty) {
         return sendError(res, 'Faculty record not found for your account.', 404);
@@ -289,36 +303,70 @@ export async function createMeetingRecord(req: AuthRequest, res: Response) {
       key: { $in: ['saturday_meeting_time', 'saturday_meeting_location'] },
     });
     const settingsMap = Object.fromEntries(settings.map((s) => [s.key, s.value]));
-    const finalTime = meetingTime || settingsMap['saturday_meeting_time'] || '10:30 AM';
-    const finalLocation = location || settingsMap['saturday_meeting_location'] || 'Faculty Cabin';
+    const finalTime = (meetingTime || '').trim() || settingsMap['saturday_meeting_time'] || '10:30 AM';
+    const finalLocation = (location || '').trim() || settingsMap['saturday_meeting_location'] || 'Faculty Cabin';
+
+    // The mentor Saturday-meeting form collects "Challenges & Topics Discussed"
+    // and "Mentor Remarks & Action Agreed Upon" - it has no separate
+    // "Corrective Action" input, so the agreed action IS the mentor remarks.
+    // Nothing is invented here: the stored value is always text the mentor
+    // actually submitted.
+    const finalChallenges = (challengesDiscussed || '').trim();
+    const finalRemarks = (mentorRemarks || '').trim();
+    const finalCorrective = (correctiveAction || '').trim() || finalRemarks;
+
+    // A meeting record with no narrative at all carries no institutional value,
+    // so it is rejected with a message the mentor can act on instead of being
+    // persisted as an empty row.
+    if (!finalChallenges && !finalRemarks) {
+      return sendError(
+        res,
+        'Please record what was discussed in the meeting. Enter the challenges and topics discussed, or your mentor remarks.',
+        400
+      );
+    }
 
     const meeting = await Meeting.create({
       student: student._id,
       mentor: mentorDoc._id,
-      meetingDate,
+      meetingDate: normalizedDate,
       meetingTime: finalTime,
       location: finalLocation,
       attendanceStatus,
       meetingStatus,
-      challengesDiscussed: challengesDiscussed || '',
-      studentFeedback: studentFeedback || '',
-      counsellingProvided: counsellingProvided || '',
-      correctiveAction: correctiveAction || '',
+      challengesDiscussed: finalChallenges,
+      studentFeedback: (studentFeedback || '').trim(),
+      counsellingProvided: (counsellingProvided || '').trim(),
+      correctiveAction: finalCorrective,
       followUpRequired: Boolean(followUpRequired),
       followUpDate: followUpDate || null,
-      mentorRemarks: mentorRemarks || '',
+      mentorRemarks: finalRemarks,
     });
 
     // Notify using the label derived from the stored date.
-    const label = describeMeetingDate(meetingDate);
-    await Notification.create({
-      user: student.user,
-      title: 'Meeting Record Updated',
-      message: `${label.title}: your mentor has updated the record for the meeting on ${formatMeetingDate(meetingDate)}.`,
-      type: 'MEETING_PENDING',
-      relatedEntity: 'MEETING',
-      relatedEntityId: meeting._id.toString(),
-    });
+    // The meeting is already persisted at this point, so a notification problem
+    // must never be reported to the mentor as a failed meeting save. It is
+    // logged and reported honestly in the response instead.
+    let notificationSent = false;
+    const label = describeMeetingDate(normalizedDate);
+    try {
+      if (student.user) {
+        await Notification.create({
+          user: student.user,
+          title: 'Meeting Record Updated',
+          message: `${label.title}: your mentor has updated the record for the meeting on ${formatMeetingDate(normalizedDate)}.`,
+          type: 'MEETING_PENDING',
+          relatedEntity: 'MEETING',
+          relatedEntityId: meeting._id.toString(),
+        });
+        notificationSent = true;
+      }
+    } catch (notifyErr: any) {
+      console.error(
+        'createMeetingRecord: meeting saved but the student notification could not be created:',
+        notifyErr?.message
+      );
+    }
 
     await logAudit({
       userId: req.user!.id,
@@ -328,7 +376,8 @@ export async function createMeetingRecord(req: AuthRequest, res: Response) {
       details: {
         studentId: student._id.toString(),
         registerNumber: student.registerNumber,
-        meetingDate,
+        meetingDate: normalizedDate,
+        submittedDateFormat: meetingDate,
         attendanceStatus,
         meetingStatus,
       },
@@ -340,14 +389,28 @@ export async function createMeetingRecord(req: AuthRequest, res: Response) {
       {
         meetingId: meeting._id.toString(),
         studentId: student._id.toString(),
-        meetingDate,
+        meetingDate: normalizedDate,
         meeting_title: label.title,
+        notificationSent,
       },
       'Meeting record saved successfully.',
       201
     );
   } catch (err: any) {
     console.error('createMeetingRecord error:', err);
+    // A schema violation is the caller's input problem, not a server fault.
+    // Reporting it as 500 is what produced the unhelpful "Something went wrong
+    // on our side" message on the mentor's screen.
+    if (err?.name === 'ValidationError') {
+      const details = Object.values(err.errors || {})
+        .map((e: any) => e?.message)
+        .filter(Boolean)
+        .join(' ');
+      return sendError(res, details || 'The meeting record could not be validated.', 400);
+    }
+    if (err?.code === 11000) {
+      return sendError(res, 'A duplicate meeting record already exists for this student and date.', 409);
+    }
     return sendError(res, 'Failed to save meeting record.', 500);
   }
 }

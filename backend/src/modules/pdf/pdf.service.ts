@@ -16,7 +16,7 @@ import {
 import { calculateArrearStatistics } from '../../utils/arrears.util.js';
 // Reuse the single existing uploads abstraction (traversal-safe). Documents are
 // read through it, never through a second, parallel storage resolution.
-import { resolveStoredUploadPath } from '../../config/storage.js';
+import { resolveStoredUploadPath, UPLOADS_BASE } from '../../config/storage.js';
 
 let logoBase64: string | null = null;
 try {
@@ -503,34 +503,37 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
   }
 
   // SECTION 4: MENTOR ASSIGNMENT & REASSIGNMENT HISTORY (Immutable Lineage)
+  //
+  // The "Tenure Duration" column was removed from this table. `assignedFrom` /
+  // `assignedUntil` remain on the MentorAssignment model (other modules still
+  // use them, and the data must not be deleted) - they are simply no longer
+  // printed as a derived "duration" column here.
   const mentorHistoryRows = mentorHistory.length > 0
     ? mentorHistory.map((h: any, idx: number) => [
         `#${idx + 1}`,
         h.mentor_name,
         h.designation || 'Faculty Mentor',
-        `${h.assigned_from} to ${h.assigned_until || 'Present'}`,
         h.status,
         h.change_reason || 'Initial Assignment',
       ])
-    : [['1', currentMentor?.mentor_name || 'Assigned Mentor', currentMentor?.designation || '', currentMentor?.assigned_from || '2024-06-01 to Present', 'ACTIVE', 'Initial Allocation']];
+    : [['1', currentMentor?.mentor_name || 'Assigned Mentor', currentMentor?.designation || '', 'ACTIVE', 'Initial Allocation']];
 
   autoTable(doc, {
     startY: currentY,
     margin: { left: margin, right: margin },
     theme: 'grid',
     head: [
-      [{ content: '4. MENTOR ASSIGNMENT & HISTORICAL REASSIGNMENT LINEAGE', colSpan: 6, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }],
-      ['#', 'Mentor Name', 'Designation', 'Tenure Duration', 'Status', 'Reason for Change / Allocation'],
+      [{ content: '4. MENTOR ASSIGNMENT & HISTORICAL REASSIGNMENT LINEAGE', colSpan: 5, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }],
+      ['#', 'Mentor Name', 'Designation', 'Status', 'Reason for Change / Allocation'],
     ],
     body: mentorHistoryRows,
     headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold' },
     styles: { fontSize: 8, cellPadding: 2 },
     columnStyles: {
       0: { cellWidth: 10, halign: 'center' },
-      1: { fontStyle: 'bold', cellWidth: 40 },
-      2: { cellWidth: 32 },
-      3: { cellWidth: 38 },
-      4: { cellWidth: 22, halign: 'center' },
+      1: { fontStyle: 'bold', cellWidth: 46 },
+      2: { cellWidth: 38 },
+      3: { cellWidth: 26, halign: 'center' },
     },
   });
 
@@ -718,14 +721,31 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
 
   const annexurePdfs: Array<{ meta: any; doc: PDFDocument; pages: number }> = [];
   let imageCount = 0;
-  const notEmbedded: string[] = [];
+  const notEmbedded: Array<{ name: string; reason: string }> = [];
+  const missingFileReasons = new Map<string, number>();
 
   for (const d of studentDocuments) {
     if (d.is_system_form) continue; // never self-embed this dossier
 
+    // Resolve through the single existing uploads helper. A `null` result and a
+    // missing file are DIFFERENT faults and are reported as such: `null` means
+    // the stored URL is not inside the uploads root (unreadable/invalid record),
+    // while a resolved-but-absent path means the bytes are genuinely not on this
+    // host. Collapsing both into "file not on disk" hid the real cause.
     const absPath = resolveStoredUploadPath(d.file_url);
-    if (!absPath || !fs.existsSync(absPath)) {
-      notEmbedded.push(`${d.file_name} (file not on disk)`);
+    if (!absPath) {
+      notEmbedded.push({
+        name: d.file_name,
+        reason: `Stored path "${d.file_url}" is not inside the uploads directory. This record needs administrator repair; the file itself was never located.`,
+      });
+      continue;
+    }
+    if (!fs.existsSync(absPath)) {
+      notEmbedded.push({
+        name: d.file_name,
+        reason: 'The upload is registered in the database but no file exists on this server. Uploads are stored on local disk that does not survive a redeploy, so the record survived and the file did not.',
+      });
+      missingFileReasons.set(d.file_url, (missingFileReasons.get(d.file_url) || 0) + 1);
       continue;
     }
 
@@ -733,7 +753,10 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
 
     if (mime === 'application/pdf') {
       if (annexurePdfs.length >= EMBED_LIMITS.pdfFiles) {
-        notEmbedded.push(`${d.file_name} (annexure limit reached)`);
+        notEmbedded.push({
+          name: d.file_name,
+          reason: `Record book annexure limit of ${EMBED_LIMITS.pdfFiles} PDF files reached, so this document was not reproduced. It is still listed in Section 8 and remains available in Student Documents.`,
+        });
         continue;
       }
       try {
@@ -741,7 +764,10 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
         const src = await PDFDocument.load(fs.readFileSync(absPath), { ignoreEncryption: true });
         annexurePdfs.push({ meta: d, doc: src, pages: src.getPageCount() });
       } catch (e: any) {
-        notEmbedded.push(`${d.file_name} (unreadable PDF)`);
+        notEmbedded.push({
+          name: d.file_name,
+          reason: 'The file is present on disk but is not a readable PDF (it is damaged or password-protected), so it could not be reproduced.',
+        });
         console.error('generateStudentPdf: could not read document', absPath, e?.message);
       }
       continue;
@@ -749,11 +775,17 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
 
     const fmt = IMAGE_FORMATS[mime];
     if (!fmt) {
-      notEmbedded.push(`${d.file_name} (unsupported type ${d.file_type || 'unknown'})`);
+      notEmbedded.push({
+        name: d.file_name,
+        reason: `Unsupported file type "${d.file_type || 'unknown'}". Only PDF, JPEG and PNG can be reproduced as annexures.`,
+      });
       continue;
     }
     if (imageCount >= EMBED_LIMITS.images) {
-      notEmbedded.push(`${d.file_name} (image limit reached)`);
+      notEmbedded.push({
+        name: d.file_name,
+        reason: `Record book annexure limit of ${EMBED_LIMITS.images} images reached, so this image was not reproduced. It is still listed in Section 8 and remains available in Student Documents.`,
+      });
       continue;
     }
 
@@ -791,7 +823,10 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
       doc.addImage(dataUrl, fmt, margin + (maxW - drawW) / 2, 50, drawW, drawH);
       imageCount++;
     } catch (e: any) {
-      notEmbedded.push(`${d.file_name} (image could not be rendered)`);
+      notEmbedded.push({
+        name: d.file_name,
+        reason: 'The image file is present on disk but could not be decoded, so it could not be reproduced.',
+      });
       console.error('generateStudentPdf: could not embed image', absPath, e?.message);
     }
   }
@@ -802,6 +837,16 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
     doc.addPage();
     renderHeader(false);
     currentY = 38;
+  }
+
+  // Log the real cause of every missing file so the storage fault is diagnosable
+  // from the server log rather than guessed at from the generated PDF.
+  if (missingFileReasons.size > 0) {
+    console.error(
+      `generateStudentPdf: ${missingFileReasons.size} stored file(s) for reg no ${student.register_number} have no bytes on this host. ` +
+        `Uploads are held on ${UPLOADS_BASE}, which is ephemeral - a redeploy or a different host discards them while the MongoDB record survives. ` +
+        `Affected: ${JSON.stringify([...missingFileReasons.keys()])}`
+    );
   }
 
   // INSTITUTIONAL SIGNATURE BLOCK (Ensure it fits or create new page)
@@ -866,7 +911,7 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
   try {
     const merged = await PDFDocument.load(dossierBytes);
 
-    for (const item of annexurePdfs) {
+    for (const [idx, item] of annexurePdfs.entries()) {
       // Annexure detail sheet, built with the same institutional chrome.
       const sheet = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
       const sw = sheet.internal.pageSize.getWidth();
@@ -889,7 +934,7 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
       sheet.setFont('helvetica', 'normal');
       sheet.setFontSize(8);
       sheet.setTextColor(80, 80, 80);
-      sheet.text('OFFICIAL DIGITAL MENTOR–MENTEE RECORD BOOK – DOCUMENT ANNEXURE', sw / 2, 30.5, { align: 'center' });
+      sheet.text(`Annexure ${idx + 1}`, sw / 2, 30.5, { align: 'center' });
       sheet.setDrawColor(200, 200, 200);
       sheet.setLineWidth(0.5);
       sheet.line(sm, 33, sw - sm, 33);
@@ -898,7 +943,7 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
       sheet.setFont('helvetica', 'bold');
       sheet.setFontSize(11);
       sheet.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-      sheet.text(`ANNEXURE ${item.meta.title}`, sm, y, { maxWidth: sw - sm * 2 });
+      sheet.text(`ANNEXURE ${idx + 1} OF ${annexurePdfs.length} - ${item.meta.title}`, sm, y, { maxWidth: sw - sm * 2 });
       y += 9;
 
       const detailRows: string[][] = [
@@ -960,12 +1005,12 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
       notice.setFont('helvetica', 'bold');
       notice.setFontSize(12);
       notice.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-      notice.text('ANNEXURE EMBEDDING NOTICE', nw / 2, 50, { align: 'center' });
+      notice.text('STUDENT CERTIFICATES', nw / 2, 50, { align: 'center' });
       notice.setFont('helvetica', 'normal');
       notice.setFontSize(8.5);
       notice.setTextColor(60, 60, 60);
       notice.text(
-        'The documents listed below are registered in Section 8 of this record book but could not be reproduced as annexures. They remain available in full through the Student Documents screen.',
+        'The documents listed below are registered in Section 8 of this record book but could not be reproduced as annexures. They remain available in full through the Student Documents screen. The specific reason for each one is stated below.',
         nw / 2,
         62,
         { align: 'center', maxWidth: nw - 40 }
@@ -974,9 +1019,10 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
         startY: 78,
         margin: { left: 20, right: 20 },
         theme: 'grid',
-        head: [['Document']],
-        body: notEmbedded.map((n) => [n]),
+        head: [['Document', 'Reason the annexure could not be produced']],
+        body: notEmbedded.map((n) => [n.name, n.reason]),
         styles: { fontSize: 8, cellPadding: 2 },
+        columnStyles: { 0: { cellWidth: 50, fontStyle: 'bold' } },
       });
       const noticeDoc = await PDFDocument.load(notice.output('arraybuffer'));
       const noticePages = await merged.copyPages(noticeDoc, noticeDoc.getPageIndices());

@@ -59,20 +59,33 @@ const MeetingSchema = new Schema<IMeeting>(
       enum: ['SCHEDULED', 'COMPLETED', 'PENDING', 'PENDING_UPDATE'],
       default: 'COMPLETED',
     },
+    // These three are free-text narrative the Saturday meeting form does not
+    // always supply: the mentor form collects "Challenges & Topics Discussed"
+    // and "Mentor Remarks & Action Agreed Upon" only. `challengesDiscussed`
+    // and `correctiveAction` were previously `required`, which made a
+    // legitimate save fail Mongoose validation (an empty string does not
+    // satisfy `required`) and surface to the mentor as HTTP 500.
+    // They are NOT filled with placeholder prose -- the controller either
+    // stores what the mentor actually wrote or leaves them empty.
     challengesDiscussed: {
       type: String,
-      required: [true, 'Challenges discussed must be recorded'],
+      trim: true,
+      default: '',
     },
     studentFeedback: {
       type: String,
-      default: 'Acknowledged',
+      trim: true,
+      default: '',
     },
     counsellingProvided: {
       type: String,
+      trim: true,
+      default: '',
     },
     correctiveAction: {
       type: String,
-      required: [true, 'Corrective action must be recorded'],
+      trim: true,
+      default: '',
     },
     followUpRequired: {
       type: Boolean,

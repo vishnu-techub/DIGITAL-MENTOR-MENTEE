@@ -1594,7 +1594,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
                 <thead>
                   <tr>
                     <th>Mentor Name</th>
-                    <th>Tenure</th>
                     <th>Status</th>
                     <th>Reason / Notes</th>
                   </tr>
@@ -1603,7 +1602,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
                   {profile?.mentorHistory?.map((h: any) => (
                     <tr key={h.assignment_id}>
                       <td style={{ fontWeight: 600 }}>{h.mentor_name}</td>
-                      <td>{h.assigned_from} to {h.assigned_until || 'Present'}</td>
                       <td>
                         <span className={`badge ${h.status === 'ACTIVE' ? 'badge-success' : 'badge-secondary'}`}>
                           {h.status}

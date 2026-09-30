@@ -588,7 +588,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
     { id: 'parent', label: '4. Parent Details', icon: <Home size={16} /> },
     { id: 'mentor', label: '5. Mentor History', icon: <History size={16} /> },
     { id: 'counselling', label: '6. Counselling', icon: <BookOpen size={16} /> },
-    { id: 'progress', label: '7. My Progress', icon: <Award size={16} /> },
+    { id: 'progress', label: '7. Student Progress & Certificates', icon: <Award size={16} /> },
     { id: 'documents', label: '8. Documents / Certificates', icon: <FileCheck size={16} /> },
     { id: 'meeting', label: '9. Meeting History', icon: <CalendarCheck2 size={16} /> },
     { id: 'skills', label: '10. Progress & Skills', icon: <Star size={16} /> },
@@ -2073,7 +2073,9 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
       )}
 
       {/* ============================================================
-          7. MY PROGRESS TAB (Auto-synced Achievements & Certificates)
+          7. STUDENT PROGRESS TAB
+          The progress shown here always belongs to the SELECTED mentee
+          (student.id), never to the logged-in mentor.
           ============================================================ */}
       {activeTab === 'progress' && (
         <MenteeProgressDashboard
@@ -2923,6 +2925,47 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
         isOpen={showAiBot}
         onClose={() => setShowAiBot(false)}
       />
+
+      {/* Floating circular AI advisor trigger, fixed to the bottom-right of the
+          viewport so the advisor is reachable from every tab without scrolling
+          back to a section-specific button. The inline buttons above are kept:
+          they give the feature context. */}
+      {!showAiBot && (
+        <button
+          type="button"
+          onClick={() => setShowAiBot(true)}
+          aria-label="Open Mentor AI Advisor"
+          title="Mentor AI Advisor"
+          style={{
+            position: 'fixed',
+            right: '26px',
+            bottom: '26px',
+            width: '56px',
+            height: '56px',
+            borderRadius: '50%',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'linear-gradient(135deg, #0B2545 0%, #1D4E89 100%)',
+            color: '#ffffff',
+            border: '2px solid #ffffff',
+            boxShadow: '0 6px 20px rgba(11, 37, 69, 0.32)',
+            cursor: 'pointer',
+            zIndex: 900,
+            transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'scale(1.06)';
+            e.currentTarget.style.boxShadow = '0 8px 26px rgba(11, 37, 69, 0.42)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'scale(1)';
+            e.currentTarget.style.boxShadow = '0 6px 20px rgba(11, 37, 69, 0.32)';
+          }}
+        >
+          <Bot size={24} />
+        </button>
+      )}
 
       {/* APPROVE / REJECT ACADEMIC CORRECTION REQUEST */}
       {showReviewModal && reviewTarget && (

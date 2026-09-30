@@ -27,13 +27,39 @@ export interface MeetingDateLabel {
 /** Parse a stored meeting date (Date | ISO string | "YYYY-MM-DD") into a local midnight Date. */
 export function parseMeetingDate(value: any): Date | null {
   if (!value) return null;
-  const d =
-    value instanceof Date
-      ? new Date(value.getTime())
-      : new Date(typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00` : value);
-  if (Number.isNaN(d.getTime())) return null;
-  d.setHours(0, 0, 0, 0);
-  return d;
+  if (value instanceof Date) {
+    const d = new Date(value.getTime());
+    if (Number.isNaN(d.getTime())) return null;
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      const d = new Date(`${trimmed}T00:00:00`);
+      if (!Number.isNaN(d.getTime())) {
+        d.setHours(0, 0, 0, 0);
+        return d;
+      }
+    }
+    const dmyMatch = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+    if (dmyMatch) {
+      const day = dmyMatch[1].padStart(2, '0');
+      const month = dmyMatch[2].padStart(2, '0');
+      const year = dmyMatch[3];
+      const d = new Date(`${year}-${month}-${day}T00:00:00`);
+      if (!Number.isNaN(d.getTime())) {
+        d.setHours(0, 0, 0, 0);
+        return d;
+      }
+    }
+    const d = new Date(trimmed);
+    if (!Number.isNaN(d.getTime())) {
+      d.setHours(0, 0, 0, 0);
+      return d;
+    }
+  }
+  return null;
 }
 
 export function startOfToday(now = new Date()): Date {

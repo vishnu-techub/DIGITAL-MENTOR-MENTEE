@@ -7,6 +7,7 @@ import {
   deleteDocument,
   deleteAllStudentDocuments,
   verifyDocument,
+  updateDocument,
   documentUploadMiddleware,
 } from './document.controller.js';
 import { authenticate } from '../../middleware/auth.middleware.js';
@@ -48,7 +49,12 @@ router.get('/:documentId/download', downloadDocument);
 // 6. Delete document (owner or admin/assigned mentor/HOD per controller rules)
 router.delete('/:documentId', deleteDocument);
 
-// 7. Verification status review (Mentor of record, Admin, HOD)
+// 7. Edit / re-submit a certificate.
+//    A REJECTED certificate must be correctable; the controller resets it to
+//    Pending and refuses any edit of a mentor-confirmed (Verified) one.
+router.put('/:documentId', updateDocument);
+
+// 8. Verification status review (Mentor of record, Admin, HOD)
 router.patch(
   '/:documentId/verify',
   authorize(ROLES.FACULTY, ROLES.ADMIN, ROLES.HOD),

@@ -6,11 +6,12 @@ import mongoose from 'mongoose';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
 import { StudentProgress, ProgressCategory, ProgressLevel, ProgressStatus } from '../../models/StudentProgress.model.js';
 import { Student } from '../../models/Student.model.js';
-import { MentorAssignment } from '../../models/MentorAssignment.model.js';
 import { Faculty } from '../../models/Faculty.model.js';
+import { StudentDocument } from '../../models/StudentDocument.model.js';
 import { ROLES } from '../../config/constants.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
+import { checkStudentAccess } from '../../utils/access.util.js';
 import { resolveStoredUploadPath, resolveWritableUploadsDir } from '../../config/storage.js';
 
 // Setup a Writable Uploads Directory for Progress Certificates
@@ -70,6 +71,232 @@ async function resolveAuthStudent(req: AuthRequest) {
     return await Student.findOne({ user: req.user.id }).populate('department batch');
   }
   return null;
+}
+
+/**
+ * The terminal, mentor-confirmed state of a certificate/achievement.
+ * `Verified` IS the confirmed state in this schema (see ProgressStatus /
+ * VerificationStatus); the UI labels it "Verified". Once reached it is
+ * immutable - nothing below ever silently demotes or reopens it.
+ */
+export const CONFIRMED_STATUS = 'Verified';
+
+const CONFIRMED_LOCK_MESSAGE =
+  'This record has been confirmed by your mentor and is now an official verified entry. Confirmed records are permanently locked and can no longer be edited, deleted or re-submitted.';
+
+// ---------------------------------------------------------------------------
+// Canonical student -> certificate relationship
+// ---------------------------------------------------------------------------
+/**
+ * There is exactly ONE canonical relationship in this project between a student
+ * and an uploaded certificate: `studentId -> Student._id`. It is already used
+ * by `StudentDocument` (where every uploaded certificate actually lands) and by
+ * `StudentProgress` (the achievement ledger).
+ *
+ * Nothing used to connect the two collections, which is why a certificate
+ * uploaded through Student Documents never appeared in the mentor's
+ * "Student Progress & Certificate Verifications" view: the mentor endpoint read
+ * `student_progress` only, so every counter was 0 for a real, stored file.
+ *
+ * `StudentDocument` is treated as the canonical certificate store (it owns the
+ * verification status, the rejection reason and Record Book Section 8), and
+ * `StudentProgress` rows that point at the SAME stored file are folded into the
+ * corresponding document row instead of being listed twice. No second
+ * relationship and no duplicate MongoDB record is introduced.
+ */
+const DOCUMENT_CATEGORY_TO_PROGRESS_CATEGORY: Record<string, ProgressCategory> = {
+  'Event Certificate': 'Event Certificate',
+  'Workshop Certificate': 'Event Certificate',
+  'MOOC Certificate': 'Event Certificate',
+  'Internship Certificate': 'Event Certificate',
+  'Paper Presentation': 'Event Certificate',
+  'Technical Event': 'Event Certificate',
+  'NPTEL Certificate': 'NPTEL Certificate',
+  'Global Certification': 'Global Certification',
+  'Hackathon Certificate': 'Hackathon Certificate',
+  'SIH Certificate': 'Hackathon Certificate',
+  Symposium: 'Symposium Certificate',
+  'Symposium Certificate': 'Symposium Certificate',
+  Award: 'Award Certificate',
+  'Award Certificate': 'Award Certificate',
+  'Extension Activity': 'Extension Activity',
+  'Extra Curricular': 'Extra Curricular',
+  'Program attended in other state': 'Program attended in other state',
+  'Other approved achievements/activities': 'Other approved achievements/activities',
+  Achievement: 'Other approved achievements/activities',
+  Other: 'Other approved achievements/activities',
+};
+
+/**
+ * Map a stored document category onto the existing ProgressCategory enum so the
+ * six institutional counters can be derived from one list. Unknown values fall
+ * back to the existing catch-all enum member - no new category name is created.
+ */
+export function toProgressCategory(category: string | undefined | null): ProgressCategory {
+  const key = String(category || '').trim();
+  return DOCUMENT_CATEGORY_TO_PROGRESS_CATEGORY[key] || 'Other approved achievements/activities';
+}
+
+/** Normalise a stored upload URL for identity comparison between collections. */
+function normaliseFileKey(url: string | undefined | null): string | null {
+  if (!url || typeof url !== 'string') return null;
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  // Compare only the stable logical path, ignoring any base URL prefix.
+  const idx = trimmed.indexOf('uploads/');
+  return idx >= 0 ? trimmed.slice(idx) : trimmed;
+}
+
+export interface UnifiedProgressRecord {
+  _id: string;
+  source: 'DOCUMENT' | 'PROGRESS';
+  studentId: string;
+  category: ProgressCategory;
+  rawCategory: string;
+  activityName: string;
+  organization: string;
+  eventName: string;
+  date: string;
+  level: string;
+  description: string;
+  certificateUrl: string;
+  fileName: string;
+  status: ProgressStatus;
+  rejectionReason: string;
+  reviewerName: string;
+  reviewedAt: Date | null;
+  createdAt: Date | null;
+  fileAvailable: boolean;
+}
+
+/**
+ * Build the single list of a student's certificates + achievements for the
+ * mentor review screen, from BOTH existing collections, de-duplicated by stored
+ * file identity so one certificate is never counted twice.
+ */
+export async function buildUnifiedProgressRecords(studentObjectId: any): Promise<UnifiedProgressRecord[]> {
+  const sid = String(studentObjectId);
+
+  const [documents, progressRows] = await Promise.all([
+    StudentDocument.find({
+      studentId: sid,
+      isPrimary: false,
+      documentType: { $ne: 'student_details_form' },
+    }).lean(),
+    StudentProgress.find({ studentId: sid }).lean(),
+  ]);
+
+  const records: UnifiedProgressRecord[] = [];
+  const consumedFileKeys = new Set<string>();
+
+  for (const d of documents as any[]) {
+    const fileKey = normaliseFileKey(d.fileUrl);
+    if (fileKey) consumedFileKeys.add(fileKey);
+
+    const absPath = fileKey ? resolveStoredUploadPath(d.fileUrl) : null;
+
+    records.push({
+      _id: String(d._id),
+      source: 'DOCUMENT',
+      studentId: sid,
+      category: toProgressCategory(d.category),
+      rawCategory: d.category || 'Other',
+      activityName: d.title || d.fileName || 'Certificate',
+      organization: d.organizer || '',
+      eventName: d.eventName || '',
+      date: d.eventDate || (d.uploadedAt ? new Date(d.uploadedAt).toISOString().slice(0, 10) : ''),
+      level: 'College',
+      description: d.description || '',
+      certificateUrl: d.fileUrl || '',
+      fileName: d.fileName || '',
+      status: (d.verificationStatus || 'Pending') as ProgressStatus,
+      rejectionReason: d.rejectionReason || '',
+      reviewerName: '',
+      reviewedAt: d.rejectedDate || null,
+      createdAt: d.uploadedAt || d.createdAt || null,
+      fileAvailable: Boolean(absPath && fs.existsSync(absPath)),
+    });
+  }
+
+  for (const p of progressRows as any[]) {
+    const fileKey = normaliseFileKey(p.certificateUrl);
+
+    // Same physical certificate already represented by its StudentDocument
+    // row: fold it in instead of listing the certificate twice.
+    if (fileKey && consumedFileKeys.has(fileKey)) {
+      const existing = records.find((r) => normaliseFileKey(r.certificateUrl) === fileKey);
+      if (existing) {
+        // Keep whichever status is further along the workflow; never regress a
+        // confirmed document back to pending because of a stale progress row.
+        if (existing.status !== 'Verified' && p.status === 'Verified') existing.status = 'Verified';
+        if (existing.activityName === 'Certificate' && p.activityName) {
+          existing.activityName = p.activityName;
+        }
+        if (existing.organization === '' && p.organization) existing.organization = p.organization;
+        if (existing.eventName === '' && p.eventName) existing.eventName = p.eventName;
+        if (existing.description === '' && p.description) existing.description = p.description;
+        if (existing.level === 'College' && p.level) existing.level = p.level;
+        if (existing.rejectionReason === '' && p.rejectionReason) existing.rejectionReason = p.rejectionReason;
+        continue;
+      }
+    }
+    if (fileKey) consumedFileKeys.add(fileKey);
+
+    const absPath = fileKey ? resolveStoredUploadPath(p.certificateUrl) : null;
+
+    records.push({
+      _id: String(p._id),
+      source: 'PROGRESS',
+      studentId: sid,
+      category: p.category,
+      rawCategory: p.category,
+      activityName: p.activityName,
+      organization: p.organization || '',
+      eventName: p.eventName || '',
+      date: p.date || '',
+      level: p.level || 'College',
+      description: p.description || '',
+      certificateUrl: p.certificateUrl || '',
+      fileName: p.fileName || '',
+      status: (p.status || 'Pending') as ProgressStatus,
+      rejectionReason: p.rejectionReason || '',
+      reviewerName: p.reviewerName || '',
+      reviewedAt: p.reviewedAt || null,
+      createdAt: p.createdAt || null,
+      fileAvailable: Boolean(absPath && fs.existsSync(absPath)),
+    });
+  }
+
+  records.sort((a, b) => {
+    const ad = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const bd = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    if (bd !== ad) return bd - ad;
+    return String(b.date).localeCompare(String(a.date));
+  });
+
+  return records;
+}
+
+/** Institutional category + status counters, derived from the actual records. */
+function summariseProgress(records: UnifiedProgressRecord[]) {
+  const byCategory = (c: ProgressCategory) => records.filter((r) => r.category === c).length;
+  const byStatus = (s: ProgressStatus) => records.filter((r) => r.status === s).length;
+  return {
+    eventCertificates: byCategory('Event Certificate'),
+    nptelCertificates: byCategory('NPTEL Certificate'),
+    globalCertifications: byCategory('Global Certification'),
+    hackathons: byCategory('Hackathon Certificate'),
+    symposiums: byCategory('Symposium Certificate'),
+    awards: byCategory('Award Certificate'),
+    otherStatePrograms: byCategory('Program attended in other state'),
+    extensionActivities: byCategory('Extension Activity'),
+    extraCurricular: byCategory('Extra Curricular'),
+    others: byCategory('Other approved achievements/activities'),
+    pending: byStatus('Pending'),
+    verified: byStatus(CONFIRMED_STATUS),
+    rejected: byStatus('Rejected'),
+    total: records.length,
+  };
 }
 
 // 1. POST /api/student/progress - Create new achievement / progress record
@@ -208,6 +435,12 @@ export async function updateStudentProgress(req: AuthRequest, res: Response) {
       }
     }
 
+    // A mentor-confirmed record is an official verified entry and is immutable.
+    // Enforced here, not just in the UI, so a crafted request cannot reopen it.
+    if (record.status === CONFIRMED_STATUS) {
+      return sendError(res, CONFIRMED_LOCK_MESSAGE, 409);
+    }
+
     const {
       category,
       activityName,
@@ -282,6 +515,11 @@ export async function deleteStudentProgress(req: AuthRequest, res: Response) {
       }
     }
 
+    // Confirmed records are permanently locked: deletion is rejected too.
+    if (record.status === CONFIRMED_STATUS) {
+      return sendError(res, CONFIRMED_LOCK_MESSAGE, 409);
+    }
+
     // Remove file if exists
     if (record.certificateUrl) {
       const filePath = resolveStoredUploadPath(record.certificateUrl);
@@ -316,54 +554,33 @@ export async function getMenteeProgressForMentor(req: AuthRequest, res: Response
       return sendError(res, 'Invalid student ID parameter.', 400);
     }
 
-    // Security check: If role is FACULTY, verify assignment is active
-    if (req.user?.role === ROLES.FACULTY) {
-      let facultyId = req.user.facultyId;
-      if (!facultyId) {
-        const fac = await Faculty.findOne({ user: req.user.id });
-        if (fac) facultyId = fac._id.toString();
-      }
-
-      if (facultyId) {
-        const assignment = await MentorAssignment.findOne({
-          mentor: facultyId,
-          student: studentId,
-          status: 'ACTIVE',
-        });
-
-        if (!assignment) {
-          return sendError(
-            res,
-            'Access denied: This mentee is not currently assigned to you. If reassignment occurred, access has shifted to the new mentor.',
-            403
-          );
-        }
-      }
+    // Data isolation is enforced in the QUERY, through the single existing
+    // authorisation utility, exactly like the documents/students/meetings
+    // modules. The previous inline check was wrapped in `if (facultyId)`, so a
+    // mentor whose faculty id could not be resolved skipped the ownership test
+    // entirely and could read ANY mentee's records. checkStudentAccess denies
+    // when it cannot resolve the caller, which is the safe direction.
+    const student = await Student.findById(studentId);
+    if (!student) {
+      return sendError(res, 'Student record not found.', 404);
     }
 
-    const records = await StudentProgress.find({ studentId }).sort({ date: -1, createdAt: -1 });
+    const access = await checkStudentAccess(req.user, student);
+    if (!access.allowed) {
+      return sendError(res, access.message, access.status);
+    }
 
-    // Summary calculations
-    const summary = {
-      eventCertificates: records.filter((r) => r.category === 'Event Certificate').length,
-      nptelCertificates: records.filter((r) => r.category === 'NPTEL Certificate').length,
-      globalCertifications: records.filter((r) => r.category === 'Global Certification').length,
-      hackathons: records.filter((r) => r.category === 'Hackathon Certificate').length,
-      symposiums: records.filter((r) => r.category === 'Symposium Certificate').length,
-      awards: records.filter((r) => r.category === 'Award Certificate').length,
-      otherStatePrograms: records.filter((r) => r.category === 'Program attended in other state').length,
-      extensionActivities: records.filter((r) => r.category === 'Extension Activity').length,
-      extraCurricular: records.filter((r) => r.category === 'Extra Curricular').length,
-      others: records.filter((r) => r.category === 'Other approved achievements/activities').length,
-      pending: records.filter((r) => r.status === 'Pending').length,
-      verified: records.filter((r) => r.status === 'Verified').length,
-      rejected: records.filter((r) => r.status === 'Rejected').length,
-      total: records.length,
-    };
+    const records = await buildUnifiedProgressRecords(student._id);
+    const summary = summariseProgress(records);
 
     return sendSuccess(res, {
       records,
       summary,
+      student: {
+        id: String(student._id),
+        fullName: student.fullName,
+        registerNumber: student.registerNumber,
+      },
     });
   } catch (err: any) {
     console.error('getMenteeProgressForMentor error:', err);
@@ -376,7 +593,7 @@ export async function verifyMenteeProgress(req: AuthRequest, res: Response) {
   try {
     const studentId = req.params.studentId as string;
     const id = req.params.id as string;
-    const { status, rejectionReason } = req.body;
+    const { status, rejectionReason, source } = req.body;
 
     if (!['Verified', 'Rejected', 'Pending'].includes(status)) {
       return sendError(res, 'Status must be Verified, Rejected, or Pending.', 400);
@@ -386,40 +603,92 @@ export async function verifyMenteeProgress(req: AuthRequest, res: Response) {
       return sendError(res, 'Rejection reason is required when rejecting a progress record.', 400);
     }
 
-    // Security check for Faculty mentor
+    // Ownership of the SELECTED mentee, not just of the record id.
+    const student = await Student.findById(studentId);
+    if (!student) {
+      return sendError(res, 'Student record not found.', 404);
+    }
+
+    const access = await checkStudentAccess(req.user, student);
+    if (!access.allowed) {
+      return sendError(res, access.message, access.status);
+    }
+
+    // `source` tells us which of the two existing collections holds the record
+    // that was rendered. It is always sent by the mentor UI; the fallbacks keep
+    // older clients working and are still scoped to this exact student.
+    const order: Array<'DOCUMENT' | 'PROGRESS'> =
+      source === 'PROGRESS' ? ['PROGRESS', 'DOCUMENT'] : ['DOCUMENT', 'PROGRESS'];
+
     let reviewerFaculty: any = null;
     if (req.user?.role === ROLES.FACULTY) {
       reviewerFaculty = await Faculty.findOne({
         $or: [{ _id: req.user.facultyId }, { user: req.user.id }],
       }).populate('user');
+    }
 
-      if (reviewerFaculty) {
-        const assignment = await MentorAssignment.findOne({
-          mentor: reviewerFaculty._id,
-          student: studentId,
-          status: 'ACTIVE',
+    let record: any = null;
+    let storedIn: 'DOCUMENT' | 'PROGRESS' | null = null;
+
+    for (const candidate of order) {
+      if (candidate === 'DOCUMENT') {
+        const doc = await StudentDocument.findOne({
+          _id: mongoose.Types.ObjectId.isValid(id) ? id : undefined,
+          studentId: student._id,
+          isPrimary: false,
+          documentType: { $ne: 'student_details_form' },
         });
-        if (!assignment) {
-          return sendError(res, 'Access denied: You are not the active mentor for this mentee.', 403);
+        if (doc) {
+          record = doc;
+          storedIn = 'DOCUMENT';
+          break;
+        }
+      } else {
+        const prog = await StudentProgress.findOne({
+          _id: mongoose.Types.ObjectId.isValid(id) ? id : undefined,
+          studentId: student._id,
+        });
+        if (prog) {
+          record = prog;
+          storedIn = 'PROGRESS';
+          break;
         }
       }
     }
 
-    const record = await StudentProgress.findOne({ _id: id, studentId });
-    if (!record) {
+    if (!record || !storedIn) {
       return sendError(res, 'Progress record not found for this mentee.', 404);
     }
 
-    record.status = status as ProgressStatus;
-    if (status === 'Rejected') {
-      record.rejectionReason = rejectionReason.trim();
-    } else {
-      record.rejectionReason = '';
+    // A mentor-confirmed record is an official, immutable entry: it may not be
+    // silently demoted back to Pending or Rejected. Enforced server-side, so a
+    // hidden button is never the only protection.
+    if (record.verificationStatus === CONFIRMED_STATUS || record.status === CONFIRMED_STATUS) {
+      if (status !== CONFIRMED_STATUS) {
+        return sendError(res, CONFIRMED_LOCK_MESSAGE, 409);
+      }
+      return sendSuccess(res, record, `Achievement record marked as ${status}.`);
     }
 
-    record.reviewedBy = reviewerFaculty?._id || undefined;
-    record.reviewerName = reviewerFaculty?.user?.fullName || req.user?.username || 'Mentor';
-    record.reviewedAt = new Date();
+    if (storedIn === 'DOCUMENT') {
+      record.verificationStatus = status;
+      record.rejectionReason = status === 'Rejected' ? rejectionReason.trim() : '';
+      if (status === 'Rejected') {
+        record.rejectedBy = mongoose.Types.ObjectId.isValid(String(req.user?.id || ''))
+          ? new mongoose.Types.ObjectId(String(req.user?.id))
+          : undefined;
+        record.rejectedDate = new Date();
+      } else {
+        record.rejectedBy = undefined;
+        record.rejectedDate = undefined;
+      }
+    } else {
+      record.status = status;
+      record.rejectionReason = status === 'Rejected' ? rejectionReason.trim() : '';
+      record.reviewedBy = reviewerFaculty?._id || undefined;
+      record.reviewerName = reviewerFaculty?.user?.fullName || req.user?.username || 'Mentor';
+      record.reviewedAt = new Date();
+    }
 
     await record.save();
 
@@ -428,9 +697,10 @@ export async function verifyMenteeProgress(req: AuthRequest, res: Response) {
       action: 'VERIFY_STUDENT_PROGRESS',
       entity: 'STUDENT_PROGRESS',
       details: {
-        progressId: record._id,
-        studentId,
-        status: record.status,
+        progressId: String(record._id),
+        storedIn,
+        studentId: String(student._id),
+        status,
         rejectionReason: record.rejectionReason,
       },
       req,

@@ -158,7 +158,7 @@ async function main() {
   await waitForHealth();
   console.log('### Real server listening on ' + BASE + '\n');
 
-  const { User, Student, Faculty, Department, Batch, MentorAssignment, AcademicRecord, Notification, StudentEditRequest, StudentDocument, School, AuditLog, AcademicEditRequest, CounsellingRecord } =
+  const { User, Student, Faculty, Department, Batch, MentorAssignment, AcademicRecord, Notification, StudentEditRequest, StudentDocument, School, AuditLog, AcademicEditRequest, CounsellingRecord, StudentProgress } =
     await import('../models/index.js');
   const { default: mongoose } = await import('mongoose');
 
@@ -1430,6 +1430,114 @@ async function main() {
   });
 
   // ── REPORT ────────────────────────────────────────────────────────────────
+  await check('Mentor Student Progress lists the certificate the student actually uploaded', async () => {
+    // Reproduces the reported bug exactly: a student uploads a Hackathon
+    // Certificate through Student Documents and the mentor's "Student Progress"
+    // screen showed All/Pending/Verified/Rejected = 0.
+    const fd = new FormData();
+    fd.append('file', new Blob([Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n%%EOF')], { type: 'application/pdf' }), 'AO2026-1395.pdf');
+    fd.append('title', 'Hackathon Certificate');
+    fd.append('category', 'Hackathon Certificate');
+    fd.append('eventName', 'Alliance One - Inter-University Techno-Cultural-Sports Event');
+    fd.append('organizer', 'Alliance University');
+    const up = await http('POST', '/api/documents/upload', { token: tokens.student, raw: fd });
+    assert(up.status === 201 || up.status === 200, `upload -> ${up.status}: ${JSON.stringify(up.body)}`);
+    const docId = up.body?.data?._id;
+    assert(docId, `upload returned no id: ${JSON.stringify(up.body)}`);
+
+    // The canonical relationship is StudentDocument.studentId -> Student._id.
+    const stored: any = await StudentDocument.findById(docId).lean();
+    assert(String(stored.studentId) === String(stuA._id),
+      `document is not linked to the selected student (${stored.studentId} vs ${stuA._id})`);
+
+    // Mentor view of the SELECTED mentee.
+    const view = await http('GET', `/api/mentor/mentees/${stuA._id}/progress`, { token: tokens.mentor });
+    assert(view.status === 200, `mentor progress -> ${view.status}: ${JSON.stringify(view.body)}`);
+    const recs: any[] = view.body?.data?.records || [];
+    const rec = recs.find((r) => r._id === String(docId));
+    assert(rec, `uploaded certificate ${docId} absent from mentor Student Progress (${recs.length} record(s) returned)`);
+    assert(rec.source === 'DOCUMENT', `expected source DOCUMENT, got ${rec.source}`);
+    assert(rec.category === 'Hackathon Certificate', `category mapped to ${rec.category}`);
+    assert(rec.organization === 'Alliance University', `organization = ${rec.organization}`);
+
+    // UPLOAD != VERIFIED.
+    assert(rec.status === 'Pending', `freshly uploaded certificate is ${rec.status}, must start Pending`);
+    const sum = view.body?.data?.summary;
+    assert(sum.pending >= 1, `summary.pending = ${sum?.pending}`);
+    assert(sum.hackathons >= 1, `summary.hackathons = ${sum?.hackathons}`);
+
+    // The mentor is reading the SELECTED student, not themselves: querying the
+    // same endpoint for a different mentee must never return this record.
+    const other = await http('GET', `/api/mentor/mentees/${stuB._id}/progress`, { token: tokens.mentor });
+    assert(other.status === 403 || !(other.body?.data?.records || []).some((r: any) => r._id === String(docId)),
+      `record leaked to a different mentee view (${other.status})`);
+
+    // MENTOR CONFIRM -> CONFIRMED (displayed as Verified) and permanently locked.
+    const conf = await http('PUT', `/api/mentor/mentees/${stuA._id}/progress/${docId}/verify`, {
+      token: tokens.mentor, body: { status: 'Verified', source: 'DOCUMENT' },
+    });
+    assert(conf.status === 200, `confirm -> ${conf.status}: ${JSON.stringify(conf.body)}`);
+    const after: any = await StudentDocument.findById(docId).lean();
+    assert(after.verificationStatus === 'Verified', `db status = ${after.verificationStatus}`);
+
+    const reopen = await http('PUT', `/api/mentor/mentees/${stuA._id}/progress/${docId}/verify`, {
+      token: tokens.mentor, body: { status: 'Rejected', rejectionReason: 'undo', source: 'DOCUMENT' },
+    });
+    assert(reopen.status === 409, `confirmed record must reject a status change, got ${reopen.status}`);
+
+    const stuDel = await http('DELETE', `/api/documents/${docId}`, { token: tokens.student });
+    assert(stuDel.status === 409, `student must not delete a confirmed certificate, got ${stuDel.status}`);
+
+    const stuEdit = await http('PUT', `/api/documents/${docId}`, { token: tokens.student, body: { title: 'tampered' } });
+    assert(stuEdit.status === 409, `student must not edit a confirmed certificate, got ${stuEdit.status}`);
+
+    return { status: 'PASS',
+      evidence: `student uploaded AO2026-1395.pdf (Hackathon Certificate / Alliance University); StudentDocument.studentId=${stored.studentId} == selected mentee ${stuA._id}; mentor GET /mentor/mentees/{id}/progress -> ${view.status} with ${recs.length} record(s), the certificate present as source=${rec.source} category=${rec.category} status=${rec.status}; summary pending=${sum?.pending} hackathons=${sum?.hackathons} verified=${sum?.verified}; mentor confirm -> ${conf.status} (db verificationStatus=Verified); reopening -> ${reopen.status}; student delete -> ${stuDel.status}; student edit -> ${stuEdit.status}`,
+      fix: 'getMenteeProgressForMentor now queries by the SELECTED Student._id via the single canonical StudentDocument.studentId relationship (no duplicate records); upload never auto-verifies; Verified (mentor-confirmed) is enforced immutable server-side' };
+  });
+
+  await check('Saturday meeting with the reported values saves and appears in history', async () => {
+    // Exactly the payload the mentor submitted when it failed with
+    // "Failed to log meeting".
+    const r = await http('POST', '/api/meetings', {
+      token: tokens.mentor,
+      body: {
+        studentId: String(stuA._id),
+        meetingDate: '30-09-2026',
+        meetingTime: '10:30 AM',
+        location: 'Faculty Cabin / Mentoring Room',
+        attendanceStatus: 'PRESENT',
+        meetingStatus: 'COMPLETED',
+        challengesDiscussed: 'Reviewed semester attendance, academic performance, lab submissions, and difficulties in understanding programming subjects.',
+        mentorRemarks: 'Student was advised to maintain regular attendance, complete lab submissions on time, revise difficult topics regularly, and practice programming problems consistently. Progress will be reviewed in the next mentoring session.',
+      },
+    });
+    assert(r.status === 201 || r.status === 200, `meeting save -> ${r.status}: ${JSON.stringify(r.body)}`);
+
+    const { Meeting } = await import('../models/Meeting.model.js');
+    const saved: any = await Meeting.findOne({ student: stuA._id, meetingDate: '2026-09-30' }).lean();
+    assert(saved, 'the meeting was not persisted to MongoDB');
+    assert(saved.attendanceStatus === 'PRESENT', `attendance = ${saved.attendanceStatus}`);
+    assert(saved.meetingTime === '10:30 AM', `time = ${saved.meetingTime}`);
+    assert(saved.location === 'Faculty Cabin / Mentoring Room', `location = ${saved.location}`);
+    assert(/Reviewed semester attendance/.test(saved.challengesDiscussed), 'challenges not stored');
+    assert(/maintain regular attendance/.test(saved.mentorRemarks), 'remarks not stored');
+    assert(String(saved.mentor) === String(mentor._id), `mentor = ${saved.mentor}, expected ${mentor._id}`);
+
+    // It must appear in the existing Mentor History / Student History flows.
+    const mentorView = await http('GET', `/api/meetings?studentId=${stuA._id}`, { token: tokens.mentor });
+    const rowsM: any[] = Array.isArray(mentorView.body?.data) ? mentorView.body.data : mentorView.body?.data?.meetings || [];
+    assert(rowsM.some((m) => m.meeting_date === '2026-09-30'), 'meeting missing from mentor history list');
+
+    const profile = await http('GET', `/api/students/${stuA._id}`, { token: tokens.mentor });
+    const hist: any[] = profile.body?.data?.profile?.mentorHistory || [];
+    assert(Array.isArray(hist), 'mentor history is not an array');
+
+    return { status: 'PASS',
+      evidence: `POST /api/meetings with meetingDate "30-09-2026" (non-ISO) + challenges/remarks only -> ${r.status}; persisted as meetingDate=${saved.meetingDate} attendance=${saved.attendanceStatus} time=${saved.meetingTime} location="${saved.location}" mentor=${saved.mentor} (not the caller's own id used as a student id); mentor history list -> ${mentorView.status} containing the record`,
+      fix: 'Meeting schema no longer requires challengesDiscussed/correctiveAction (empty string failed `required` -> 500); DD-MM-YYYY and ISO dates both parsed and normalised; ValidationError mapped to 400; notification failure no longer fails a saved meeting' };
+  });
+
   console.log('\n\n================ RUNTIME VERIFICATION REPORT ================\n');
   console.log('| # | Requirement | Status | Evidence |');
   console.log('|---|-------------|--------|----------|');

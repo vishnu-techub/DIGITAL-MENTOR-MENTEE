@@ -35,6 +35,16 @@ const storage = multer.diskStorage({
 
 const ALLOWED_MIME = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
 
+/**
+ * The terminal, mentor-confirmed state of a certificate. `Verified` IS the
+ * confirmed state in this schema; once reached the record is an official
+ * verified entry and is permanently immutable.
+ */
+export const CONFIRMED_DOCUMENT_STATUS = 'Verified';
+
+export const CONFIRMED_DOCUMENT_LOCK_MESSAGE =
+  'This certificate has been confirmed by your mentor and is now an official verified entry. Confirmed certificates are permanently locked and can no longer be edited, deleted or re-submitted.';
+
 // File validation filter (MIME level; magic bytes are verified after landing on disk)
 const fileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
   if (ALLOWED_MIME.includes(file.mimetype)) {
@@ -430,6 +440,12 @@ export async function deleteDocument(req: AuthRequest, res: Response) {
       );
     }
 
+    // A mentor-confirmed certificate is an official verified entry. It is
+    // immutable: the backend refuses the delete even if the UI hides the button.
+    if (doc.verificationStatus === CONFIRMED_DOCUMENT_STATUS) {
+      return sendError(res, CONFIRMED_DOCUMENT_LOCK_MESSAGE, 409);
+    }
+
     const student = await Student.findById(doc.studentId);
     if (!student) {
       return sendError(res, 'The owning student record no longer exists.', 404);
@@ -481,7 +497,124 @@ export async function deleteDocument(req: AuthRequest, res: Response) {
   }
 }
 
-// 5. Verify / Reject Document (Mentor / Admin / HOD)
+// 5. Edit / re-submit a certificate.
+//
+// The rendered workflow needs a real edit path: a REJECTED certificate must be
+// correctable and re-submitted. There was no such route at all - the only
+// student-writable document operation was upload - so the "student can edit"
+// step of the state machine was unreachable and a rejected certificate could
+// only ever be deleted and re-uploaded.
+//
+// A student edit returns the certificate to Pending, which is what puts the
+// corrected copy back in front of the mentor. A mentor-confirmed (Verified)
+// certificate stays permanently locked, enforced here rather than only in the
+// UI.
+export async function updateDocument(req: AuthRequest, res: Response) {
+  const documentId = req.params.documentId as string;
+
+  try {
+    if (!mongoose.Types.ObjectId.isValid(documentId)) {
+      return sendError(res, 'Invalid document reference.', 400);
+    }
+
+    const doc = await StudentDocument.findById(documentId);
+    if (!doc) {
+      return sendError(res, 'Document not found.', 404);
+    }
+
+    if (doc.isPrimary || doc.documentType === 'student_details_form') {
+      return sendError(
+        res,
+        'The Student Details Form is system-generated and cannot be edited here.',
+        400
+      );
+    }
+
+    if (doc.verificationStatus === CONFIRMED_DOCUMENT_STATUS) {
+      return sendError(res, CONFIRMED_DOCUMENT_LOCK_MESSAGE, 409);
+    }
+
+    const student = await Student.findById(doc.studentId);
+    if (!student) {
+      return sendError(res, 'The owning student record no longer exists.', 404);
+    }
+
+    const access = await checkStudentAccess(req.user, student);
+    if (!access.allowed) {
+      return sendError(res, access.message, access.status);
+    }
+
+    const { title, category, eventName, organizer, eventDate, description } = req.body || {};
+
+    if (title !== undefined) {
+      const t = String(title).trim();
+      if (!t) return sendError(res, 'Document title cannot be empty.', 400);
+      doc.title = t;
+    }
+    if (category !== undefined) {
+      const c = String(category).trim();
+      if (!c) return sendError(res, 'Document category cannot be empty.', 400);
+      doc.category = c;
+    }
+    if (eventName !== undefined) doc.eventName = String(eventName).trim();
+    if (organizer !== undefined) doc.organizer = String(organizer).trim();
+    if (eventDate !== undefined) doc.eventDate = String(eventDate).trim();
+    if (description !== undefined) doc.description = String(description).trim();
+
+    // Only the OWNER re-enters review. A mentor correcting metadata must not
+    // silently reset their own review decision, so the reset is student-only.
+    if (req.user?.role === ROLES.STUDENT) {
+      doc.verificationStatus = 'Pending';
+      doc.rejectionReason = '';
+      doc.rejectedBy = undefined;
+      doc.rejectedDate = undefined;
+    }
+
+    await doc.save();
+
+    await logAudit({
+      userId: req.user!.id,
+      action: 'UPDATE_DOCUMENT',
+      entity: 'DOCUMENT',
+      entityId: documentId,
+      details: {
+        title: doc.title,
+        category: doc.category,
+        verificationStatus: doc.verificationStatus,
+        registerNumber: student.registerNumber,
+      },
+      req,
+    });
+
+    return sendSuccess(
+      res,
+      {
+        id: doc._id.toString(),
+        _id: doc._id.toString(),
+        title: doc.title,
+        category: doc.category,
+        eventName: doc.eventName,
+        organizer: doc.organizer,
+        eventDate: doc.eventDate,
+        description: doc.description,
+        verificationStatus: doc.verificationStatus,
+      },
+      'Certificate updated and returned to the mentor for review.'
+    );
+  } catch (err: any) {
+    console.error('updateDocument error:', err);
+    if (err?.name === 'ValidationError') {
+      const details = Object.values(err.errors || {})
+        .map((e: any) => e?.message)
+        .filter(Boolean)
+        .join(' ');
+      return sendError(res, details || 'The certificate could not be validated.', 400);
+    }
+    return sendError(res, 'Failed to update document.', 500);
+  }
+}
+
+// 6. Verify / Reject Document (Mentor / Admin / HOD)
 export async function verifyDocument(req: AuthRequest, res: Response) {
   const documentId = req.params.documentId as string;
   const status = req.body.verificationStatus || req.body.status;
@@ -520,6 +653,12 @@ export async function verifyDocument(req: AuthRequest, res: Response) {
     const access = await checkStudentAccess(req.user, student);
     if (!access.allowed) {
       return sendError(res, access.message, access.status);
+    }
+
+    // A confirmed certificate may not have its status changed in either
+    // direction: it is an immutable official record.
+    if (doc.verificationStatus === CONFIRMED_DOCUMENT_STATUS && verificationStatus !== CONFIRMED_DOCUMENT_STATUS) {
+      return sendError(res, CONFIRMED_DOCUMENT_LOCK_MESSAGE, 409);
     }
 
     doc.verificationStatus = verificationStatus;
@@ -575,6 +714,7 @@ export async function deleteAllStudentDocuments(req: AuthRequest, res: Response)
     const docs = await StudentDocument.find({ studentId: student._id });
     let deletedCount = 0;
     let retainedPrimary = 0;
+    let retainedVerified = 0;
     const failedFiles: string[] = [];
 
     for (const doc of docs) {
@@ -582,6 +722,12 @@ export async function deleteAllStudentDocuments(req: AuthRequest, res: Response)
       // uploaded document. It is retained deliberately and reported as such.
       if (doc.isPrimary || doc.documentType === 'student_details_form') {
         retainedPrimary++;
+        continue;
+      }
+
+      // Confirmed certificates are locked; they are reported, never purged.
+      if (doc.verificationStatus === CONFIRMED_DOCUMENT_STATUS) {
+        retainedVerified++;
         continue;
       }
 
@@ -603,24 +749,38 @@ export async function deleteAllStudentDocuments(req: AuthRequest, res: Response)
       action: 'DELETE_ALL_STUDENT_DOCUMENTS',
       entity: 'DOCUMENT',
       entityId: student._id.toString(),
-      details: { deletedCount, retainedPrimary, registerNumber: student.registerNumber },
+      details: { deletedCount, retainedPrimary, retainedVerified, registerNumber: student.registerNumber },
       req,
     });
 
-    // Honest, explicit message — never claim more than was actually removed.
-    const message = retainedPrimary
-      ? `All uploaded documents except the Student Details Form were deleted (${deletedCount} deleted, 1 system-generated form retained).`
-      : `All student documents deleted (${deletedCount} removed).`;
+    // Honest, explicit message — never claim more than what was actually removed.
+    const retainedNotes: string[] = [];
+    if (retainedPrimary) {
+      retainedNotes.push('1 system-generated Student Details Form retained');
+    }
+    if (retainedVerified) {
+      retainedNotes.push(
+        `${retainedVerified} mentor-confirmed certificate(s) retained (confirmed records are permanently locked)`
+      );
+    }
+    const suffix = retainedNotes.length ? ` (${retainedNotes.join('; ')})` : '';
+    const message =
+      deletedCount === 0 && retainedNotes.length
+        ? `Nothing was deleted. All documents on record are protected: ${retainedNotes.join('; ')}.`
+        : `All deletable student documents deleted (${deletedCount} removed)${suffix}.`;
+
+    const payload = { deletedCount, retainedPrimary, retainedVerified, failedFiles };
 
     if (failedFiles.length) {
       return sendSuccess(
         res,
-        { deletedCount, retainedPrimary, failedFiles },
+        payload,
         `${message} ${failedFiles.length} stored file(s) could not be removed from disk.`
       );
     }
 
-    return sendSuccess(res, { deletedCount, retainedPrimary, failedFiles }, message);
+    return sendSuccess(res, payload, message);
+
   } catch (err: any) {
     console.error('deleteAllStudentDocuments error:', err);
     return sendError(res, 'Failed to delete student documents: ' + err.message, 500);
