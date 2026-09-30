@@ -3,6 +3,7 @@ import path from 'path';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import mongoose from 'mongoose';
+import { PDFDocument } from 'pdf-lib';
 import {
   Student,
   AcademicRecord,
@@ -10,8 +11,12 @@ import {
   Meeting,
   CounsellingRecord,
   MonthlyProgress,
+  StudentDocument,
 } from '../../models/index.js';
 import { calculateArrearStatistics } from '../../utils/arrears.util.js';
+// Reuse the single existing uploads abstraction (traversal-safe). Documents are
+// read through it, never through a second, parallel storage resolution.
+import { resolveStoredUploadPath } from '../../config/storage.js';
 
 let logoBase64: string | null = null;
 try {
@@ -202,6 +207,53 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
       skill_rating: mp.skillRating,
       skill_notes: mp.skillNotes || '',
       mentor_name: mentorUser.fullName || '',
+    };
+  });
+
+  // 11. Student Documents (uploaded certificates + the system Student Details Form)
+  //
+  // This is the data that was previously missing entirely: the record book read
+  // only academic/profile data, so documents uploaded through Student Documents
+  // appeared in the portal but never in the Official Institutional Record Book.
+  // Scoped strictly by this student's id, so a record book can only ever contain
+  // the documents of the student it was generated for.
+  const documentDocs = await StudentDocument.find({ studentId: studentDoc._id }).sort({
+    isPrimary: -1,
+    uploadedAt: -1,
+  });
+
+  const formatDocDate = (value: any): string => {
+    if (!value) return '';
+    const dt = value instanceof Date ? value : new Date(value);
+    if (isNaN(dt.getTime())) return String(value);
+    return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  };
+
+  const studentDocuments = documentDocs.map((d: any) => {
+    // The system-generated Student Details Form IS this very dossier: it is
+    // written to disk by syncStudentDetailsPdf() as the output of
+    // generateStudentPdf(). It is listed for completeness but must never be
+    // embedded, or each regeneration would embed the previous one and grow
+    // without bound.
+    const isSystemForm = Boolean(d.isPrimary) || d.documentType === 'student_details_form';
+    const eventDetails = [d.eventName, d.organizer, d.eventDate].filter(Boolean).join(' | ');
+    return {
+      id: d._id.toString(),
+      title: d.title || d.fileName || 'Document',
+      file_name: d.fileName || d.title || 'Document',
+      document_type: isSystemForm
+        ? 'Student Details Form'
+        : d.documentType === 'other'
+          ? 'Other Document'
+          : 'Certificate',
+      category: d.category || 'Other',
+      event_details: eventDetails || d.description || 'N/A',
+      uploaded_on: formatDocDate(d.uploadedAt),
+      verification_status: d.verificationStatus || 'Pending',
+      is_system_form: isSystemForm,
+      file_type: d.fileType || 'application/pdf',
+      file_size: d.fileSize || 0,
+      file_url: d.fileUrl || '',
     };
   });
 
@@ -590,6 +642,168 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
     currentY = (doc as any).lastAutoTable.finalY + 6;
   }
 
+  // SECTION 8: STUDENT DOCUMENTS & CERTIFICATES OFFICIAL ARCHIVE
+  //
+  // Every document on the student's record is listed here with its metadata, and
+  // the actual file is embedded: images inline on the following pages, PDFs as
+  // annexure pages appended after the signed record (jsPDF cannot merge PDFs on
+  // its own, so pdf-lib performs that final append).
+  if (currentY > pageHeight - 70) {
+    doc.addPage();
+    renderHeader(false);
+    currentY = 38;
+  }
+
+  const uploadedCount = studentDocuments.filter((d: any) => !d.is_system_form).length;
+  const docRows =
+    studentDocuments.length > 0
+      ? studentDocuments.map((d: any, i: number) => [
+          String(i + 1),
+          d.title.length > 38 ? `${d.title.slice(0, 37)}…` : d.title,
+          `${d.document_type}\n${d.category}`,
+          d.event_details.length > 46 ? `${d.event_details.slice(0, 45)}…` : d.event_details,
+          d.uploaded_on,
+          d.verification_status,
+        ])
+      : [['—', 'No documents on record.', '-', '-', '-', '-']];
+
+  autoTable(doc, {
+    startY: currentY,
+    margin: { left: margin, right: margin },
+    theme: 'grid',
+    head: [
+      [
+        {
+          content: '8. STUDENT DOCUMENTS & CERTIFICATES – OFFICIAL ARCHIVE',
+          colSpan: 6,
+          styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' },
+        },
+      ],
+      ['#', 'Document Name', 'Type / Category', 'Event / Details', 'Upload Date', 'Status'],
+    ],
+    body: docRows,
+    headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold' },
+    styles: { fontSize: 7.5, cellPadding: 2 },
+    columnStyles: {
+      0: { cellWidth: 8, halign: 'center' },
+      1: { fontStyle: 'bold', cellWidth: 40 },
+      2: { cellWidth: 30 },
+      3: { cellWidth: 42 },
+      4: { cellWidth: 24, halign: 'center' },
+      5: { cellWidth: 24, halign: 'center' },
+    },
+  });
+
+  currentY = (doc as any).lastAutoTable.finalY + 5;
+
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(7.5);
+  doc.setTextColor(100, 100, 100);
+  doc.text(
+    `${uploadedCount} student-uploaded document(s) on record. Certificate scans are reproduced in full as annexures following the signed record. Verification is carried out by the assigned mentor / administrator.`,
+    margin,
+    currentY
+  );
+  currentY += 8;
+
+  // ---- Embed the actual files -------------------------------------------------
+  // Images are drawn inline; PDFs are collected and appended after the record is
+  // signed. Anything that cannot be embedded is reported, never silently dropped.
+  const EMBED_LIMITS = { images: 25, pdfFiles: 25 };
+  const IMAGE_FORMATS: Record<string, string> = {
+    'image/png': 'PNG',
+    'image/jpeg': 'JPEG',
+    'image/jpg': 'JPEG',
+  };
+
+  const annexurePdfs: Array<{ meta: any; doc: PDFDocument; pages: number }> = [];
+  let imageCount = 0;
+  const notEmbedded: string[] = [];
+
+  for (const d of studentDocuments) {
+    if (d.is_system_form) continue; // never self-embed this dossier
+
+    const absPath = resolveStoredUploadPath(d.file_url);
+    if (!absPath || !fs.existsSync(absPath)) {
+      notEmbedded.push(`${d.file_name} (file not on disk)`);
+      continue;
+    }
+
+    const mime = (d.file_type || '').toLowerCase();
+
+    if (mime === 'application/pdf') {
+      if (annexurePdfs.length >= EMBED_LIMITS.pdfFiles) {
+        notEmbedded.push(`${d.file_name} (annexure limit reached)`);
+        continue;
+      }
+      try {
+        // Loaded once here and reused below, so each file is parsed only once.
+        const src = await PDFDocument.load(fs.readFileSync(absPath), { ignoreEncryption: true });
+        annexurePdfs.push({ meta: d, doc: src, pages: src.getPageCount() });
+      } catch (e: any) {
+        notEmbedded.push(`${d.file_name} (unreadable PDF)`);
+        console.error('generateStudentPdf: could not read document', absPath, e?.message);
+      }
+      continue;
+    }
+
+    const fmt = IMAGE_FORMATS[mime];
+    if (!fmt) {
+      notEmbedded.push(`${d.file_name} (unsupported type ${d.file_type || 'unknown'})`);
+      continue;
+    }
+    if (imageCount >= EMBED_LIMITS.images) {
+      notEmbedded.push(`${d.file_name} (image limit reached)`);
+      continue;
+    }
+
+    try {
+      const dataUrl = `data:${mime};base64,${fs.readFileSync(absPath).toString('base64')}`;
+      const props = doc.getImageProperties(dataUrl);
+
+      doc.addPage();
+      renderHeader(false);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      doc.text(`ANNEXURE IMAGE – ${d.title}`, margin, 40, { maxWidth: pageWidth - margin * 2 });
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(90, 90, 90);
+      doc.text(
+        `${d.document_type} | ${d.category} | Uploaded: ${d.uploaded_on} | Status: ${d.verification_status} | File: ${d.file_name}`,
+        margin,
+        45,
+        { maxWidth: pageWidth - margin * 2 }
+      );
+
+      // Fit the image inside the printable area, preserving aspect ratio.
+      const maxW = pageWidth - margin * 2;
+      const maxH = pageHeight - 60;
+      const ratio = props.width > 0 && props.height > 0 ? props.height / props.width : 0.7;
+      let drawW = maxW;
+      let drawH = drawW * ratio;
+      if (drawH > maxH) {
+        drawH = maxH;
+        drawW = drawH / ratio;
+      }
+      doc.addImage(dataUrl, fmt, margin + (maxW - drawW) / 2, 50, drawW, drawH);
+      imageCount++;
+    } catch (e: any) {
+      notEmbedded.push(`${d.file_name} (image could not be rendered)`);
+      console.error('generateStudentPdf: could not embed image', absPath, e?.message);
+    }
+  }
+
+  // If image annexures consumed the current page, start the signed record on a
+  // fresh page so the signature block is never printed on top of a scan.
+  if (imageCount > 0) {
+    doc.addPage();
+    renderHeader(false);
+    currentY = 38;
+  }
+
   // INSTITUTIONAL SIGNATURE BLOCK (Ensure it fits or create new page)
   if (currentY > pageHeight - 45) {
     doc.addPage();
@@ -638,5 +852,140 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
     doc.text(`Page ${i} of ${totalPages}`, pageWidth - margin, pageHeight - 8, { align: 'right' });
   }
 
-  return new Uint8Array(doc.output('arraybuffer'));
+  const dossierBytes = new Uint8Array(doc.output('arraybuffer'));
+
+  // ---- APPEND PDF ANNEXURES --------------------------------------------------
+  // jsPDF cannot merge existing PDFs, so the uploaded PDF documents are appended
+  // here with pdf-lib, each preceded by its own annexure detail sheet. If this
+  // step fails for any reason the signed dossier is still returned intact — a
+  // document-management problem must never cost the student their record book.
+  if (annexurePdfs.length === 0 && notEmbedded.length === 0) {
+    return dossierBytes;
+  }
+
+  try {
+    const merged = await PDFDocument.load(dossierBytes);
+
+    for (const item of annexurePdfs) {
+      // Annexure detail sheet, built with the same institutional chrome.
+      const sheet = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const sw = sheet.internal.pageSize.getWidth();
+      const sh = sheet.internal.pageSize.getHeight();
+      const sm = 14;
+
+      sheet.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      sheet.rect(sm, 10, sw - sm * 2, 2.5, 'F');
+      if (logoBase64) {
+        try {
+          sheet.addImage(logoBase64, 'PNG', sm + 2, 13.5, 17, 17);
+        } catch {
+          /* logo optional */
+        }
+      }
+      sheet.setFont('helvetica', 'bold');
+      sheet.setFontSize(14);
+      sheet.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      sheet.text('K.S.R. COLLEGE OF ENGINEERING', sw / 2, 17, { align: 'center' });
+      sheet.setFont('helvetica', 'normal');
+      sheet.setFontSize(8);
+      sheet.setTextColor(80, 80, 80);
+      sheet.text('OFFICIAL DIGITAL MENTOR–MENTEE RECORD BOOK – DOCUMENT ANNEXURE', sw / 2, 30.5, { align: 'center' });
+      sheet.setDrawColor(200, 200, 200);
+      sheet.setLineWidth(0.5);
+      sheet.line(sm, 33, sw - sm, 33);
+
+      let y = 44;
+      sheet.setFont('helvetica', 'bold');
+      sheet.setFontSize(11);
+      sheet.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      sheet.text(`ANNEXURE ${item.meta.title}`, sm, y, { maxWidth: sw - sm * 2 });
+      y += 9;
+
+      const detailRows: string[][] = [
+        ['Student', student.full_name],
+        ['Register Number', student.register_number],
+        ['Document Name', item.meta.title],
+        ['Stored File', item.meta.file_name],
+        ['Type / Category', `${item.meta.document_type} / ${item.meta.category}`],
+        ['Event / Details', item.meta.event_details],
+        ['Upload Date', item.meta.uploaded_on],
+        ['Verification Status', item.meta.verification_status],
+        ['File Type / Size', `${item.meta.file_type} / ${item.meta.file_size} bytes`],
+        ['Pages Reproduced', String(item.pages)],
+      ];
+
+      autoTable(sheet, {
+        startY: y,
+        margin: { left: sm, right: sm },
+        theme: 'grid',
+        body: detailRows.map(([k, v]) => [
+          { content: k, styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+          String(v || 'N/A'),
+        ]),
+        styles: { fontSize: 8.5, cellPadding: 2.2 },
+        columnStyles: { 0: { cellWidth: 46 } },
+      });
+
+      y = (sheet as any).lastAutoTable.finalY + 8;
+      sheet.setFont('helvetica', 'italic');
+      sheet.setFontSize(7.5);
+      sheet.setTextColor(100, 100, 100);
+      sheet.text(
+        `The following ${item.pages} page(s) are a verbatim reproduction of the document uploaded by the student through Student Documents on ${item.meta.uploaded_on}.`,
+        sm,
+        y,
+        { maxWidth: sw - sm * 2 }
+      );
+
+      sheet.setFontSize(7.5);
+      sheet.setTextColor(120, 120, 120);
+      sheet.text(
+        `KSRCE Digital Mentor–Mentee System | Reg No: ${student.register_number} | Generated on: ${reportDate}`,
+        sm,
+        sh - 8
+      );
+
+      const sheetDoc = await PDFDocument.load(sheet.output('arraybuffer'));
+      const sheetPages = await merged.copyPages(sheetDoc, sheetDoc.getPageIndices());
+      sheetPages.forEach((p) => merged.addPage(p));
+
+      const srcDoc = item.doc;
+      const srcPages = await merged.copyPages(srcDoc, srcDoc.getPageIndices());
+      srcPages.forEach((p) => merged.addPage(p));
+    }
+
+    if (notEmbedded.length > 0) {
+      const notice = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const nw = notice.internal.pageSize.getWidth();
+      notice.setFont('helvetica', 'bold');
+      notice.setFontSize(12);
+      notice.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      notice.text('ANNEXURE EMBEDDING NOTICE', nw / 2, 50, { align: 'center' });
+      notice.setFont('helvetica', 'normal');
+      notice.setFontSize(8.5);
+      notice.setTextColor(60, 60, 60);
+      notice.text(
+        'The documents listed below are registered in Section 8 of this record book but could not be reproduced as annexures. They remain available in full through the Student Documents screen.',
+        nw / 2,
+        62,
+        { align: 'center', maxWidth: nw - 40 }
+      );
+      autoTable(notice, {
+        startY: 78,
+        margin: { left: 20, right: 20 },
+        theme: 'grid',
+        head: [['Document']],
+        body: notEmbedded.map((n) => [n]),
+        styles: { fontSize: 8, cellPadding: 2 },
+      });
+      const noticeDoc = await PDFDocument.load(notice.output('arraybuffer'));
+      const noticePages = await merged.copyPages(noticeDoc, noticeDoc.getPageIndices());
+      noticePages.forEach((p) => merged.addPage(p));
+    }
+
+    return new Uint8Array(await merged.save());
+  } catch (e: any) {
+    console.error('generateStudentPdf: annexure append failed, returning signed dossier only:', e?.message);
+    return dossierBytes;
+  }
 }

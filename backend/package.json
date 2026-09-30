@@ -27,6 +27,7 @@
     "jspdf-autotable": "^3.8.4",
     "mongoose": "^9.10.2",
     "multer": "^2.4.0",
+    "pdf-lib": "^1.17.1",
     "sqlite3": "^5.1.7",
     "zod": "^3.24.2"
   },

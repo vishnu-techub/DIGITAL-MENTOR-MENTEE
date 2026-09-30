@@ -875,6 +875,259 @@ async function main() {
       fix: 'public express.static removed; authenticated ownership-checked inline/download + guarded legacy handler' };
   });
 
+  // 20b. Student Documents -> Official Institutional Record Book integration.
+  //
+  // The record book generator used to read only academic/profile data, so an
+  // uploaded certificate appeared in Student Documents but never in the Official
+  // Institutional Record Book. This drives the whole required chain with a real
+  // file: upload -> database -> linked to student -> listed -> record book
+  // generated -> document actually present in the downloaded PDF.
+  await check('Uploaded documents are embedded in the Official Institutional Record Book', async () => {
+    const { PDFDocument: PDFLib, StandardFonts, rgb } = await import('pdf-lib');
+
+    // A genuine 2-page PDF, deliberately NOT A4 so the copied pages are
+    // structurally distinguishable from the dossier's own pages.
+    const cert = await PDFLib.create();
+    for (const label of ['AO2026-1395-CERT-PAGE-ONE', 'AO2026-1395-CERT-PAGE-TWO']) {
+      const p = cert.addPage([400, 600]);
+      const font = await cert.embedFont(StandardFonts.HelveticaBold);
+      p.drawText(label, { x: 24, y: 540, size: 15, font, color: rgb(0.04, 0.14, 0.27) });
+    }
+    const certBytes = Buffer.from(await cert.save());
+
+    const fd = new FormData();
+    fd.append('file', new Blob([certBytes], { type: 'application/pdf' }), 'AO2026-1395.pdf');
+    fd.append('title', 'Academic Order of Merit AO2026-1395');
+    fd.append('category', 'Award Certificate');
+    fd.append('eventName', 'Annual Awards 2026');
+    fd.append('organizer', 'K.S.R. College of Engineering');
+    fd.append('eventDate', '2026-08-15');
+    fd.append('description', 'Awarded for academic excellence.');
+    const up = await http('POST', '/api/documents/upload', { token: tokens.student, raw: fd });
+    assert(up.status < 300, `upload AO2026-1395.pdf -> ${up.status}: ${JSON.stringify(up.body)}`);
+    const newId = up.body?.data?._id || up.body?.data?.id;
+    assert(newId, `upload returned no id: ${JSON.stringify(up.body)}`);
+
+    // (a) linked to the uploader, and exactly one record (no duplicates).
+    const rec: any = await StudentDocument.findById(newId).lean();
+    assert(String(rec.studentId) === String(stuA._id), 'document is not linked to the uploading student');
+    assert(rec.fileName === 'AO2026-1395.pdf', `stored fileName = ${rec.fileName}`);
+    // The event metadata typed in the upload form must be persisted, not dropped.
+    assert(rec.eventName === 'Annual Awards 2026', `stored eventName = "${rec.eventName}"`);
+    assert(rec.organizer === 'K.S.R. College of Engineering', `stored organizer = "${rec.organizer}"`);
+    assert(rec.eventDate === '2026-08-15', `stored eventDate = "${rec.eventDate}"`);
+    const dupes = await StudentDocument.countDocuments({ studentId: stuA._id, fileName: 'AO2026-1395.pdf' });
+    assert(dupes === 1, `expected exactly 1 record, found ${dupes}`);
+
+    // (b) visible in Student Documents.
+    const list = await http('GET', `/api/documents/student/${stuA._id}`, { token: tokens.student });
+    assert(list.status === 200, `list -> ${list.status}`);
+    const arr = Array.isArray(list.body?.data) ? list.body.data : list.body?.data?.documents || [];
+    const listed = arr.find((d: any) => d._id === newId);
+    assert(listed, 'AO2026-1395.pdf is missing from Student Documents');
+    assert(listed.category === 'Award Certificate', `category = ${listed.category}`);
+
+    // (c) the record book must contain it.
+    const book = await http('GET', `/api/pdf/student/${stuA._id}`, { token: tokens.student });
+    assert(book.status === 200, `record book -> ${book.status}: ${JSON.stringify(book.body)}`);
+    const buf = book.body as Buffer;
+    assert(buf.subarray(0, 5).toString() === '%PDF-', 'record book is not a PDF');
+
+    // Metadata must be in the dossier text (section 8 is jsPDF-generated, so its
+    // content stream is compressed and must be inflated to be read).
+    const zlib = await import('node:zlib');
+    const raw = buf.toString('latin1');
+    let text = '';
+    const re = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(raw))) {
+      try {
+        text += zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1');
+      } catch {
+        text += m[1];
+      }
+    }
+    const literals = [...text.matchAll(/\((?:\\.|[^\\()])*\)/g)]
+      .map((x) => x[0].slice(1, -1).replace(/\\([()\\])/g, '$1'))
+      .join(' ');
+    const metaInBook = literals.includes('Academic Order of Merit AO2026-1395');
+    const catInBook = literals.includes('Award Certificate');
+    // The event metadata typed at upload must reach the record book too. Cell
+    // text is wrapped into one literal per line, and the literals are joined with
+    // a space, so a phrase spanning a line break still matches.
+    const eventInBook = literals.includes('Annual Awards 2026');
+    assert(metaInBook, 'document title missing from Section 8 of the record book');
+    assert(catInBook, 'document category missing from Section 8 of the record book');
+    assert(eventInBook, 'uploaded event name missing from Section 8 of the record book');
+
+    // The actual certificate pages must be physically present in the output.
+    const merged = await PDFLib.load(buf);
+    const sizes = merged.getPages().map((p: any) => {
+      const s = p.getSize();
+      return `${Math.round(s.width)}x${Math.round(s.height)}`;
+    });
+    const certPages = sizes.filter((s: string) => s === '400x600');
+    assert(
+      certPages.length === 2,
+      `expected the 2 uploaded certificate pages in the output, found ${certPages.length} (page sizes: ${sizes.join(',')})`
+    );
+
+    // The certificate's own content came across, not just blank pages. pdf-lib
+    // serialises copied pages with FlateDecode streams and writes drawn text as a
+    // hex string, so the text is only visible after inflating and hex-decoding.
+    const upText = text.toUpperCase();
+    const hexOf = (s: string) => Buffer.from(s, 'latin1').toString('hex').toUpperCase();
+    const certTextPresent =
+      upText.includes(hexOf('AO2026-1395-CERT-PAGE-ONE')) && upText.includes(hexOf('AO2026-1395-CERT-PAGE-TWO'));
+    assert(certTextPresent, 'uploaded certificate page content not found in the generated PDF');
+
+    // (d) another student's record book must NOT contain this document. Compared
+    // structurally, so it cannot pass vacuously.
+    const otherBook = await http('GET', `/api/pdf/student/${stuA._id}`, { token: tokens.studentB });
+    assert(otherBook.status === 403, `student reading another student's record book expected 403 got ${otherBook.status}`);
+
+    const adminBook = await http('GET', `/api/pdf/student/${stuB._id}`, { token: tokens.admin });
+    assert(adminBook.status === 200, `admin reading stuB record book -> ${adminBook.status}`);
+    const adminMerged = await PDFLib.load(adminBook.body as Buffer);
+    const adminSizes = adminMerged
+      .getPages()
+      .map((p: any) => { const s = p.getSize(); return `${Math.round(s.width)}x${Math.round(s.height)}`; });
+    const leaked = adminSizes.filter((s: string) => s === '400x600');
+    assert(leaked.length === 0, `certificate pages leaked into another student's record book (${leaked.length} found)`);
+    let adminText = '';
+    const adminRaw = (adminBook.body as Buffer).toString('latin1');
+    const re2 = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+    let m2: RegExpExecArray | null;
+    while ((m2 = re2.exec(adminRaw))) {
+      try { adminText += zlib.inflateSync(Buffer.from(m2[1], 'latin1')).toString('latin1'); }
+      catch { adminText += m2[1]; }
+    }
+    assert(!adminText.toUpperCase().includes(hexOf('AO2026-1395-CERT-PAGE-ONE')), 'certificate text leaked into another student record book');
+
+    // (e) existing documents were not lost by generating the book.
+    const stillThere = await StudentDocument.countDocuments({ studentId: stuA._id });
+    assert(stillThere >= 2, `generating the record book changed the document count (${stillThere})`);
+    const viewOk = await http('GET', `/api/documents/${newId}/file`, { token: tokens.student });
+    assert(viewOk.status === 200, `document no longer viewable after generation -> ${viewOk.status}`);
+    const delOk = await http('DELETE', `/api/documents/${newId}`, { token: tokens.student });
+    assert(delOk.status === 200, `document no longer deletable after generation -> ${delOk.status}`);
+
+    return { status: 'PASS',
+      evidence: `upload AO2026-1395.pdf (2 pages, 400x600) -> ${up.status}, 1 record linked to student ${String(stuA._id).slice(-6)} with eventName/organizer/eventDate persisted; listed in Student Documents with category "${listed.category}"; record book -> 200 ${buf.length} B, Section 8 lists the title, category and event name, output has ${sizes.length} pages of which ${certPages.length} are the 400x600 certificate pages and both certificate page texts are present after inflation; student->other student ${otherBook.status}, admin->stuB book ${adminBook.status} with 0 400x600 pages and no certificate text; document still viewable (${viewOk.status}) and deletable (${delOk.status}) after generation`,
+      fix: 'pdf.service.generateStudentPdf now reads StudentDocument for the student and renders Section 8 metadata plus embedded annexures (images inline, PDFs appended via pdf-lib)' };
+  });
+
+  // 20c. Image documents take a different branch (jsPDF addImage, not pdf-lib
+  // copyPages). A failure there is caught and reported rather than thrown, so it
+  // would fail silently -- hence an explicit check.
+  await check('Image documents are embedded inline in the record book', async () => {
+    const zlib = await import('node:zlib');
+    const { PDFDocument: PDFLib } = await import('pdf-lib');
+
+    // Hand-built genuine PNG (the upload endpoint sniffs magic bytes, so it has
+    // to be a real PNG). Deliberately odd dimensions to make the embedded image
+    // unambiguous in the generated PDF.
+    const W = 137, H = 89;
+    const rawRows = Buffer.alloc((W * 3 + 1) * H);
+    for (let y = 0; y < H; y++) {
+      const row = y * (W * 3 + 1);
+      rawRows[row] = 0;
+      for (let x = 0; x < W; x++) {
+        const o = row + 1 + x * 3;
+        rawRows[o] = 180; rawRows[o + 1] = 40; rawRows[o + 2] = 40;
+      }
+    }
+    const chunk = (type: string, data: Buffer) => {
+      const len = Buffer.alloc(4);
+      len.writeUInt32BE(data.length, 0);
+      const td = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+      const crc = Buffer.alloc(4);
+      crc.writeUInt32BE(zlib.crc32(td) >>> 0, 0);
+      return Buffer.concat([len, td, crc]);
+    };
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(W, 0);
+    ihdr.writeUInt32BE(H, 4);
+    ihdr[8] = 8; ihdr[9] = 2;
+    const pngBytes = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk('IHDR', ihdr),
+      chunk('IDAT', zlib.deflateSync(rawRows)),
+      chunk('IEND', Buffer.alloc(0)),
+    ]);
+
+    const fd = new FormData();
+    fd.append('file', new Blob([pngBytes], { type: 'image/png' }), 'nss-activity-photo.png');
+    fd.append('title', 'NSS Activity Camp Photo');
+    fd.append('category', 'Activity Photo');
+    const up = await http('POST', '/api/documents/upload', { token: tokens.student, raw: fd });
+    assert(up.status < 300, `upload PNG -> ${up.status}: ${JSON.stringify(up.body)}`);
+    const imgId = up.body?.data?._id || up.body?.data?.id;
+    assert(imgId, 'upload returned no id');
+
+    const book = await http('GET', `/api/pdf/student/${stuA._id}`, { token: tokens.student });
+    assert(book.status === 200, `record book -> ${book.status}`);
+    const buf = book.body as Buffer;
+
+    // jsPDF writes images as a FlateDecode XObject; inflate to inspect.
+    const rawBuf = buf.toString('latin1');
+    let text = '';
+    const re = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(rawBuf))) {
+      try { text += zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1'); }
+      catch { text += m[1]; }
+    }
+    // jsPDF stores the image as an indirect /XObject object in the raw file (the
+    // page content stream only references it via /I0 Do), so the dictionary is
+    // matched against the raw bytes, not the inflated streams.
+    const squashed = rawBuf.replace(/\s+/g, '');
+    const xobjRe = /\/Type\/XObject\/Subtype\/Image\/Width137\/Height89\//;
+    assert(
+      xobjRe.test(squashed),
+      `embedded image XObject (${W}x${H}) not found in the generated record book`
+    );
+    // The page must actually reference it.
+    assert(/\/I0\s*Do/.test(text), 'no page content stream draws the image');
+
+    // And its caption metadata must be in Section 8.
+    const literals = [...text.matchAll(/\((?:\\.|[^\\()])*\)/g)]
+      .map((x) => x[0].slice(1, -1).replace(/\\([()\\])/g, '$1'))
+      .join(' ');
+    assert(literals.includes('NSS Activity Camp Photo'), 'image document title missing from Section 8');
+
+    // Un-embeddable files must be reported, never silently dropped -- but a valid
+    // PNG must not be among them. Other checks leave deliberately malformed stub
+    // PDFs in the database which legitimately raise the notice, so the notice
+    // page is located first and the PNG asserted absent from that page alone (its
+    // file name also appears in its own image caption, by design).
+    const hexOf = (s: string) => Buffer.from(s, 'latin1').toString('hex').toUpperCase();
+    const streams: string[] = [];
+    const reS = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+    let ms: RegExpExecArray | null;
+    while ((ms = reS.exec(rawBuf))) {
+      let decoded = '';
+      try { decoded = zlib.inflateSync(Buffer.from(ms[1], 'latin1')).toString('latin1'); }
+      catch { decoded = ms[1]; }
+      streams.push(decoded.toUpperCase());
+    }
+    const noticeIdx = streams.findIndex((s) => s.includes(hexOf('ANNEXURE EMBEDDING NOTICE')));
+    const noticeHasPng =
+      noticeIdx >= 0 && streams[noticeIdx].includes(hexOf('nss-activity-photo.png'));
+    assert(!noticeHasPng, 'a valid PNG was reported in the annexure embedding notice');
+
+    // Still a structurally valid PDF.
+    const loaded = await PDFLib.load(buf);
+    assert(loaded.getPageCount() > 0, 'generated record book has no pages');
+
+    const delOk = await http('DELETE', `/api/documents/${imgId}`, { token: tokens.student });
+    assert(delOk.status === 200, `cleanup delete -> ${delOk.status}`);
+
+    return { status: 'PASS',
+      evidence: `upload nss-activity-photo.png (genuine ${W}x${H} PNG) -> ${up.status}; record book -> 200 ${buf.length} B containing a /Subtype/Image XObject of exactly ${W}x${H}, drawn via /I0 Do (inline jsPDF addImage), plus the Section 8 caption "NSS Activity Camp Photo"; annexure embedding notice ${noticeIdx >= 0 ? 'present (for pre-existing malformed stub PDFs) and does not list the PNG' : 'absent'}; ${loaded.getPageCount()} pages, valid PDF`,
+      fix: 'generateStudentPdf embeds image documents inline with doc.addImage, aspect-fitted, and only reports the annexure notice for files it genuinely could not embed' };
+  });
+
   // 21. Delete All retains the Student Details Form
   await check('Delete All removes documents but retains Student Details Form', async () => {
     const form = async (title: string, cat: string) => {
