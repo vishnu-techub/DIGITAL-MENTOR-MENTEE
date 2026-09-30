@@ -2,11 +2,10 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
-import path from 'path';
 import { connectDB, isDBConnected } from './config/database.js';
 import { ensureSystemBootstrap } from './database/bootstrap.js';
 import { authenticate } from './middleware/auth.middleware.js';
-import { serveLegacyUpload } from './modules/documents/document.controller.js';
+import { serveLegacyUpload, UPLOADS_DIR } from './modules/documents/document.controller.js';
 
 import authRoutes from './modules/auth/auth.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
@@ -153,7 +152,7 @@ async function startServer() {
       console.log(`K.S.R. College of Engineering (Tiruchengode)`);
       console.log(`Running on: http://localhost:${PORT}`);
       console.log(`Health endpoint: http://localhost:${PORT}/api/health`);
-      console.log(`Secure document storage (authenticated): ${path.resolve(process.cwd(), 'uploads', 'documents')}`);
+      console.log(`Secure document storage (authenticated): ${UPLOADS_DIR}`);
       console.log(`============================================================`);
     });
   } catch (err: any) {

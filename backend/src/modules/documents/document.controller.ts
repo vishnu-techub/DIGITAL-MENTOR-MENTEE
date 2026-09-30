@@ -10,12 +10,10 @@ import { logAudit } from '../../middleware/audit.middleware.js';
 import { ROLES } from '../../config/constants.js';
 import { checkStudentAccess, toIdString } from '../../utils/access.util.js';
 import { syncStudentDetailsPdf } from './student-details-pdf.service.js';
+import { resolveStoredUploadPath, resolveWritableUploadsDir } from '../../config/storage.js';
 
-// Ensure upload directory exists
-export const UPLOADS_DIR = path.resolve(process.cwd(), 'uploads', 'documents');
-if (!fs.existsSync(UPLOADS_DIR)) {
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-}
+// Ensure a writable upload directory exists (safe on read-only hosts such as Render)
+export const UPLOADS_DIR = resolveWritableUploadsDir('documents');
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10MB
 
@@ -85,14 +83,7 @@ function sniffFileType(filePath: string): 'application/pdf' | 'image/png' | 'ima
  * the uploads directory (path traversal defence).
  */
 function resolveStoredPath(fileUrl: string): string | null {
-  if (!fileUrl || typeof fileUrl !== 'string') return null;
-  const relative = fileUrl.replace(/^\/+/, '');
-  const absolute = path.resolve(process.cwd(), relative);
-  const root = path.resolve(UPLOADS_DIR);
-  if (absolute !== root && !absolute.startsWith(root + path.sep)) {
-    return null;
-  }
-  return absolute;
+  return resolveStoredUploadPath(fileUrl);
 }
 
 /** Locate a Student by ObjectId or register number. */

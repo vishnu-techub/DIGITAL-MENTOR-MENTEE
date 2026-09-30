@@ -11,12 +11,10 @@ import { Faculty } from '../../models/Faculty.model.js';
 import { ROLES } from '../../config/constants.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
+import { resolveStoredUploadPath, resolveWritableUploadsDir } from '../../config/storage.js';
 
-// Setup Uploads Directory for Progress Certificates
-const UPLOADS_DIR = path.resolve(process.cwd(), 'uploads', 'progress');
-if (!fs.existsSync(UPLOADS_DIR)) {
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-}
+// Setup a Writable Uploads Directory for Progress Certificates
+const UPLOADS_DIR = resolveWritableUploadsDir('progress');
 
 // Multer Storage Configuration
 const storage = multer.diskStorage({
@@ -233,8 +231,8 @@ export async function updateStudentProgress(req: AuthRequest, res: Response) {
     if (file) {
       // Remove old file if exists
       if (record.certificateUrl) {
-        const oldPath = path.resolve(process.cwd(), record.certificateUrl.replace(/^\//, ''));
-        if (fs.existsSync(oldPath)) {
+        const oldPath = resolveStoredUploadPath(record.certificateUrl);
+        if (oldPath && fs.existsSync(oldPath)) {
           try { fs.unlinkSync(oldPath); } catch (_) {}
         }
       }
@@ -286,8 +284,8 @@ export async function deleteStudentProgress(req: AuthRequest, res: Response) {
 
     // Remove file if exists
     if (record.certificateUrl) {
-      const filePath = path.resolve(process.cwd(), record.certificateUrl.replace(/^\//, ''));
-      if (fs.existsSync(filePath)) {
+      const filePath = resolveStoredUploadPath(record.certificateUrl);
+      if (filePath && fs.existsSync(filePath)) {
         try { fs.unlinkSync(filePath); } catch (_) {}
       }
     }

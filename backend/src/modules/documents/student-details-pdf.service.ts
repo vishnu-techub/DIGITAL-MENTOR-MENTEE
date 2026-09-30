@@ -3,6 +3,7 @@ import path from 'path';
 import mongoose from 'mongoose';
 import { Student, StudentDocument } from '../../models/index.js';
 import { generateStudentPdf } from '../pdf/pdf.service.js';
+import { resolveWritableUploadsDir } from '../../config/storage.js';
 
 /**
  * Synchronizes the Student Details Form PDF for a given student.
@@ -36,10 +37,7 @@ export async function syncStudentDetailsPdf(
     // Generate KSRCE Student Details PDF Buffer
     const pdfBytes = await generateStudentPdf(student._id.toString());
 
-    const UPLOADS_DIR = path.resolve(process.cwd(), 'uploads', 'documents');
-    if (!fs.existsSync(UPLOADS_DIR)) {
-      fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-    }
+    const UPLOADS_DIR = resolveWritableUploadsDir('documents');
 
     const safeRegNo = student.registerNumber.replace(/[^a-zA-Z0-9_-]/g, '_');
     const diskFileName = `Student_Details_Form_${safeRegNo}_${student._id.toString()}.pdf`;
