@@ -1,4 +1,5 @@
 import https from 'https';
+import { checkGrammarWithSapling } from './sapling.service.js';
 
 /**
  * AI Assistant & Grammar Engine for KSRCE Mentoring Portal
@@ -243,48 +244,16 @@ function getInstitutionalBotAnswer(question: string, q: string): AiBotResponse {
 }
 
 /**
- * 2. Auto Spelling + Grammar Correction Engine (Writing Assistance)
+ * 2. Auto Spelling + Grammar Correction Engine (Sapling AI Writing Assistance)
  * Strictly preserves mentor's meaning without inventing facts.
  */
 export async function correctGrammarAndSpelling(text: string): Promise<GrammarCheckResponse> {
-  const original = text || '';
-  if (!original.trim()) {
-    return {
-      original,
-      corrected: original,
-      hasCorrections: false,
-      source: 'INSTITUTIONAL_GRAMMAR_ENGINE',
-    };
-  }
-
-  const apiKey = process.env.AI_API_KEY?.trim();
-  const model = process.env.AI_MODEL?.trim() || 'gemini-1.5-flash';
-
-  if (apiKey && original.length > 8) {
-    try {
-      const llmCorrected = await callExternalGrammarLlm(apiKey, model, original);
-      if (llmCorrected && llmCorrected.trim() !== original.trim()) {
-        return {
-          original,
-          corrected: llmCorrected.trim(),
-          hasCorrections: true,
-          source: 'LLM',
-        };
-      }
-    } catch (err: any) {
-      console.warn('External grammar check failed, applying rule-based engine:', err.message);
-    }
-  }
-
-  // Rule-based spelling, capitalization, punctuation & grammar normalizer
-  const corrected = runRuleBasedGrammarEngine(original);
-  const hasCorrections = corrected.trim() !== original.trim();
-
+  const result = await checkGrammarWithSapling(text);
   return {
-    original,
-    corrected,
-    hasCorrections,
-    source: 'INSTITUTIONAL_GRAMMAR_ENGINE',
+    original: result.original,
+    corrected: result.corrected,
+    hasCorrections: result.hasCorrections,
+    source: result.source === 'SAPLING' ? 'LLM' : 'INSTITUTIONAL_GRAMMAR_ENGINE',
   };
 }
 

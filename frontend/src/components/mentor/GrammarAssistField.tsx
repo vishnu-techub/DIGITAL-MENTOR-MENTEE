@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../../api/client';
-import { Sparkles, Check, X, RefreshCw } from 'lucide-react';
+import { Sparkles, Check, X, RefreshCw, AlertCircle } from 'lucide-react';
 
 interface GrammarAssistFieldProps {
   label: string;
@@ -31,100 +31,155 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
 }) => {
   const [checking, setChecking] = useState(false);
   const [suggestedCorrection, setSuggestedCorrection] = useState<string | null>(null);
+  const [explanation, setExplanation] = useState<string | null>(null);
   const [capturedOriginal, setCapturedOriginal] = useState<string>('');
   const [showSuggestion, setShowSuggestion] = useState(false);
   const [appliedFeedback, setAppliedFeedback] = useState(false);
   const [noIssuesFeedback, setNoIssuesFeedback] = useState(false);
-  
+  const [serviceError, setServiceError] = useState<string | null>(null);
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lastCheckedValueRef = useRef<string>('');
   const debounceTimerRef = useRef<any>(null);
   const feedbackTimerRef = useRef<any>(null);
+  const errorTimerRef = useRef<any>(null);
+  const requestIdRef = useRef<number>(0);
 
-  // Debounced check (900ms) after mentor stops typing
+  // Debounced check (750ms) after mentor stops typing
   useEffect(() => {
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
 
-    const trimmed = value.trim();
+    const trimmed = (value || '').trim();
+
+    // If user deleted or changed text away from what was checked, dismiss stale suggestions
+    if (showSuggestion && capturedOriginal && trimmed !== capturedOriginal) {
+      setShowSuggestion(false);
+      setSuggestedCorrection(null);
+      setExplanation(null);
+    }
+
+    // Do not check empty, very short (< 5 chars), or unchanged text
     if (!trimmed || trimmed === lastCheckedValueRef.current || trimmed.length < 5) {
       return;
     }
 
+    const currentReqId = ++requestIdRef.current;
+
     debounceTimerRef.current = setTimeout(async () => {
+      setChecking(true);
+      setServiceError(null);
+
       try {
         const res = await api.counselling.checkGrammar(trimmed);
+
+        // Cancel/ignore stale requests if mentor continued typing
+        if (currentReqId !== requestIdRef.current) {
+          return;
+        }
+
         lastCheckedValueRef.current = trimmed;
-        if (res.success && res.data && res.data.hasCorrections) {
-          const corrected = res.data.corrected.trim();
-          if (corrected && corrected !== trimmed) {
+
+        if (res.success && res.data) {
+          const hasErrors = Boolean(res.data.hasErrors ?? res.data.hasCorrections);
+          const corrected = (res.data.correctedText || res.data.corrected || '').trim();
+
+          // Section 4 Critical Validation:
+          // If originalText === correctedText while error claimed, do NOT show correction!
+          if (hasErrors && corrected && corrected !== trimmed) {
             setCapturedOriginal(trimmed);
             setSuggestedCorrection(corrected);
+            setExplanation(res.data.explanation || null);
             setShowSuggestion(true);
             onActiveFieldChange?.(fieldId);
           } else {
             setSuggestedCorrection(null);
+            setExplanation(null);
             setShowSuggestion(false);
           }
-        } else {
-          setSuggestedCorrection(null);
-          setShowSuggestion(false);
         }
       } catch (err) {
-        // Silent fail on background debounce
+        // Section 10: Graceful handling without breaking the counselling form
+        if (currentReqId === requestIdRef.current) {
+          setServiceError('Writing assistant temporarily unavailable.');
+          if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+          errorTimerRef.current = setTimeout(() => setServiceError(null), 4000);
+        }
+      } finally {
+        if (currentReqId === requestIdRef.current) {
+          setChecking(false);
+        }
       }
-    }, 900);
+    }, 750);
 
     return () => {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [value, fieldId, onActiveFieldChange]);
+  }, [value, fieldId, onActiveFieldChange, showSuggestion, capturedOriginal]);
 
   // Cleanup timers on unmount
   useEffect(() => {
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
     };
   }, []);
 
-  // Manual trigger
+  // Manual check trigger
   const handleManualCheck = async () => {
-    const trimmed = value.trim();
-    if (!trimmed) return;
+    const trimmed = (value || '').trim();
+    if (!trimmed || trimmed.length < 3) return;
+
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    const currentReqId = ++requestIdRef.current;
+
     setChecking(true);
+    setServiceError(null);
+    setNoIssuesFeedback(false);
+
     try {
       const res = await api.counselling.checkGrammar(trimmed);
+      if (currentReqId !== requestIdRef.current) return;
+
       lastCheckedValueRef.current = trimmed;
-      if (res.success && res.data && res.data.hasCorrections) {
-        const corrected = res.data.corrected.trim();
-        if (corrected && corrected !== trimmed) {
+
+      if (res.success && res.data) {
+        const hasErrors = Boolean(res.data.hasErrors ?? res.data.hasCorrections);
+        const corrected = (res.data.correctedText || res.data.corrected || '').trim();
+
+        if (hasErrors && corrected && corrected !== trimmed) {
           setCapturedOriginal(trimmed);
           setSuggestedCorrection(corrected);
+          setExplanation(res.data.explanation || null);
           setShowSuggestion(true);
-          setNoIssuesFeedback(false);
           onActiveFieldChange?.(fieldId);
         } else {
           setSuggestedCorrection(null);
+          setExplanation(null);
           setShowSuggestion(false);
           setNoIssuesFeedback(true);
-          setTimeout(() => setNoIssuesFeedback(false), 2500);
+          if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+          feedbackTimerRef.current = setTimeout(() => setNoIssuesFeedback(false), 2500);
         }
-      } else {
-        setSuggestedCorrection(null);
-        setShowSuggestion(false);
-        setNoIssuesFeedback(true);
-        setTimeout(() => setNoIssuesFeedback(false), 2500);
       }
     } catch (err) {
-      // Fallback
+      if (currentReqId === requestIdRef.current) {
+        setServiceError('Writing assistant temporarily unavailable.');
+        if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+        errorTimerRef.current = setTimeout(() => setServiceError(null), 4000);
+      }
     } finally {
-      setChecking(false);
+      if (currentReqId === requestIdRef.current) {
+        setChecking(false);
+      }
     }
   };
 
+  // Section 7: Use Correction
   const handleUseCorrection = () => {
     if (!suggestedCorrection) return;
 
@@ -136,19 +191,25 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
     // Mark as checked to prevent re-triggering debounce on the newly applied text
     lastCheckedValueRef.current = corrected.trim();
 
-    // Update parent React state (source of truth)
-    if (onUseCorrection && fieldId) {
-      onUseCorrection(fieldId, corrected);
-    } else {
-      onChange(corrected);
+    // 1. Direct native DOM textarea update (ensures immediate synchronization)
+    if (textareaRef.current) {
+      textareaRef.current.value = corrected;
+      textareaRef.current.dispatchEvent(new Event('input', { bubbles: true }));
     }
 
-    // Dismiss suggestion panel
+    // 2. React state & form update
+    onChange(corrected);
+    if (onUseCorrection && fieldId) {
+      onUseCorrection(fieldId, corrected);
+    }
+
+    // 3. Dismiss suggestion card
     setShowSuggestion(false);
     setSuggestedCorrection(null);
+    setExplanation(null);
     onActiveFieldChange?.(null);
 
-    // Show "Correction applied" success feedback
+    // 4. Show "Correction applied" feedback
     setAppliedFeedback(true);
     if (feedbackTimerRef.current) {
       clearTimeout(feedbackTimerRef.current);
@@ -158,6 +219,7 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
     }, 3000);
   };
 
+  // Section 8: Keep Original
   const handleKeepOriginal = () => {
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
@@ -165,18 +227,49 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
     // Dismiss suggestion panel without modifying the textarea
     setShowSuggestion(false);
     setSuggestedCorrection(null);
+    setExplanation(null);
     onActiveFieldChange?.(null);
   };
 
   return (
     <div className="form-group grammar-assist-container" style={{ marginBottom: '1.15rem' }}>
-      {/* Label and Fix Grammar trigger */}
+      {/* Label and Status */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
         <label htmlFor={fieldId} className="form-label" style={{ margin: 0, fontWeight: 700, fontSize: '0.85rem' }}>
           {label} {required && <span style={{ color: '#DC2626' }}>*</span>}
         </label>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          {checking && (
+            <span
+              style={{
+                fontSize: '0.74rem',
+                color: '#2563EB',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.25rem',
+                fontWeight: 600,
+              }}
+            >
+              <RefreshCw size={11} className="spin" /> Checking grammar...
+            </span>
+          )}
+
+          {serviceError && !checking && (
+            <span
+              style={{
+                fontSize: '0.74rem',
+                color: '#D97706',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.25rem',
+                fontWeight: 600,
+              }}
+            >
+              <AlertCircle size={12} color="#D97706" /> {serviceError}
+            </span>
+          )}
+
           {appliedFeedback && (
             <span
               id={`applied-feedback-${fieldId}`}
@@ -197,7 +290,7 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
             </span>
           )}
 
-          {noIssuesFeedback && (
+          {noIssuesFeedback && !checking && (
             <span style={{ fontSize: '0.75rem', color: '#059669', fontWeight: 600 }}>
               ✓ No grammar issues
             </span>
@@ -230,11 +323,10 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
             </button>
           )}
 
-          {value.trim().length >= 3 && !suggestedCorrection && !showSuggestion && (
+          {value && value.trim().length >= 3 && !suggestedCorrection && !showSuggestion && !checking && (
             <button
               type="button"
               onClick={handleManualCheck}
-              disabled={checking}
               className="btn btn-sm"
               style={{
                 backgroundColor: '#F8FAFC',
@@ -250,17 +342,9 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
                 gap: '0.25rem',
                 transition: 'all 0.15s ease',
               }}
-              title="Check spelling and grammar"
+              title="Check spelling and grammar with Sapling AI"
             >
-              {checking ? (
-                <>
-                  <RefreshCw size={11} className="spin" /> Checking...
-                </>
-              ) : (
-                <>
-                  <Sparkles size={12} color="#3B82F6" /> Fix Grammar
-                </>
-              )}
+              <Sparkles size={12} color="#3B82F6" /> Fix Grammar
             </button>
           )}
         </div>
@@ -268,6 +352,7 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
 
       {/* Input Textarea */}
       <textarea
+        ref={textareaRef}
         id={fieldId}
         className="form-control"
         rows={rows}
@@ -297,14 +382,14 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
         </div>
       )}
 
-      {/* Inline Grammar Correction Suggestion Card */}
+      {/* Inline Grammar Correction Suggestion Card (Section 6 UX) */}
       {showSuggestion && suggestedCorrection && (
         <div
           className="grammar-suggestion-card"
           data-testid={`grammar-suggestion-${fieldId}`}
           style={{
             marginTop: '0.5rem',
-            padding: '0.75rem 1rem',
+            padding: '0.85rem 1rem',
             backgroundColor: '#F0F9FF',
             border: '1px solid #BAE6FD',
             borderRadius: '8px',
@@ -314,8 +399,8 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.45rem' }}>
             <Sparkles size={14} color="#0284C7" />
-            <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              Writing Assistant Suggestion
+            <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              AI Writing Assistant
             </span>
           </div>
 
@@ -328,11 +413,17 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
             </div>
 
             <div style={{ color: '#0369A1', fontSize: '0.74rem', fontWeight: 700, textTransform: 'uppercase', marginBottom: '0.15rem' }}>
-              Corrected Version:
+              Suggested correction:
             </div>
             <div style={{ color: '#0C4A6E', fontWeight: 600, paddingLeft: '0.25rem' }}>
               "{suggestedCorrection}"
             </div>
+
+            {explanation && (
+              <div style={{ color: '#0284C7', fontSize: '0.74rem', marginTop: '0.35rem', paddingLeft: '0.25rem', fontWeight: 500 }}>
+                ℹ {explanation}
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -347,7 +438,7 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
                 color: '#ffffff',
                 fontSize: '0.78rem',
                 fontWeight: 700,
-                padding: '0.3rem 0.85rem',
+                padding: '0.35rem 0.85rem',
                 borderRadius: '6px',
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -366,7 +457,7 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
               className="btn btn-sm btn-secondary"
               style={{
                 fontSize: '0.78rem',
-                padding: '0.3rem 0.75rem',
+                padding: '0.35rem 0.75rem',
                 borderRadius: '6px',
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -382,4 +473,3 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
     </div>
   );
 };
-

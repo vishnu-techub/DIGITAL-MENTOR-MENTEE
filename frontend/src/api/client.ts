@@ -326,11 +326,15 @@ export const api = {
       }),
     checkGrammar: (text: string) =>
       request<{
+        originalText: string;
+        correctedText: string;
+        hasErrors: boolean;
+        explanation: string;
         original: string;
         corrected: string;
         hasCorrections: boolean;
         source: string;
-      }>('/mentor/grammar-check', {
+      }>('/counselling/grammar-check', {
         method: 'POST',
         body: JSON.stringify({ text }),
       }),
