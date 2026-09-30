@@ -392,14 +392,19 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
     }
   };
 
-  const loadMyAcademicRequests = async () => {
+  // Declared as a hoisted `function` rather than a `const` arrow because `loadData`
+  // (declared above, and invoked from the mount effect) calls this during the first
+  // render pass. As a `const` it was still in its temporal dead zone at that point and
+  // threw "Cannot access 'loadMyAcademicRequests' before initialization", which the
+  // loadData catch turned into a fabricated HTTP 500 error page.
+  async function loadMyAcademicRequests() {
     try {
       const res = await api.academicRequests.getMine();
       if (res.success && Array.isArray(res.data)) setMyAcademicRequests(res.data);
     } catch {
       /* non-blocking: the request history is supplementary information */
     }
-  };
+  }
 
   const openAcademicRequestModal = async (semesterNumber?: number) => {
     const sem = semesterNumber || academicRequestForm.semesterNumber || 1;
