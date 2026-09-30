@@ -157,7 +157,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
   });
   const [submittingSkills, setSubmittingSkills] = useState(false);
 
-  // â”€â”€ Academic Correction Request review queue â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Academic Correction Request review queue ──────────────────────────────
   const [myAcademicRequests, setMyAcademicRequests] = useState<any[]>([]);
   const [academicRequestsLoading, setAcademicRequestsLoading] = useState(false);
   const [academicRequestsError, setAcademicRequestsError] = useState<string | null>(null);
@@ -647,7 +647,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   border: '1px solid #BFDBFE',
                 }}
               >
-                MENTOR VIEW â€¢ READ-ONLY MENTEE DOSSIER
+                MENTOR VIEW • READ-ONLY MENTEE DOSSIER
               </span>
             </div>
 
@@ -677,15 +677,15 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               <span>
                 Register No: <strong style={{ color: '#0F172A' }}>{student.register_number}</strong>
               </span>
-              <span>â€¢</span>
+              <span>•</span>
               <span>{student.department_name || 'Information Technology'}</span>
-              <span>â€¢</span>
+              <span>•</span>
               <span>
-                {yearRoman} {student.batch_name ? `â€¢ Batch ${student.batch_name}` : ''}
+                {yearRoman} {student.batch_name ? `• Batch ${student.batch_name}` : ''}
               </span>
-              <span>â€¢</span>
+              <span>•</span>
               <span>Section: <strong style={{ color: '#0F172A' }}>{student.section || 'A'}</strong></span>
-              <span>â€¢</span>
+              <span>•</span>
               <span>
                 Mentor:{' '}
                 <strong style={{ color: '#0B2545' }}>
@@ -901,7 +901,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 {cgpaValue}
               </div>
               <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '4px' }}>
-                CGPA â€¢ {student.semesters?.length || 0} Semesters Evaluated â†’
+                CGPA • {student.semesters?.length || 0} Semesters Evaluated →
               </div>
             </div>
 
@@ -933,7 +933,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 {activeArrearsCount === 0 ? '0 Cleared' : `${activeArrearsCount} Active`}
               </div>
               <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '4px' }}>
-                {student.cleared_arrears_count || 0} Cleared in History â†’
+                {student.cleared_arrears_count || 0} Cleared in History →
               </div>
             </div>
 
@@ -958,7 +958,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 {student.counsellingRecords?.length || 0}
               </div>
               <div style={{ fontSize: '0.78rem', color: '#7C3AED', marginTop: '4px' }}>
-                5-Domain Mentoring Records â†’
+                5-Domain Mentoring Records →
               </div>
             </div>
 
@@ -983,7 +983,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 {student.meetings?.length || 0}
               </div>
               <div style={{ fontSize: '0.78rem', color: '#D97706', marginTop: '4px' }}>
-                Meeting Logs & Attendance â†’
+                Meeting Logs & Attendance →
               </div>
             </div>
 
@@ -1008,7 +1008,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 {student.documents?.length || (student.counsellingRecords ? 4 : 0)}
               </div>
               <div style={{ fontSize: '0.78rem', color: '#059669', marginTop: '4px' }}>
-                Certificates & Verification â†’
+                Certificates & Verification →
               </div>
             </div>
 
@@ -1033,7 +1033,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 {activeArrearsCount > 0 ? '2 Needing Focus' : 'On Track'}
               </div>
               <div style={{ fontSize: '0.78rem', color: '#2563EB', marginTop: '4px' }}>
-                7 Core Mentoring Domains â†’
+                7 Core Mentoring Domains →
               </div>
             </div>
           </div>
@@ -1098,7 +1098,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                     {student.currentMentor.mentor_name}
                   </div>
                   <div style={{ fontSize: '0.82rem', color: '#64748B', marginTop: '2px' }}>
-                    {student.currentMentor.designation} â€¢ {student.currentMentor.cabin_location || 'Faculty Cabin'}
+                    {student.currentMentor.designation} • {student.currentMentor.cabin_location || 'Faculty Cabin'}
                   </div>
                   <div style={{ fontSize: '0.78rem', color: '#059669', fontWeight: 700, marginTop: '6px' }}>
                     Active Assignment Since: {student.currentMentor.assigned_from || 'Academic Term'}
@@ -1128,7 +1128,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                     Upcoming Saturday Mentoring Session
                   </div>
                   <div style={{ fontSize: '0.76rem', color: '#78350F', marginTop: '2px' }}>
-                    {saturdaySchedule?.time || '10:30 AM'} â€¢ {saturdaySchedule?.location || 'Faculty Cabin'}
+                    {saturdaySchedule?.time || '10:30 AM'} • {saturdaySchedule?.location || 'Faculty Cabin'}
                   </div>
                 </div>
               </div>
@@ -1211,7 +1211,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0B2545', marginTop: '4px' }}>
                 {student.mobile_number ? (
                   <a href={`tel:${student.mobile_number}`} style={{ color: '#1D4ED8', textDecoration: 'none' }}>
-                    ðŸ“ž {student.mobile_number}
+                    📞 {student.mobile_number}
                   </a>
                 ) : (
                   'N/A'
@@ -1226,7 +1226,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0B2545', marginTop: '4px' }}>
                 {student.email ? (
                   <a href={`mailto:${student.email}`} style={{ color: '#1D4ED8', textDecoration: 'none' }}>
-                    âœ‰ï¸ {student.email}
+                    ✉️ {student.email}
                   </a>
                 ) : (
                   `${student.register_number}@ksrce.ac.in`
@@ -1248,7 +1248,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 Year & Batch
               </label>
               <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0F172A', marginTop: '4px' }}>
-                {yearRoman} {student.batch_name ? `â€¢ Batch ${student.batch_name}` : ''}
+                {yearRoman} {student.batch_name ? `• Batch ${student.batch_name}` : ''}
               </div>
             </div>
 
@@ -1268,7 +1268,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 Academic Year & Section
               </label>
               <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0F172A', marginTop: '4px' }}>
-                Year {student.year || 'â€”'} â€¢ Section {student.section || 'â€”'}
+                Year {student.year || '—'} • Section {student.section || '—'}
               </div>
             </div>
 
@@ -1304,23 +1304,23 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem', fontSize: '0.85rem' }}>
                   <div>
                     <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous College Name:</span>
-                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_college_name || student.lateralEntry?.previousCollegeName || 'â€”'}</strong>
+                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_college_name || student.lateralEntry?.previousCollegeName || '—'}</strong>
                   </div>
                   <div>
                     <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous Course / Diploma:</span>
-                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_course || student.lateralEntry?.previousCourse || 'â€”'}</strong>
+                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_course || student.lateralEntry?.previousCourse || '—'}</strong>
                   </div>
                   <div>
                     <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous Institution:</span>
-                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_institution || student.lateralEntry?.previousInstitution || 'â€”'}</strong>
+                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_institution || student.lateralEntry?.previousInstitution || '—'}</strong>
                   </div>
                   <div>
                     <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous Qualification:</span>
-                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_qualification_details || student.lateralEntry?.previousQualificationDetails || 'â€”'}</strong>
+                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_qualification_details || student.lateralEntry?.previousQualificationDetails || '—'}</strong>
                   </div>
                   <div>
                     <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Admission Year:</span>
-                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.admission_year || student.lateralEntry?.admissionYear || 'â€”'}</strong>
+                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.admission_year || student.lateralEntry?.admissionYear || '—'}</strong>
                   </div>
                 </div>
               </div>
@@ -1345,7 +1345,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           {/* ============================================================
               ACADEMIC CORRECTION REQUESTS (approve / reject)
-              A student cannot edit CGPA/SGPA directly â€” every change
+              A student cannot edit CGPA/SGPA directly — every change
               arrives here as a per-semester request awaiting review.
               ============================================================ */}
           <div
@@ -1384,7 +1384,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 </h3>
                 <p style={{ fontSize: '0.8rem', color: '#64748B', margin: '4px 0 0 0' }}>
                   {academicRequestsLoading
-                    ? 'Loading requestsâ€¦'
+                    ? 'Loading requests…'
                     : myAcademicRequests.length === 0
                       ? 'No correction requests have been raised for this student.'
                       : `${myAcademicRequests.filter((r: any) => r.status === 'PENDING').length} pending review.`}
@@ -1497,9 +1497,9 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                             </div>
                           ) : (
                             <span style={{ fontSize: '0.78rem', color: '#64748B' }}>
-                              {r.reviewedByName || 'â€”'}
-                              {r.reviewNotes ? ` â€” ${r.reviewNotes}` : ''}
-                              {r.rejectionReason ? ` â€” ${r.rejectionReason}` : ''}
+                              {r.reviewedByName || '—'}
+                              {r.reviewNotes ? ` — ${r.reviewNotes}` : ''}
+                              {r.rejectionReason ? ` — ${r.rejectionReason}` : ''}
                             </span>
                           )}
                         </td>
@@ -1564,7 +1564,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   {student.active_arrear_subjects && student.active_arrear_subjects.length > 0 ? (
                     student.active_arrear_subjects.map((sub: string, idx: number) => (
                       <span key={idx} className="badge badge-danger" style={{ padding: '0.35rem 0.75rem', fontSize: '0.82rem' }}>
-                        {sub} â€” Active Arrear
+                        {sub} — Active Arrear
                       </span>
                     ))
                   ) : (
@@ -1580,7 +1580,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           {/* Semester-Wise Results Table */}
           <div className="card" style={{ padding: '1.5rem', backgroundColor: '#ffffff' }}>
             <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0B2545', marginBottom: '1rem' }}>
-              Semester-Wise Academic Performance (Semesters 01â€“08)
+              Semester-Wise Academic Performance (Semesters 01–08)
             </h3>
 
             <div style={{ overflowX: 'auto' }}>
@@ -1606,10 +1606,10 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                             Semester 0{semNum}
                           </td>
                           <td style={{ padding: '0.75rem 1rem', fontWeight: 700 }}>
-                            {sem.cgpa ? Number(sem.cgpa).toFixed(2) : 'â€”'}
+                            {sem.cgpa ? Number(sem.cgpa).toFixed(2) : '—'}
                           </td>
                           <td style={{ padding: '0.75rem 1rem' }}>
-                            {sem.sgpa ? Number(sem.sgpa).toFixed(2) : 'â€”'}
+                            {sem.sgpa ? Number(sem.sgpa).toFixed(2) : '—'}
                           </td>
                           <td style={{ padding: '0.75rem 1rem' }}>
                             {hasStanding ? (
@@ -1680,7 +1680,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                         </td>
                         <td style={{ padding: '0.6rem 0.85rem' }}>Attempt #{hist.attempt || 1}</td>
                         <td style={{ padding: '0.6rem 0.85rem' }}>
-                          <span className="badge badge-success">ðŸŸ¢ Cleared (Archived)</span>
+                          <span className="badge badge-success">🟢 Cleared (Archived)</span>
                         </td>
                       </tr>
                     ))}
@@ -1725,7 +1725,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   <span style={{ color: '#64748B' }}>Contact:</span>{' '}
                   {student.parent?.father_contact ? (
                     <a href={`tel:${student.parent.father_contact}`} style={{ color: '#1D4ED8', fontWeight: 700, textDecoration: 'none' }}>
-                      ðŸ“ž {student.parent.father_contact}
+                      📞 {student.parent.father_contact}
                     </a>
                   ) : (
                     'Not specified'
@@ -1752,7 +1752,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   <span style={{ color: '#64748B' }}>Contact:</span>{' '}
                   {student.parent?.mother_contact ? (
                     <a href={`tel:${student.parent.mother_contact}`} style={{ color: '#1D4ED8', fontWeight: 700, textDecoration: 'none' }}>
-                      ðŸ“ž {student.parent.mother_contact}
+                      📞 {student.parent.mother_contact}
                     </a>
                   ) : (
                     'Not specified'
@@ -1825,13 +1825,13 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                       {m.mentor_name}
                     </div>
                     <div style={{ fontSize: '0.82rem', color: '#64748B' }}>
-                      {m.designation} â€¢ KSRCE Faculty
+                      {m.designation} • KSRCE Faculty
                     </div>
 
                     <div style={{ fontSize: '0.8rem', color: '#475569', marginTop: '6px' }}>
                       <span>Assigned: <strong>{m.assigned_from || 'Term start'}</strong></span>
                       {m.assigned_until && (
-                        <span> â€¢ Concluded: <strong>{m.assigned_until}</strong></span>
+                        <span> • Concluded: <strong>{m.assigned_until}</strong></span>
                       )}
                     </div>
 
@@ -1893,7 +1893,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   className="btn btn-primary"
                   style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}
                 >
-                  <Plus size={16} /> + Add Counselling Record
+                  <Plus size={16} /> Add Counselling Record
                 </button>
               </div>
             </div>
@@ -1962,7 +1962,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                         <Edit2 size={12} /> Edit
                       </button>
                       <span className="badge badge-success">
-                        âœ“ Mentor Signed
+                        ✓ Mentor Signed
                       </span>
                     </div>
                   </div>
@@ -2187,7 +2187,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   Upcoming Saturday Mentoring Session
                 </h3>
                 <p style={{ fontSize: '0.82rem', color: '#78350F', margin: '4px 0 0 0' }}>
-                  Scheduled Time: {saturdaySchedule?.time || '10:30 AM'} â€¢ Location: {saturdaySchedule?.location || 'Faculty Cabin / Mentoring Room'}
+                  Scheduled Time: {saturdaySchedule?.time || '10:30 AM'} • Location: {saturdaySchedule?.location || 'Faculty Cabin / Mentoring Room'}
                 </p>
               </div>
               <button
@@ -2196,7 +2196,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 className="btn btn-primary"
                 style={{ backgroundColor: '#D97706', borderColor: '#D97706', fontWeight: 700 }}
               >
-                <Plus size={16} /> + Log Saturday Meeting
+                <Plus size={16} /> Log Saturday Meeting
               </button>
             </div>
           </div>
@@ -2221,7 +2221,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
                       <div style={{ fontWeight: 800, color: '#0B2545', fontSize: '0.95rem' }}>
-                        ðŸ“… {m.meeting_date ? new Date(m.meeting_date).toLocaleDateString() : 'Saturday'} ({m.meeting_time || '10:30 AM'})
+                        📅 {m.meeting_date ? new Date(m.meeting_date).toLocaleDateString() : 'Saturday'} ({m.meeting_time || '10:30 AM'})
                       </div>
                       <span className={`badge ${m.attendance_status === 'PRESENT' ? 'badge-success' : 'badge-danger'}`}>
                         {m.attendance_status || 'PRESENT'}
@@ -2229,7 +2229,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                     </div>
 
                     <div style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '0.5rem' }}>
-                      ðŸ“ Location: {m.location || 'Faculty Cabin'}
+                      📍 Location: {m.location || 'Faculty Cabin'}
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '0.75rem', fontSize: '0.85rem' }}>
@@ -2684,7 +2684,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
       {/* Modal 3: Log Saturday Meeting */}
       {showMeetingModal && (
         <Modal
-          title="Log Saturday Mentorâ€“Mentee Meeting"
+          title="Log Saturday Mentor–Mentee Meeting"
           isOpen={showMeetingModal}
           onClose={() => setShowMeetingModal(false)}
         >

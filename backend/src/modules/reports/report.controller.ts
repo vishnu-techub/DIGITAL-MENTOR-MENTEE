@@ -160,7 +160,7 @@ export async function exportStudentsCsv(req: AuthRequest, res: Response) {
 
     const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
 
-    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="KSRCE_Mentee_Roster.csv"');
     return res.send(csvContent);
   } catch (err: any) {
