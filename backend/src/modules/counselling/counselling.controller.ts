@@ -13,7 +13,6 @@ import { logAudit } from '../../middleware/audit.middleware.js';
 import { COUNSELLING_CATEGORIES, COUNSELLING_5_CATEGORIES, CounsellingCategory } from '../../config/constants.js';
 import { generateCounsellingSuggestion } from './ai-counselling.service.js';
 import { askMentorAiBot, correctGrammarAndSpelling } from './ai-assistant.service.js';
-import { checkGrammarWithSapling } from './sapling.service.js';
 
 // 1. Get Counselling Records for a Specific Student (Strictly scoped)
 export async function getCounsellingRecords(req: AuthRequest, res: Response) {
@@ -408,33 +407,19 @@ export async function askMentorAiBotController(req: AuthRequest, res: Response) 
   }
 }
 
-// 5. Mentor Writing Assistant (Sapling AI Spelling & Grammar Correction)
+// 5. Mentor Writing Assistant (Spelling & Grammar Correction)
 export async function grammarCheckController(req: AuthRequest, res: Response) {
   const { text } = req.body;
   if (text === undefined || text === null || typeof text !== 'string') {
     return sendError(res, 'Text content is required for grammar check.', 400);
   }
 
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return sendSuccess(res, {
-      originalText: text,
-      correctedText: text,
-      hasErrors: false,
-      explanation: 'No grammar issues found.',
-      original: text,
-      corrected: text,
-      hasCorrections: false,
-      source: 'SAPLING',
-    });
-  }
-
   try {
-    const result = await checkGrammarWithSapling(text);
+    const result = await correctGrammarAndSpelling(text);
     return sendSuccess(res, result);
   } catch (err: any) {
     console.error('grammarCheck error:', err);
-    return sendError(res, 'Writing assistant temporarily unavailable.', 500);
+    return sendError(res, 'Failed to perform grammar check.', 500);
   }
 }
 

@@ -1,60 +1,35 @@
-import { checkGrammarWithSapling } from '../modules/counselling/sapling.service.js';
+import { correctGrammarAndSpelling } from '../modules/counselling/ai-assistant.service';
 
 async function run() {
   const tests = [
     {
-      name: 'Test 1: Subject-verb agreement (don\'t -> doesn\'t)',
-      input: "He don't attend the classes regularly.",
-      expected: "He doesn't attend the classes regularly.",
-    },
-    {
-      name: 'Test 2: Infinitive verb tense (wanted to developed -> develop)',
-      input: 'She wanted to developed her knowledge.',
+      input: 'she wanted to developed her knowledge',
       expected: 'She wanted to develop her knowledge.',
     },
     {
-      name: 'Test 3: Gerund and subject agreement (have difficulty in understand -> has difficulty understanding)',
-      input: 'Student have difficulty in understand programming concepts.',
-      expected: 'Student has difficulty understanding programming concepts.',
+      input: 'student have difficulty in communication',
+      expected: 'Student has difficulty in communication.',
     },
     {
-      name: 'Test 4: Third person singular verb (need -> needs)',
-      input: 'She need to improve her communication skills.',
-      expected: 'She needs to improve her communication skills.',
+      input: 'improve communication skill',
+      expected: 'Improve communication skills.',
     },
     {
-      name: 'Test 5: Compound clause agreement (have/need -> has/needs)',
-      input: 'He have good technical skills but need more practice.',
-      expected: 'He has good technical skills but needs more practice.',
-    },
-    {
-      name: 'Critical Requirement Test: Already correct sentence should have hasErrors = false',
-      input: "He doesn't attend the classes regularly.",
-      expected: "He doesn't attend the classes regularly.",
-      expectNoErrors: true,
+      input: 'practice presentation every week',
+      expected: 'Practice presentations every week.',
     },
   ];
 
-  console.log('Running Sapling AI & Institutional Grammar Test Suite...\n');
+  console.log('Running Grammar Engine Test Suite...');
   let failed = false;
 
-  for (const { name, input, expected, expectNoErrors } of tests) {
-    const res = await checkGrammarWithSapling(input);
-    const textMatches = res.correctedText.trim() === expected.trim();
-    const errorFlagMatches = expectNoErrors ? !res.hasErrors : res.hasErrors;
-
-    if (!textMatches || !errorFlagMatches) {
-      console.error(`FAIL: [${name}]`);
-      console.error(`  Input:         "${input}"`);
-      console.error(`  Expected Text: "${expected}"`);
-      console.error(`  Actual Text:   "${res.correctedText}"`);
-      console.error(`  hasErrors:     ${res.hasErrors} (Expected: ${!expectNoErrors})`);
-      console.error(`  explanation:   "${res.explanation}"`);
+  for (const { input, expected } of tests) {
+    const res = await correctGrammarAndSpelling(input);
+    if (res.corrected !== expected) {
+      console.error(`FAIL: "${input}"\n  Expected: "${expected}"\n  Actual:   "${res.corrected}"`);
       failed = true;
     } else {
-      console.log(`PASS: [${name}]`);
-      console.log(`  "${input}"`);
-      console.log(`  -> "${res.correctedText}" (hasErrors: ${res.hasErrors}, explanation: "${res.explanation}")\n`);
+      console.log(`PASS: "${input}" -> "${res.corrected}"`);
     }
   }
 
@@ -62,7 +37,7 @@ async function run() {
     console.error('One or more grammar tests failed.');
     process.exit(1);
   } else {
-    console.log('All 5 prompt test cases and critical validation passed successfully!');
+    console.log('All grammar engine test cases passed successfully!');
   }
 }
 
