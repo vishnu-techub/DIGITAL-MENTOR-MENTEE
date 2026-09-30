@@ -1,5 +1,21 @@
+/**
+ * ARREAR CALCULATION — SINGLE SOURCE OF TRUTH
+ * ---------------------------------------------------------------------------
+ * Every screen, PDF, Excel export and dashboard MUST derive arrear state from
+ * this module. Rules enforced here:
+ *
+ *  1. The SUBJECT LIST is the source of truth. `arrearsCount` is never trusted
+ *     independently of the list; when a list exists it fully determines state.
+ *  2. A subject that has been cleared stays in history forever but is NOT
+ *     counted as an active arrear.
+ *  3. Status vocabulary is exactly "Clear" or "Active Arrear". Legacy strings
+ *     such as "0", "Clear / Regular", "ALL CLEAR" are never emitted.
+ *  4. Active arrears always carry semester + subject code + subject name.
+ */
+
 export interface IClearedSubjectItem {
   subjectCode: string;
+  subjectName?: string;
   clearedInSemester: number;
   originalSemester?: number;
   clearedDate?: string;
@@ -7,18 +23,20 @@ export interface IClearedSubjectItem {
   attempt?: number;
 }
 
-export interface ISemesterRecordInput {
-  semesterNumber: number;
-  cgpa?: number;
-  sgpa?: number;
-  arrearsCount?: number;
-  arrearsSubjects?: string;
-  clearedSubjects?: IClearedSubjectItem[];
-  remarks?: string;
+export interface IArrearSubjectDetail {
+  subjectCode: string;
+  subjectName: string;
+}
+
+export interface IActiveArrear {
+  semester: number;
+  subjectCode: string;
+  subjectName: string;
 }
 
 export interface IArrearHistoryRecord {
   subjectCode: string;
+  subjectName: string;
   originalSemester: number;
   attempt: number;
   status: 'ACTIVE' | 'CLEARED';
@@ -32,11 +50,17 @@ export interface IFormattedSemester {
   semester_number: number;
   cgpa: number;
   sgpa: number;
-  arrears_count: number; // Current active arrears for this semester (0 if cleared!)
-  historical_arrears_count: number; // Original arrears count
-  arrears_subjects: string; // Active arrear subjects only ("—" if cleared!)
-  original_arrears_subjects: string; // Original subjects string
-  status: 'Clear' | 'Active Arrear' | 'Cleared';
+  /** ACTIVE arrears only (0 once cleared). */
+  arrears_count: number;
+  /** Original count at the time the arrear was incurred. */
+  historical_arrears_count: number;
+  /** Active subject codes joined, or "—" when clear. */
+  arrears_subjects: string;
+  /** Full original subject string as recorded. */
+  original_arrears_subjects: string;
+  /** Structured active arrears for this semester. */
+  arrear_subject_details: IArrearSubjectDetail[];
+  status: 'Clear' | 'Active Arrear';
   status_label: string;
   clearance_remarks: string;
   cleared_subjects: IClearedSubjectItem[];
@@ -47,154 +71,186 @@ export interface IFormattedSemester {
 }
 
 export interface IArrearStatistics {
-  historicalArrearsCount: number; // Total Arrear History
-  activeArrearsCount: number;     // Current Active Arrears (latest status NOT CLEARED)
-  clearedCount: number;           // Cleared Arrears
+  historicalArrearsCount: number;
+  activeArrearsCount: number;
+  clearedCount: number;
   clearedSubjects: IClearedSubjectItem[];
   activeArrearSubjects: string[];
-  arrearHistory: IArrearHistoryRecord[]; // Complete separate arrear history
+  /** Structured active arrears: semester + code + name. */
+  activeArrearDetails: IActiveArrear[];
+  arrearHistory: IArrearHistoryRecord[];
+  /** Exactly "Clear" or "Active Arrear". */
   statusLabel: string;
   formattedSemesters: IFormattedSemester[];
 }
 
-/**
- * Parses a string of arrear subject codes (e.g. "24ITT36, 24ITT40", "CS8301/MA8451")
- */
+const PLACEHOLDER_TOKENS = ['NIL', 'NONE', 'CLEAR', 'REGULAR', 'NA', 'N/A', '—', '-', 'NO ARREAR', 'NO ARREARS'];
+
+/** Split a free-text subject list ("24ITT36, 24ITT40") into normalised codes. */
 export function parseSubjectCodes(subjectsStr?: string): string[] {
   if (!subjectsStr || !subjectsStr.trim()) return [];
   return subjectsStr
     .split(/[,;/|\s]+/)
     .map((s) => s.trim().toUpperCase())
-    .filter((s) => s.length >= 2 && !['NIL', 'NONE', 'CLEAR', 'REGULAR', 'NA', 'N/A', '—', '-'].includes(s));
+    .filter((s) => s.length >= 2 && !PLACEHOLDER_TOKENS.includes(s));
+}
+
+/** Human-friendly name for a subject code, never blank. */
+function subjectNameFor(code: string, detailMap?: Map<string, string>): string {
+  const fromDetail = detailMap?.get(code);
+  if (fromDetail && fromDetail.trim()) return fromDetail.trim();
+  return 'Not Provided';
 }
 
 /**
- * Calculate historical vs active arrear statistics with full history preservation.
- *
- * BUSINESS RULES:
- * 1. If uncleared:
- *    Semester Arrears = 1, Arrear Subject = "24ITT36", Status = "Active Arrear"
- * 2. When cleared:
- *    Do NOT delete arrear history.
- *    Original semester displays: Semester Arrears = 0, Arrear Subject = "—", Status = "24ITT36 Cleared"
- * 3. Separate Arrear History tracks:
- *    Subject, Original Semester, Attempt, Status (Arrear / Cleared), Cleared In, Date, Remarks
- * 4. Current Arrears counts ONLY subjects whose latest status is NOT "CLEARED".
+ * Read the authoritative subject list for a semester.
+ * Prefers the structured `arrearSubjectDetails` array (carries names); falls
+ * back to parsing the legacy comma-separated `arrearsSubjects` string.
  */
+function readSubjectList(
+  sem: any,
+  semNum: number
+): { codes: string[]; detailMap: Map<string, string> } {
+  const detailMap = new Map<string, string>();
+  const details: any[] = Array.isArray(sem?.arrearSubjectDetails)
+    ? sem.arrearSubjectDetails
+    : Array.isArray(sem?.arrear_subject_details)
+      ? sem.arrear_subject_details
+      : [];
+
+  details.forEach((d: any) => {
+    const rawCode = d?.subjectCode ?? d?.subject_code ?? d?.code;
+    if (!rawCode) return;
+    const code = String(rawCode).trim().toUpperCase();
+    if (!code || PLACEHOLDER_TOKENS.includes(code)) return;
+    const name = d?.subjectName ?? d?.subject_name ?? d?.name ?? '';
+    detailMap.set(code, String(name).trim());
+  });
+
+  const parsed = parseSubjectCodes(sem?.arrearsSubjects ?? sem?.arrears_subjects);
+
+  // Structured details win; the string only contributes codes we have no detail for.
+  const codes = new Set<string>(parsed);
+  detailMap.forEach((_v, k) => codes.add(k));
+
+  if (codes.size === 0) {
+    // Legacy fallback: a record that only ever stored a bare count.
+    const legacyCount = Number(sem?.arrearsCount ?? sem?.arrears_count ?? 0);
+    if (Number.isFinite(legacyCount) && legacyCount > 0) {
+      return { codes: [], detailMap };
+    }
+  }
+
+  return { codes: Array.from(codes).sort(), detailMap };
+}
+
+/** Legacy rows that stored only a numeric count and no subject list. */
+function legacyCountFor(sem: any): number {
+  const n = Number(sem?.arrearsCount ?? sem?.arrears_count ?? 0);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 export function calculateArrearStatistics(
   semesters: any[],
   studentClearedSubjects: IClearedSubjectItem[] = [],
   savedArrearHistory: any[] = []
 ): IArrearStatistics {
-  // 1. Gather all cleared subject declarations
+  const list = Array.isArray(semesters) ? semesters : [];
+
+  // ---- 1. Collect clearance declarations from every source -------------------
   const clearedMap = new Map<string, IClearedSubjectItem>();
+  const remember = (c: any, fallbackSem: number) => {
+    const raw = c?.subjectCode ?? c?.subject_code;
+    if (!raw) return;
+    const code = String(raw).trim().toUpperCase();
+    if (!code || clearedMap.has(code)) return;
+    clearedMap.set(code, {
+      subjectCode: code,
+      subjectName: c?.subjectName ? String(c.subjectName).trim() : '',
+      clearedInSemester: Number(c?.clearedInSemester) || fallbackSem || 0,
+      originalSemester: c?.originalSemester ? Number(c.originalSemester) : undefined,
+      clearedDate: c?.clearedDate || '',
+      remarks: c?.remarks || `${code} Cleared`,
+      attempt: Number(c?.attempt) || 1,
+    });
+  };
 
-  (studentClearedSubjects || []).forEach((c) => {
-    if (c && c.subjectCode) {
-      const code = c.subjectCode.trim().toUpperCase();
-      clearedMap.set(code, {
-        subjectCode: code,
-        clearedInSemester: Number(c.clearedInSemester) || 0,
-        originalSemester: c.originalSemester ? Number(c.originalSemester) : undefined,
-        clearedDate: c.clearedDate || '',
-        remarks: c.remarks || `${code} Cleared`,
-        attempt: Number(c.attempt) || 1,
-      });
-    }
+  (Array.isArray(studentClearedSubjects) ? studentClearedSubjects : []).forEach((c) => remember(c, 0));
+  list.forEach((sem) => {
+    const semNum = Number(sem?.semesterNumber ?? sem?.semester_number) || 0;
+    (Array.isArray(sem?.clearedSubjects) ? sem.clearedSubjects : []).forEach((c: any) => remember(c, semNum));
   });
 
-  (semesters || []).forEach((sem) => {
-    const semNum = Number(sem.semesterNumber || sem.semester_number) || 0;
-    if (Array.isArray(sem.clearedSubjects)) {
-      sem.clearedSubjects.forEach((c: any) => {
-        if (c && c.subjectCode) {
-          const code = c.subjectCode.trim().toUpperCase();
-          if (!clearedMap.has(code)) {
-            clearedMap.set(code, {
-              subjectCode: code,
-              clearedInSemester: Number(c.clearedInSemester) || semNum,
-              originalSemester: c.originalSemester ? Number(c.originalSemester) : undefined,
-              clearedDate: c.clearedDate || '',
-              remarks: c.remarks || `${code} Cleared`,
-              attempt: Number(c.attempt) || 1,
-            });
-          }
-        }
-      });
-    }
-  });
-
-  // Map of saved arrear history for attempts and custom metadata
   const savedHistoryMap = new Map<string, any>();
-  (savedArrearHistory || []).forEach((h) => {
-    if (h && h.subjectCode) {
-      savedHistoryMap.set(h.subjectCode.trim().toUpperCase(), h);
-    }
+  (Array.isArray(savedArrearHistory) ? savedArrearHistory : []).forEach((h) => {
+    const raw = h?.subjectCode;
+    if (raw) savedHistoryMap.set(String(raw).trim().toUpperCase(), h);
   });
 
   const allClearedList = Array.from(clearedMap.values());
 
-  // 2. Map semesters 1 to 8
+  // ---- 2. Index semesters ----------------------------------------------------
   const semMap = new Map<number, any>();
-  (semesters || []).forEach((sem) => {
-    const semNum = Number(sem.semesterNumber || sem.semester_number);
-    if (semNum >= 1 && semNum <= 8) {
-      semMap.set(semNum, sem);
-    }
+  list.forEach((sem) => {
+    const n = Number(sem?.semesterNumber ?? sem?.semester_number);
+    if (n >= 1 && n <= 8) semMap.set(n, sem);
   });
 
   const formattedSemesters: IFormattedSemester[] = [];
   const arrearHistory: IArrearHistoryRecord[] = [];
   const activeArrearSubjects: string[] = [];
-  let totalHistoricalArrears = 0;
+  const activeArrearDetails: IActiveArrear[] = [];
 
   for (let semNum = 1; semNum <= 8; semNum++) {
     const semDoc = semMap.get(semNum);
-    const cgpa = semDoc && semDoc.cgpa !== undefined ? Number(semDoc.cgpa) : 0;
-    const sgpa = semDoc && semDoc.sgpa !== undefined ? Number(semDoc.sgpa) : (cgpa > 0 ? cgpa : 0);
-    const historicalArrears = semDoc && semDoc.arrearsCount !== undefined
-      ? Number(semDoc.arrearsCount)
-      : (semDoc && semDoc.arrears_count !== undefined ? Number(semDoc.arrears_count) : 0);
-    const originalArrearsSubjects = semDoc ? (semDoc.arrearsSubjects || semDoc.arrears_subjects || '') : '';
-    const existingRemarks = semDoc ? (semDoc.remarks || '') : '';
 
-    const incurredCodes = parseSubjectCodes(originalArrearsSubjects);
-    const numArrearsIncurred = Math.max(historicalArrears, incurredCodes.length);
-    totalHistoricalArrears += numArrearsIncurred;
+    // CGPA and SGPA are two independent published values. SGPA is NEVER
+    // derived from CGPA: when the department has not published an SGPA the
+    // cell is 0 ("not recorded") and the UI/PDF/Excel show it as such.
+    // Silently mirroring CGPA into SGPA would misreport the student's record.
+    const cgpa = semDoc && semDoc.cgpa !== undefined ? Number(semDoc.cgpa) || 0 : 0;
+    const sgpa = semDoc && semDoc.sgpa !== undefined ? Number(semDoc.sgpa) || 0 : 0;
+
+    const originalSubjectsStr = String(semDoc?.arrearsSubjects ?? semDoc?.arrears_subjects ?? '');
+    const { codes: incurredCodes, detailMap } = readSubjectList(semDoc, semNum);
+    const legacyCount = legacyCountFor(semDoc);
+
+    // SOURCE OF TRUTH: the subject list. The bare count is only consulted for
+    // legacy rows that never stored a list at all.
+    const numArrearsIncurred = incurredCodes.length > 0 ? incurredCodes.length : legacyCount;
 
     const clearedInLaterSemesters: IClearedSubjectItem[] = [];
-    const activeCodesInSem: string[] = [];
+    const activeInSem: IArrearSubjectDetail[] = [];
 
     if (incurredCodes.length > 0) {
       incurredCodes.forEach((code) => {
-        const clearedInfo = clearedMap.get(code);
-        const savedHist = savedHistoryMap.get(code);
+        const cleared = clearedMap.get(code);
+        const saved = savedHistoryMap.get(code);
+        const name = subjectNameFor(code, detailMap) || saved?.subjectName || cleared?.subjectName || 'Not Provided';
 
-        if (clearedInfo) {
-          const origSem = clearedInfo.originalSemester || semNum;
-          clearedInLaterSemesters.push({
-            ...clearedInfo,
-            originalSemester: origSem,
-          });
-
+        if (cleared) {
+          const origSem = cleared.originalSemester || saved?.originalSemester || semNum;
+          clearedInLaterSemesters.push({ ...cleared, subjectName: name, originalSemester: origSem });
           arrearHistory.push({
             subjectCode: code,
+            subjectName: name,
             originalSemester: origSem,
-            attempt: savedHist?.attempt || clearedInfo.attempt || 1,
+            attempt: saved?.attempt || cleared.attempt || 1,
             status: 'CLEARED',
             statusLabel: 'Cleared',
-            clearedInSemester: clearedInfo.clearedInSemester,
-            clearedDate: clearedInfo.clearedDate || null,
-            remarks: clearedInfo.remarks || `${code} Cleared in Semester 0${clearedInfo.clearedInSemester}`,
+            clearedInSemester: cleared.clearedInSemester,
+            clearedDate: cleared.clearedDate || null,
+            remarks: cleared.remarks || `${code} Cleared in Semester 0${cleared.clearedInSemester}`,
           });
         } else {
-          activeCodesInSem.push(code);
+          activeInSem.push({ subjectCode: code, subjectName: name });
           activeArrearSubjects.push(code);
-
+          activeArrearDetails.push({ semester: semNum, subjectCode: code, subjectName: name });
           arrearHistory.push({
             subjectCode: code,
+            subjectName: name,
             originalSemester: semNum,
-            attempt: savedHist?.attempt || 1,
+            attempt: saved?.attempt || 1,
             status: 'ACTIVE',
             statusLabel: 'Active Arrear',
             clearedInSemester: null,
@@ -203,16 +259,15 @@ export function calculateArrearStatistics(
           });
         }
       });
-    } else if (numArrearsIncurred > 0) {
-      // Historical arrears count present without explicit subject codes
-      const clearedForThisSem = allClearedList.filter(
-        (c) => c.originalSemester === semNum
-      );
-      clearedInLaterSemesters.push(...clearedForThisSem);
-
-      clearedForThisSem.forEach((c) => {
+    } else if (legacyCount > 0) {
+      // Legacy record with a count but no codes: synthesise placeholders so the
+      // count and the list can never silently disagree again.
+      const clearedForSem = allClearedList.filter((c) => c.originalSemester === semNum);
+      clearedInLaterSemesters.push(...clearedForSem);
+      clearedForSem.forEach((c) => {
         arrearHistory.push({
           subjectCode: c.subjectCode,
+          subjectName: c.subjectName || 'Not Provided',
           originalSemester: semNum,
           attempt: c.attempt || 1,
           status: 'CLEARED',
@@ -222,15 +277,15 @@ export function calculateArrearStatistics(
           remarks: c.remarks || `${c.subjectCode} Cleared in Semester 0${c.clearedInSemester}`,
         });
       });
-
-      const remainingActive = Math.max(0, numArrearsIncurred - clearedForThisSem.length);
-      for (let i = 1; i <= remainingActive; i++) {
-        const placeholderCode = `SEM0${semNum}_ARREAR_${i}`;
-        activeCodesInSem.push(placeholderCode);
-        activeArrearSubjects.push(placeholderCode);
-
+      const remaining = Math.max(0, legacyCount - clearedForSem.length);
+      for (let i = 1; i <= remaining; i++) {
+        const placeholder = `SEM0${semNum}_ARREAR_${i}`;
+        activeInSem.push({ subjectCode: placeholder, subjectName: 'Not Provided' });
+        activeArrearSubjects.push(placeholder);
+        activeArrearDetails.push({ semester: semNum, subjectCode: placeholder, subjectName: 'Not Provided' });
         arrearHistory.push({
-          subjectCode: placeholderCode,
+          subjectCode: placeholder,
+          subjectName: 'Not Provided',
           originalSemester: semNum,
           attempt: 1,
           status: 'ACTIVE',
@@ -242,86 +297,67 @@ export function calculateArrearStatistics(
       }
     }
 
-    // Subjects cleared IN this semester (e.g. clearedInSemester === semNum)
-    const subjectsClearedInThisSem = allClearedList.filter(
-      (c) => c.clearedInSemester === semNum
-    );
+    const subjectsClearedInThisSem = allClearedList.filter((c) => c.clearedInSemester === semNum);
+    const activeCount = activeInSem.length;
 
-    // Business Rule 2 & 5:
-    // If all arrears in this semester are cleared:
-    // - Semester Arrears = 0
-    // - Arrear Subjects = "—"
-    // - Clearance Remarks & Status = `${subjectCode} Cleared`
-    // If active arrear present:
-    // - Semester Arrears = active count (e.g. 1)
-    // - Arrear Subjects = active subject codes (e.g. "24ITT36")
-    // - Clearance Remarks & Status = "Active Arrear"
-    const activeCountInSem = activeCodesInSem.length;
-    const currentSemesterArrears = activeCountInSem;
-    const displayArrearSubjects = activeCountInSem > 0 ? activeCodesInSem.join(', ') : '—';
-
-    let semStatus: 'Clear' | 'Active Arrear' | 'Cleared' = 'Clear';
-    let semStatusLabel = 'Clear';
-    let clearanceRemarks = '';
-
-    if (activeCountInSem > 0) {
-      semStatus = 'Active Arrear';
-      semStatusLabel = 'Active Arrear';
-      clearanceRemarks = clearedInLaterSemesters.length > 0
-        ? `${clearedInLaterSemesters.map((c) => `${c.subjectCode} Cleared`).join(', ')} / Active Arrear`
-        : 'Active Arrear';
-    } else if (numArrearsIncurred > 0 && activeCountInSem === 0) {
-      semStatus = 'Clear';
-      semStatusLabel = 'Clear';
+    const status: 'Clear' | 'Active Arrear' = activeCount > 0 ? 'Active Arrear' : 'Clear';
+    let clearanceRemarks: string;
+    if (activeCount > 0) {
+      const activePart = activeInSem.map((s) => s.subjectCode).join(', ');
+      clearanceRemarks =
+        clearedInLaterSemesters.length > 0
+          ? `${clearedInLaterSemesters.map((c) => `${c.subjectCode} Cleared`).join(', ')} / Active Arrear: ${activePart}`
+          : `Active Arrear: ${activePart}`;
+    } else if (numArrearsIncurred > 0) {
       const clearedLabels = clearedInLaterSemesters.map((c) => `${c.subjectCode} Cleared`).join(', ');
       clearanceRemarks = clearedLabels ? `${clearedLabels} (Clear)` : 'Clear';
     } else {
-      semStatus = 'Clear';
-      semStatusLabel = 'Clear';
-      if (subjectsClearedInThisSem.length > 0) {
-        clearanceRemarks = `${subjectsClearedInThisSem.map((c) => `${c.subjectCode} Cleared`).join(', ')} / Clear`;
-      } else {
-        clearanceRemarks = 'Clear';
-      }
+      clearanceRemarks =
+        subjectsClearedInThisSem.length > 0
+          ? `${subjectsClearedInThisSem.map((c) => `${c.subjectCode} Cleared`).join(', ')} / Clear`
+          : 'Clear';
     }
 
     formattedSemesters.push({
       semester_number: semNum,
       cgpa,
       sgpa,
-      arrears_count: currentSemesterArrears, // 0 if cleared!
-      historical_arrears_count: numArrearsIncurred, // Preserved history
-      arrears_subjects: displayArrearSubjects, // "—" if cleared!
-      original_arrears_subjects: originalArrearsSubjects,
-      status: semStatus,
-      status_label: semStatusLabel,
+      arrears_count: activeCount,
+      historical_arrears_count: numArrearsIncurred,
+      arrears_subjects: activeCount > 0 ? activeInSem.map((s) => s.subjectCode).join(', ') : '—',
+      original_arrears_subjects: originalSubjectsStr,
+      arrear_subject_details: activeInSem,
+      status,
+      status_label: status,
       clearance_remarks: clearanceRemarks,
       cleared_subjects: subjectsClearedInThisSem,
       cleared_in_later_semesters: clearedInLaterSemesters,
-      active_arrears_in_sem: activeCountInSem,
-      has_active_arrear: activeCountInSem > 0,
+      active_arrears_in_sem: activeCount,
+      has_active_arrear: activeCount > 0,
       remarks: clearanceRemarks,
     });
   }
 
-  // Business Rule 4: Current arrears must count ONLY subjects whose latest status is NOT "CLEARED"
   const activeArrearsCount = arrearHistory.filter((a) => a.status === 'ACTIVE').length;
   const clearedCount = arrearHistory.filter((a) => a.status === 'CLEARED').length;
-  const totalHistoryCount = arrearHistory.length;
-
-  const statusLabel =
-    activeArrearsCount === 0
-      ? '🟢 No Active Arrears'
-      : `🔴 ${activeArrearsCount} Active Arrear${activeArrearsCount > 1 ? 's' : ''}`;
 
   return {
-    historicalArrearsCount: totalHistoryCount,
+    historicalArrearsCount: arrearHistory.length,
     activeArrearsCount,
     clearedCount,
     clearedSubjects: allClearedList,
     activeArrearSubjects,
+    activeArrearDetails,
     arrearHistory,
-    statusLabel,
+    statusLabel: activeArrearsCount > 0 ? 'Active Arrear' : 'Clear',
     formattedSemesters,
   };
+}
+
+/**
+ * The only sanctioned label for a student's overall arrear state.
+ * Rejects "ALL CLEAR" / "N ARREAR(S)" / "Clear / Regular" style strings.
+ */
+export function arrearStatusLabel(activeArrearsCount: number): string {
+  return activeArrearsCount > 0 ? 'Active Arrear' : 'Clear';
 }

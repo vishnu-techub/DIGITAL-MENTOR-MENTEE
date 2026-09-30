@@ -2,12 +2,12 @@ import { Response } from 'express';
 import mongoose from 'mongoose';
 import {
   Notification,
-  MentorAssignment,
-  SystemSetting,
+  Student,
+  Faculty,
 } from '../../models/index.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
-import { getUpcomingSaturday } from '../../utils/date.js';
+import { syncMeetingNotifications } from './notification.service.js';
 
 export async function getUserNotifications(req: AuthRequest, res: Response) {
   try {
@@ -77,82 +77,28 @@ export async function markNotificationAsRead(req: AuthRequest, res: Response) {
   }
 }
 
-// Generate automated Saturday meeting reminders (Can be called by cron or admin trigger)
+/** Auto-generated meeting notice types — these are the ones we keep in sync. */
+/**
+ * Manual re-sync endpoint (admin/HOD).
+ *
+ * The actual synchronisation lives in `notification.service.ts` so that the
+ * automatic scheduler and this endpoint run byte-identical logic. This handler
+ * only exposes it over HTTP.
+ *
+ * The legacy `triggerType` body field is accepted but ignored, because the
+ * wording is derived from the stored `Meeting.meetingDate` rather than from a
+ * manual trigger choice.
+ */
 export async function triggerSaturdayReminders(req: AuthRequest, res: Response) {
-  const { triggerType = 'SATURDAY_TODAY' } = req.body; // 'FRIDAY_REMINDER' or 'SATURDAY_TODAY'
-
   try {
-    const nextSat = getUpcomingSaturday();
-    const settings = await SystemSetting.find({
-      key: { $in: ['saturday_meeting_time', 'saturday_meeting_location'] },
-    });
-    const settingsMap = Object.fromEntries(settings.map((s) => [s.key, s.value]));
-
-    const time = settingsMap['saturday_meeting_time'] || '10:30 AM';
-    const loc = settingsMap['saturday_meeting_location'] || 'Faculty Cabin';
-
-    // Find all active mentor assignments
-    const activeAssignments = await MentorAssignment.find({ status: 'ACTIVE' })
-      .populate('student')
-      .populate({ path: 'mentor', populate: { path: 'user' } });
-
-    let createdCount = 0;
-
-    for (const asg of activeAssignments as any[]) {
-      const student = asg.student;
-      const mentor = asg.mentor;
-      const mentorUser = mentor?.user;
-
-      if (!student || !mentorUser) continue;
-
-      if (triggerType === 'FRIDAY_REMINDER') {
-        // Friday Student Notification
-        await Notification.create({
-          user: student.user,
-          title: 'Friday Reminder: Saturday Mentor–Mentee Meeting',
-          message: `Reminder: Your Mentor–Mentee meeting is tomorrow (${nextSat}) at ${time} in ${loc}.`,
-          type: 'MEETING_REMINDER_FRIDAY',
-          relatedEntity: 'MEETING',
-        });
-
-        // Friday Faculty Notification
-        await Notification.create({
-          user: mentorUser._id || mentorUser,
-          title: 'Friday Reminder: Saturday Mentor–Mentee Meeting',
-          message: `Reminder: Mentor–Mentee meeting is tomorrow (${nextSat}) at ${time}. Please update meeting records after the session.`,
-          type: 'MEETING_REMINDER_FRIDAY',
-          relatedEntity: 'MEETING',
-        });
-      } else {
-        // Saturday Student Notification
-        await Notification.create({
-          user: student.user,
-          title: 'Today is your Mentor–Mentee Meeting',
-          message: `Today (${nextSat}) is your Mentor–Mentee meeting with ${mentorUser.fullName || 'your mentor'} at ${time} in ${loc}.`,
-          type: 'MEETING_TODAY_SATURDAY',
-          relatedEntity: 'MEETING',
-        });
-
-        // Saturday Faculty Notification
-        await Notification.create({
-          user: mentorUser._id || mentorUser,
-          title: 'Today is your Mentor–Mentee Meeting',
-          message: `Today is your scheduled Mentor–Mentee meeting with mentee ${student.fullName}. Please update the meeting status after completion.`,
-          type: 'MEETING_TODAY_SATURDAY',
-          relatedEntity: 'MEETING',
-        });
-      }
-
-      createdCount += 2;
-    }
-
+    const result = await syncMeetingNotifications();
     return sendSuccess(
       res,
-      { triggeredCount: createdCount, triggerType },
-      'Saturday meeting reminders dispatched successfully.'
+      result,
+      `Meeting notifications synchronised from database records: ${result.createdCount} created, ${result.updatedCount} updated, ${result.clearedCount} cleared.`
     );
   } catch (err: any) {
     console.error('triggerSaturdayReminders error:', err);
-    return sendError(res, 'Failed to trigger reminders.', 500);
+    return sendError(res, 'Failed to synchronise meeting notifications.', 500);
   }
 }

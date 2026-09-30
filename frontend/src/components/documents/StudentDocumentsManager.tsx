@@ -91,8 +91,73 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
   const [rejectionReason, setRejectionReason] = useState('');
   const [verifying, setVerifying] = useState(false);
 
-  // Preview modal state
+  // Preview modal state.
+  // The file is private, so we hold an authenticated Blob URL rather than the
+  // stored `fileUrl` path (which is no longer publicly reachable).
   const [previewDoc, setPreviewDoc] = useState<any | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewIsPdf, setPreviewIsPdf] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  const closePreview = () => {
+    setPreviewDoc(null);
+    setPreviewUrl((current) => {
+      if (current) window.URL.revokeObjectURL(current);
+      return null;
+    });
+    setPreviewIsPdf(false);
+    setPreviewError(null);
+    setPreviewLoading(false);
+  };
+
+  const openPreview = async (doc: any) => {
+    setPreviewDoc(doc);
+    setPreviewUrl(null);
+    setPreviewError(null);
+    setPreviewLoading(true);
+    try {
+      const { blob, mimeType } = await api.documents.fetchViewBlob(doc.documentId || doc.id);
+      const objectUrl = window.URL.createObjectURL(blob);
+      setPreviewIsPdf(
+        mimeType.includes('pdf') || (doc.fileName || '').toLowerCase().endsWith('.pdf')
+      );
+      setPreviewUrl(objectUrl);
+    } catch (err: any) {
+      setPreviewError(
+        err?.message || 'You are not authorised to preview this document, or the file is missing.'
+      );
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const openPreviewInNewTab = () => {
+    if (!previewUrl) return;
+    const win = window.open(previewUrl, '_blank', 'noopener,noreferrer');
+    if (!win) {
+      // Popup blocked: keep the user informed rather than failing silently.
+      setPreviewError('Your browser blocked the new tab. Allow pop-ups to open the document.');
+    }
+  };
+
+  const handleDownload = async (doc: any) => {
+    try {
+      await api.documents.download(doc.documentId || doc.id, doc.fileName);
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to download the document.');
+    }
+  };
+
+  // Revoke the object URL if the component unmounts while a preview is open.
+  useEffect(() => {
+    return () => {
+      setPreviewUrl((current) => {
+        if (current) window.URL.revokeObjectURL(current);
+        return null;
+      });
+    };
+  }, []);
 
   const fetchDocuments = async () => {
     if (!studentId) return;
@@ -750,16 +815,13 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
                         fontSize: '0.78rem',
                         fontWeight: 600,
                       }}
-                      onClick={() => setPreviewDoc(doc)}
+                      onClick={() => openPreview(doc)}
                     >
                       <Eye size={13} /> View
                     </button>
 
-                    <a
-                      href={doc.fileUrl}
-                      download={doc.fileName}
-                      target="_blank"
-                      rel="noreferrer"
+                    <button
+                      type="button"
                       className="btn btn-sm btn-outline"
                       style={{
                         display: 'inline-flex',
@@ -768,11 +830,11 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
                         padding: '6px 12px',
                         fontSize: '0.78rem',
                         fontWeight: 600,
-                        textDecoration: 'none',
                       }}
+                      onClick={() => handleDownload(doc)}
                     >
                       <Download size={13} /> Download
-                    </a>
+                    </button>
                   </div>
 
                   <div style={{ display: 'flex', gap: '0.4rem' }}>
@@ -1071,23 +1133,44 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
         </Modal>
       )}
 
-      {/* PREVIEW MODAL */}
+      {/* PREVIEW MODAL
+          Certificates are private: the server no longer serves a public /uploads
+          mount, so the file is fetched WITH the bearer token and displayed from
+          a Blob URL. The object URL is revoked when the modal closes. */}
       {previewDoc && (
         <Modal
           isOpen={!!previewDoc}
           title={previewDoc.fileName || previewDoc.title}
-          onClose={() => setPreviewDoc(null)}
+          onClose={closePreview}
         >
           <div style={{ minHeight: '350px', maxHeight: '72vh', overflowY: 'auto', textAlign: 'center' }}>
-            {previewDoc.fileType?.includes('pdf') || previewDoc.fileName?.toLowerCase().endsWith('.pdf') ? (
+            {previewLoading && (
+              <div style={{ padding: '3rem 1rem' }}>
+                <div className="skeleton" style={{ height: 300, borderRadius: '6px' }} />
+                <p style={{ marginTop: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Loading secure preview…
+                </p>
+              </div>
+            )}
+
+            {!previewLoading && previewError && (
+              <div style={{ padding: '2.5rem 1rem' }}>
+                <AlertTriangle size={30} style={{ color: '#DC2626', marginBottom: '0.5rem' }} />
+                <p style={{ fontSize: '0.85rem', color: '#DC2626', fontWeight: 600 }}>{previewError}</p>
+              </div>
+            )}
+
+            {!previewLoading && !previewError && previewUrl && previewIsPdf && (
               <iframe
-                src={previewDoc.fileUrl}
+                src={previewUrl}
                 title={previewDoc.fileName || previewDoc.title}
                 style={{ width: '100%', height: '520px', border: 'none', borderRadius: '6px' }}
               />
-            ) : (
+            )}
+
+            {!previewLoading && !previewError && previewUrl && !previewIsPdf && (
               <img
-                src={previewDoc.fileUrl}
+                src={previewUrl}
                 alt={previewDoc.fileName || previewDoc.title}
                 style={{ maxWidth: '100%', maxHeight: '520px', objectFit: 'contain', borderRadius: '6px' }}
               />
@@ -1113,24 +1196,24 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
               {previewDoc.isPrimary ? 'Official Student Details Form' : previewDoc.category}
             </span>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <a
-                href={previewDoc.fileUrl}
-                target="_blank"
-                rel="noreferrer"
+              <button
+                type="button"
                 className="btn btn-secondary btn-sm"
                 style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                onClick={openPreviewInNewTab}
+                disabled={!previewUrl}
               >
                 <ExternalLink size={13} /> Open in New Tab
-              </a>
-              <a
-                href={previewDoc.fileUrl}
-                download={previewDoc.fileName}
+              </button>
+              <button
+                type="button"
                 className="btn btn-primary btn-sm"
                 style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                onClick={() => handleDownload(previewDoc)}
               >
                 <Download size={13} /> Download File
-              </a>
-              <button className="btn btn-secondary btn-sm" onClick={() => setPreviewDoc(null)}>
+              </button>
+              <button className="btn btn-secondary btn-sm" onClick={closePreview}>
                 Close
               </button>
             </div>
@@ -1154,11 +1237,33 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
                 Permanent Deletion Warning
               </h4>
             </div>
-            <p style={{ fontSize: '0.875rem', color: '#475569', lineHeight: 1.5, margin: '0 0 1.25rem 0' }}>
+            <p style={{ fontSize: '0.875rem', color: '#475569', lineHeight: 1.5, margin: '0 0 0.75rem 0' }}>
               Are you sure you want to permanently delete <strong>ALL</strong> uploaded documents and certificates for this student?
               This will remove all document records from MongoDB and permanently delete all physical files from disk.
               This action cannot be undone.
             </p>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '8px',
+                background: '#FFFBEB',
+                border: '1px solid #FDE68A',
+                borderRadius: '6px',
+                padding: '10px 12px',
+                marginBottom: '1.25rem',
+                fontSize: '0.8rem',
+                color: '#92400E',
+                lineHeight: 1.45,
+              }}
+            >
+              <ShieldCheck size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>
+                The system-generated <strong>Student Details Form</strong> is{' '}
+                <strong>retained</strong> and cannot be deleted. Every other document and
+                certificate, including its physical file, will be permanently removed.
+              </span>
+            </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
               <button
                 type="button"

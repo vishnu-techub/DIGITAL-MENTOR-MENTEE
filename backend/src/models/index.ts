@@ -15,3 +15,4 @@ export * from './StudentDocument.model.js';
 export * from './School.model.js';
 export * from './StudentProgress.model.js';
 export * from './StudentEditRequest.model.js';
+export * from './AcademicEditRequest.model.js';

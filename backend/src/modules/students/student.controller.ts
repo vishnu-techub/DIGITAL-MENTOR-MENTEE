@@ -20,7 +20,54 @@ import { AuthRequest } from '../../middleware/auth.middleware.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
 import { ROLES } from '../../config/constants.js';
 import { calculateArrearStatistics, parseSubjectCodes } from '../../utils/arrears.util.js';
+import { checkStudentAccess, isActiveMentorOf, toIdString } from '../../utils/access.util.js';
+import {
+  parseStrictNumber,
+  parseGrade,
+  parseMobile,
+  parseEmail,
+  parseStudyYear,
+  parseSection,
+  parseSemesterNumber,
+  joinErrors,
+} from '../../utils/validation.util.js';
 import { syncStudentDetailsPdf } from '../documents/student-details-pdf.service.js';
+
+/**
+ * SINGLE SOURCE OF TRUTH for a student's institutional email.
+ * `Student.email` is authoritative; the linked `User.email` is kept in sync as
+ * a mirror. Nothing is synthesised at read time any more.
+ */
+export function canonicalStudentEmail(student: any): string {
+  return String(student?.email || '').trim().toLowerCase();
+}
+
+/** Normalise an incoming arrear subject list into {code,name} pairs. Accepts
+ *  a structured array or a free-text string ("24ITT36, 24ITT40"). */
+function normaliseArrearSubjects(input: any): { codes: string[]; details: { subjectCode: string; subjectName: string }[] } {
+  const details: { subjectCode: string; subjectName: string }[] = [];
+  const seen = new Set<string>();
+
+  const push = (rawCode: any, rawName: any) => {
+    const code = String(rawCode ?? '').trim().toUpperCase();
+    if (!code) return;
+    if (['NIL', 'NONE', 'CLEAR', 'REGULAR', 'NA', 'N/A', '-', '—'].includes(code)) return;
+    if (seen.has(code)) return;
+    seen.add(code);
+    details.push({ subjectCode: code, subjectName: String(rawName ?? '').trim() || 'Not Provided' });
+  };
+
+  if (Array.isArray(input)) {
+    input.forEach((d: any) => {
+      if (typeof d === 'string') push(d, '');
+      else push(d?.subjectCode ?? d?.subject_code ?? d?.code, d?.subjectName ?? d?.subject_name ?? d?.name);
+    });
+  } else if (typeof input === 'string' && input.trim()) {
+    parseSubjectCodes(input).forEach((code) => push(code, ''));
+  }
+
+  return { codes: details.map((d) => d.subjectCode), details };
+}
 
 // Helper: Resolve student from id, registerNumber, or user ID
 async function findStudentByIdOrReg(idOrReg: string) {
@@ -169,7 +216,7 @@ export async function getStudents(req: AuthRequest, res: Response) {
           blood_group: s.bloodGroup || '',
           residential_type: s.residentialType,
           mobile_number: s.mobileNumber || '',
-          email: s.email || '',
+          email: canonicalStudentEmail(s),
           is_active: s.isActive ? 1 : 0,
           profile_completed: s.profileCompleted ? 1 : 0,
           profile_completion_percentage: completionPercent,
@@ -187,7 +234,8 @@ export async function getStudents(req: AuthRequest, res: Response) {
           cleared_arrears: arrearStats.clearedCount,
           arrear_status_label: arrearStats.statusLabel,
           cgpa: currentCgpa,
-          next_meeting_date: latestMeeting?.meetingDate || 'Upcoming Saturday',
+          // Never a fabricated date: null means "no meeting recorded yet".
+          next_meeting_date: latestMeeting?.meetingDate || null,
           meeting_status: latestMeeting?.meetingStatus || 'SCHEDULED',
         };
       })
@@ -215,11 +263,11 @@ export async function getStudentById(req: AuthRequest, res: Response) {
       return sendError(res, 'Student not found', 404);
     }
 
-    // RBAC: Student can only view their own profile
-    if (req.user?.role === ROLES.STUDENT) {
-      if (req.user.studentId && req.user.studentId !== student._id.toString() && req.user.id !== student.user?.toString()) {
-        return sendError(res, 'Access denied: You can only view your own student record.', 403);
-      }
+    // Authorisation: student = own record, mentor = assigned mentees,
+    // HOD = own department, admin = institutional access.
+    const access = await checkStudentAccess(req.user, student);
+    if (!access.allowed) {
+      return sendError(res, access.message, access.status);
     }
 
     const dept = student.department as any;
@@ -343,7 +391,8 @@ export async function getStudentById(req: AuthRequest, res: Response) {
       blood_group: student.bloodGroup || 'B+ve',
       residential_type: student.residentialType,
       mobile_number: student.mobileNumber || null,
-      email: student.email || `${student.registerNumber}@ksrce.ac.in`,
+      // Single source of truth: never synthesise an address at read time.
+      email: canonicalStudentEmail(student),
       address: student.address || null,
       profile_completed: student.profileCompleted ? 1 : 0,
       profile_completed_at: student.profileCompletedAt || null,
@@ -446,11 +495,15 @@ export async function createStudent(req: AuthRequest, res: Response) {
 
     const passwordHash = await bcrypt.hash(temporaryPassword.trim(), 10);
 
+    // Single source of truth: computed ONCE and written identically to both
+    // Student.email and the mirrored User.email.
+    const institutionalEmail = `${registerNumber.trim().toLowerCase()}@ksrce.ac.in`;
+
     const newUser = await User.create({
       username: effectiveUsername.toLowerCase(),
       passwordHash,
       role: 'STUDENT',
-      email: `${registerNumber.trim().toLowerCase()}@ksrce.ac.in`,
+      email: institutionalEmail,
       fullName: fullName.trim(),
       department: deptDoc?._id,
       isActive: isActive === 1 || isActive === true,
@@ -462,7 +515,7 @@ export async function createStudent(req: AuthRequest, res: Response) {
       fullName: fullName.trim(),
       department: deptDoc?._id,
       batch: batchDoc?._id,
-      email: `${registerNumber.trim().toLowerCase()}@ksrce.ac.in`,
+      email: institutionalEmail,
       profileCompleted: false,
       isActive: isActive === 1 || isActive === true,
       parent: {},
@@ -567,27 +620,138 @@ export async function submitStudentProfile(req: AuthRequest, res: Response) {
       semesters,
     } = req.body;
 
-    if (mobileNumber) {
-      const cleanMobile = String(mobileNumber).trim();
-      if (!/^[0-9]{10}$/.test(cleanMobile)) {
-        return sendError(res, 'Mobile number must be exactly 10 digits.', 400);
+    // ---- Validate everything up-front; nothing is persisted on failure ------
+    const errors: string[] = [];
+
+    const mobileResult = parseMobile(mobileNumber, false);
+    if (!mobileResult.ok) errors.push(mobileResult.error as string);
+
+    const emailResult = parseEmail(email, false);
+    if (!emailResult.ok) errors.push(emailResult.error as string);
+
+    const yearResult = parseStudyYear(year);
+    if (!yearResult.ok) errors.push(yearResult.error as string);
+
+    const sectionResult = parseSection(section);
+    if (!sectionResult.ok) errors.push(sectionResult.error as string);
+
+    const tenthMarkResult = parseStrictNumber(tenthMark, { field: '10th standard mark', min: 0, max: 1000 });
+    if (!tenthMarkResult.ok) errors.push(tenthMarkResult.error as string);
+
+    const twelfthMarkResult = parseStrictNumber(twelfthMark, { field: '12th standard mark', min: 0, max: 1000 });
+    if (!twelfthMarkResult.ok) errors.push(twelfthMarkResult.error as string);
+
+    const cutoffResult = parseStrictNumber(cutoffMark, { field: 'TNEA cut-off mark', min: 0, max: 200 });
+    if (!cutoffResult.ok) errors.push(cutoffResult.error as string);
+
+    const effectiveAdmissionType = admissionType || student.school?.admissionType || 'COUNSELLING';
+    if (!['COUNSELLING', 'MANAGEMENT', 'LATERAL_ENTRY'].includes(effectiveAdmissionType)) {
+      errors.push('Admission type must be COUNSELLING, MANAGEMENT or LATERAL_ENTRY.');
+    }
+    if (effectiveAdmissionType === 'LATERAL_ENTRY') {
+      const lat = (lateralEntry ?? {}) as any;
+      const college = String(
+        lat.previousCollegeName ?? lat.previous_college_name ?? student.school?.lateralEntry?.previousCollegeName ?? ''
+      ).trim();
+      const course = String(
+        lat.previousCourseDiploma ?? lat.previous_course_diploma ?? student.school?.lateralEntry?.previousCourseDiploma ?? ''
+      ).trim();
+      if (!college) errors.push('Previous College Name is required for Lateral Entry admission.');
+      if (!course) errors.push('Previous Course / Diploma is required for Lateral Entry admission.');
+    }
+
+    // Build validated semester payloads (arrear subject list is authoritative).
+    const semesterWrites: {
+      semesterNumber: number;
+      cgpa: number;
+      sgpa?: number;
+      arrearsCount: number;
+      arrearsSubjects: string;
+      arrearSubjectDetails: { subjectCode: string; subjectName: string }[];
+    }[] = [];
+
+    if (Array.isArray(semesters)) {
+      // Students may NOT write CGPA, SGPA or arrears — not even on first login.
+      // Those values must be entered by faculty/HOD/admin, or by the student via
+      // an Academic Edit Request approved by the assigned mentor.
+      if (req.user?.role === ROLES.STUDENT) {
+        const offending: string[] = [];
+        for (const sem of semesters) {
+          const semNum = sem?.semesterNumber ?? sem?.semester_number ?? '?';
+          if (sem?.cgpa !== undefined && sem?.cgpa !== null && sem?.cgpa !== '') {
+            offending.push(`Semester ${semNum} CGPA`);
+          }
+          if (sem?.sgpa !== undefined && sem?.sgpa !== null && sem?.sgpa !== '') {
+            offending.push(`Semester ${semNum} SGPA`);
+          }
+          if (
+            sem?.arrearsSubjects || sem?.arrears_subjects ||
+            sem?.arrearSubjectDetails || sem?.arrear_subject_details ||
+            (Number(sem?.arrearsCount ?? sem?.arrears_count ?? 0) > 0)
+          ) {
+            offending.push(`Semester ${semNum} arrear details`);
+          }
+        }
+        if (offending.length) {
+          return sendError(
+            res,
+            `Access denied: students cannot enter ${offending.join(', ')}. ` +
+              'Submit an Academic Edit Request and your mentor/HOD will review and approve the correction.',
+            403
+          );
+        }
+      }
+
+      const seen = new Set<number>();
+      for (const sem of semesters) {
+        const semResult = parseSemesterNumber(sem?.semesterNumber ?? sem?.semester_number);
+        if (!semResult.ok) {
+          errors.push(semResult.error as string);
+          continue;
+        }
+        const semNum = semResult.value as number;
+        if (seen.has(semNum)) {
+          errors.push(`Semester 0${semNum} appears more than once in the request.`);
+          continue;
+        }
+        seen.add(semNum);
+
+        const cgpaResult = parseGrade(sem?.cgpa, `Semester 0${semNum} CGPA`, false);
+        if (!cgpaResult.ok) errors.push(cgpaResult.error as string);
+
+        const sgpaResult = parseGrade(sem?.sgpa, `Semester 0${semNum} SGPA`, false);
+        if (!sgpaResult.ok) errors.push(sgpaResult.error as string);
+
+        const { codes, details } = normaliseArrearSubjects(
+          sem?.arrearSubjectDetails ?? sem?.arrear_subject_details ?? sem?.arrearsSubjects ?? sem?.arrears_subjects
+        );
+        if (codes.length === 0) {
+          const claimed = sem?.arrearsCount ?? sem?.arrears_count;
+          if (claimed !== undefined && Number(claimed) > 0) {
+            errors.push(
+              `Semester 0${semNum}: ${claimed} arrear(s) claimed but no subject codes supplied. Provide the subject list instead of a count.`
+            );
+          }
+        }
+
+        const cgpa = cgpaResult.value !== undefined ? (cgpaResult.value as number) : 0;
+        // SGPA must never silently inherit CGPA. When it is not supplied, the
+        // existing stored SGPA is left untouched (see the $set build below).
+        const sgpa = sgpaResult.value !== undefined ? (sgpaResult.value as number) : undefined;
+
+        semesterWrites.push({
+          semesterNumber: semNum,
+          cgpa,
+          sgpa,
+          arrearsCount: details.length,
+          arrearsSubjects: codes.join(', '),
+          arrearSubjectDetails: details,
+        });
       }
     }
 
-    if (Array.isArray(semesters)) {
-      for (const sem of semesters) {
-        const semNum = parseInt(sem.semesterNumber || sem.semester_number, 10);
-        if (semNum >= 1 && semNum <= 8) {
-          const rawCgpa = sem.cgpa !== undefined && sem.cgpa !== '' ? parseFloat(sem.cgpa) : undefined;
-          const rawSgpa = sem.sgpa !== undefined && sem.sgpa !== '' ? parseFloat(sem.sgpa) : undefined;
-          if (rawCgpa !== undefined && (isNaN(rawCgpa) || rawCgpa < 0 || rawCgpa > 10)) {
-            return sendError(res, `Semester ${semNum}: CGPA must be strictly between 0.0 and 10.0`, 400);
-          }
-          if (rawSgpa !== undefined && (isNaN(rawSgpa) || rawSgpa < 0 || rawSgpa > 10)) {
-            return sendError(res, `Semester ${semNum}: SGPA must be strictly between 0.0 and 10.0`, 400);
-          }
-        }
-      }
+    if (errors.length) {
+      return sendError(res, joinErrors(errors), 400, errors);
     }
 
     // Validate school selection: accept selected school from database OR entered school name
@@ -663,18 +827,21 @@ export async function submitStudentProfile(req: AuthRequest, res: Response) {
     }
 
     // Update student personal and subdocument fields
-    student.mobileNumber = mobileNumber ? String(mobileNumber).trim() : student.mobileNumber;
-    student.email = email ? String(email).trim().toLowerCase() : student.email;
+    if (mobileNumber !== undefined) {
+      student.mobileNumber = mobileResult.value as string;
+    }
+    if (email !== undefined) {
+      student.email = emailResult.value as string;
+    }
     student.dob = dob || student.dob;
     student.bloodGroup = bloodGroup || student.bloodGroup;
     student.residentialType = residentialType || student.residentialType;
     student.address = address || student.address;
-    if (year !== undefined) {
-      const y = parseInt(year, 10);
-      if (y >= 1 && y <= 4) student.year = y;
+    if (yearResult.value !== undefined) {
+      student.year = yearResult.value as number;
     }
-    if (section !== undefined && String(section).trim()) {
-      student.section = String(section).trim().toUpperCase();
+    if (section !== undefined) {
+      student.section = sectionResult.value || student.section;
     }
     student.profileCompleted = true;
     student.profileCompletedAt = new Date();
@@ -698,52 +865,80 @@ export async function submitStudentProfile(req: AuthRequest, res: Response) {
         }));
     }
 
-    const effectiveAdmissionType = admissionType || student.school?.admissionType || 'COUNSELLING';
     student.school = {
-      tenthMark: tenthMark !== undefined && tenthMark !== '' ? parseFloat(tenthMark) : student.school?.tenthMark || 0,
+      tenthMark: tenthMarkResult.value ?? student.school?.tenthMark ?? 0,
       tenthSchool: finalTenthSchoolName,
       tenthSchoolId: tenthSchoolDoc?._id || (mongoose.Types.ObjectId.isValid(tenthSchoolId) ? tenthSchoolId : null) || student.school?.tenthSchoolId || null,
-      twelfthMark: twelfthMark !== undefined && twelfthMark !== '' ? parseFloat(twelfthMark) : student.school?.twelfthMark || 0,
+      twelfthMark: twelfthMarkResult.value ?? student.school?.twelfthMark ?? 0,
       twelfthSchool: finalTwelfthSchoolName,
       twelfthSchoolId: twelfthSchoolDoc?._id || (mongoose.Types.ObjectId.isValid(twelfthSchoolId) ? twelfthSchoolId : null) || student.school?.twelfthSchoolId || null,
-      cutoffMark: cutoffMark !== undefined && cutoffMark !== '' ? parseFloat(cutoffMark) : student.school?.cutoffMark || 0,
+      cutoffMark: cutoffResult.value ?? student.school?.cutoffMark ?? 0,
       admissionType: effectiveAdmissionType,
       scholarshipDetails: (scholarshipDetails || student.school?.scholarshipDetails || 'Nil').trim(),
-      lateralEntry: effectiveAdmissionType === 'LATERAL_ENTRY' ? {
-        previousCollegeName: lateralEntry?.previousCollegeName || lateralEntry?.previous_college_name || student.school?.lateralEntry?.previousCollegeName || '',
-        previousCourseDiploma: lateralEntry?.previousCourseDiploma || lateralEntry?.previous_course_diploma || student.school?.lateralEntry?.previousCourseDiploma || '',
-        previousInstitution: lateralEntry?.previousInstitution || lateralEntry?.previous_institution || student.school?.lateralEntry?.previousInstitution || '',
-        previousQualificationDetails: lateralEntry?.previousQualificationDetails || lateralEntry?.previous_qualification_details || student.school?.lateralEntry?.previousQualificationDetails || '',
-        admissionYear: lateralEntry?.admissionYear || lateralEntry?.admission_year || student.school?.lateralEntry?.admissionYear || undefined,
-      } : undefined,
+      // Only lateral-entry admissions persist lateral data — never empty padding.
+      lateralEntry: effectiveAdmissionType === 'LATERAL_ENTRY'
+        ? {
+            previousCollegeName: String(
+              lateralEntry?.previousCollegeName ??
+                lateralEntry?.previous_college_name ??
+                student.school?.lateralEntry?.previousCollegeName ??
+                ''
+            ).trim(),
+            previousCourseDiploma: String(
+              lateralEntry?.previousCourseDiploma ??
+                lateralEntry?.previous_course_diploma ??
+                student.school?.lateralEntry?.previousCourseDiploma ??
+                ''
+            ).trim(),
+            previousInstitution: String(
+              lateralEntry?.previousInstitution ??
+                lateralEntry?.previous_institution ??
+                student.school?.lateralEntry?.previousInstitution ??
+                ''
+            ).trim(),
+            previousQualificationDetails: String(
+              lateralEntry?.previousQualificationDetails ??
+                lateralEntry?.previous_qualification_details ??
+                student.school?.lateralEntry?.previousQualificationDetails ??
+                ''
+            ).trim(),
+            admissionYear: lateralEntry?.admissionYear || lateralEntry?.admission_year || student.school?.lateralEntry?.admissionYear || undefined,
+          }
+        : undefined,
     };
 
     await student.save();
 
-    // Update user email if provided
+    // Keep the mirrored User record's email identical (single source of truth).
     if (student.email) {
       await User.findByIdAndUpdate(student.user, { email: student.email });
     }
 
-    // Update semester 1 to 8 academic grades
-    if (Array.isArray(semesters)) {
-      for (const sem of semesters) {
-        const semNum = parseInt(sem.semesterNumber || sem.semester_number, 10);
-        if (semNum >= 1 && semNum <= 8) {
-          await AcademicRecord.findOneAndUpdate(
-            { student: student._id, semesterNumber: semNum },
-            {
-              student: student._id,
-              semesterNumber: semNum,
-              cgpa: parseFloat(sem.cgpa || 0),
-              sgpa: parseFloat(sem.sgpa || sem.cgpa || 0),
-              arrearsCount: parseInt(sem.arrearsCount || sem.arrears_count || 0, 10),
-              arrearsSubjects: sem.arrearsSubjects || sem.arrears_subjects || '',
-            },
-            { upsert: true, returnDocument: 'after' }
-          );
-        }
-      }
+    // Semester grades: validated values only; arrears derived from the subject list.
+    for (const w of semesterWrites) {
+      const setFields: Record<string, any> = {
+        cgpa: w.cgpa,
+        arrearsCount: w.arrearsCount,
+        arrearsSubjects: w.arrearsSubjects,
+        arrearSubjectDetails: w.arrearSubjectDetails,
+      };
+      // Only overwrite SGPA when it was actually supplied.
+      if (w.sgpa !== undefined) setFields.sgpa = w.sgpa;
+
+      await AcademicRecord.findOneAndUpdate(
+        { student: student._id, semesterNumber: w.semesterNumber },
+        {
+          $set: setFields,
+          $setOnInsert: {
+            student: student._id,
+            semesterNumber: w.semesterNumber,
+            sgpa: w.sgpa ?? 0,
+            clearedSubjects: [],
+            remarks: '',
+          },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
     }
 
     await logAudit({
@@ -866,48 +1061,98 @@ export async function updateStudent(req: AuthRequest, res: Response) {
       return sendError(res, 'Student not found.', 404);
     }
 
-    // RBAC: Student can update their own contact details; Admin can update everything
+    // Authorisation: student = self, mentor = assigned mentee, HOD = own department, admin = all.
+    const access = await checkStudentAccess(req.user, student);
+    if (!access.allowed) {
+      return sendError(res, access.message, access.status);
+    }
+
     if (req.user?.role === ROLES.STUDENT) {
-      if (req.user.studentId !== student._id.toString() && req.user.id !== student.user.toString()) {
-        return sendError(res, 'You are not authorized to update this profile.', 403);
-      }
-      if (req.body.registerNumber || req.body.register_number || req.body.departmentId || req.body.batchId) {
+      // A student may maintain ONLY their own personal/contact details and
+      // Year/Section here. Everything else must go through a request workflow
+      // or an administrator, so this endpoint can never become a back door to
+      // identity or academic data.
+      const allowedForStudent = new Set([
+        'id', 'studentId',
+        'mobileNumber', 'mobile_number',
+        'email',
+        'address',
+        'dob', 'dateOfBirth', 'date_of_birth',
+        'bloodGroup', 'blood_group',
+        'residentialType', 'residential_type',
+        'fatherName', 'father_name',
+        'fatherContact', 'father_contact',
+        'fatherOccupation', 'father_occupation',
+        'motherName', 'mother_name',
+        'motherContact', 'mother_contact',
+        'motherOccupation', 'mother_occupation',
+        'year', 'section',
+      ]);
+      const rejected = Object.keys(req.body || {}).filter((k) => !allowedForStudent.has(k));
+      if (rejected.length) {
         return sendError(
           res,
-          'Modifying core identity fields (Register Number, Department, Batch) is restricted to Administrators.',
+          `Access denied: students cannot modify ${rejected.join(', ')} from this endpoint. ` +
+            'Register Number, Department and Batch require an Identity Edit Request; ' +
+            'CGPA, SGPA and arrears require an Academic Edit Request approved by your mentor.',
           403
         );
       }
     }
 
+    // ---- VALIDATE EVERYTHING FIRST (no partial writes) ----------------------
+    const errors: string[] = [];
+
+    const mobileResult = parseMobile(mobileNumber, false);
+    if (!mobileResult.ok) errors.push(mobileResult.error as string);
+
+    const emailResult = parseEmail(email, false);
+    if (!emailResult.ok) errors.push(emailResult.error as string);
+
+    const yearResult = parseStudyYear(req.body.year);
+    if (!yearResult.ok) errors.push(yearResult.error as string);
+
+    const sectionResult = parseSection(req.body.section);
+    if (!sectionResult.ok) errors.push(sectionResult.error as string);
+
+    const admTypeRaw = req.body.admissionType ?? req.body.admission_type;
+    if (admTypeRaw !== undefined && !['COUNSELLING', 'MANAGEMENT', 'LATERAL_ENTRY'].includes(admTypeRaw)) {
+      errors.push('Admission type must be COUNSELLING, MANAGEMENT or LATERAL_ENTRY.');
+    }
+
+    const latRaw = req.body.lateralEntry ?? req.body.lateral_entry;
+    const effectiveAdmType = admTypeRaw ?? student.school?.admissionType ?? 'COUNSELLING';
+    if (effectiveAdmType === 'LATERAL_ENTRY' && (latRaw || admTypeRaw === 'LATERAL_ENTRY')) {
+      const lat = latRaw || {};
+      const college = String(lat.previousCollegeName ?? lat.previous_college_name ?? student.school?.lateralEntry?.previousCollegeName ?? '').trim();
+      const course = String(lat.previousCourseDiploma ?? lat.previous_course_diploma ?? student.school?.lateralEntry?.previousCourseDiploma ?? '').trim();
+      if (!college) errors.push('Previous College Name is required for Lateral Entry admission.');
+      if (!course) errors.push('Previous Course / Diploma is required for Lateral Entry admission.');
+    }
+
+    if (errors.length) {
+      return sendError(res, joinErrors(errors), 400, errors);
+    }
+
+    // ---- ALL VALID: apply ---------------------------------------------------
     if (dob) student.dob = dob;
     if (bloodGroup) student.bloodGroup = bloodGroup;
     if (residentialType) student.residentialType = residentialType;
     if (mobileNumber !== undefined) {
-      const cleanMobile = String(mobileNumber).trim();
-      if (cleanMobile && !/^[0-9]{10}$/.test(cleanMobile)) {
-        return sendError(res, 'Mobile number must be exactly 10 digits.', 400);
-      }
-      student.mobileNumber = cleanMobile;
+      student.mobileNumber = mobileResult.value as string;
     }
     if (email !== undefined) {
-      const cleanEmail = String(email).trim().toLowerCase();
-      if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-        return sendError(res, 'Invalid email address format.', 400);
-      }
-      student.email = cleanEmail;
-      if (cleanEmail) {
-        await User.findByIdAndUpdate(student.user, { email: cleanEmail });
-      }
+      student.email = emailResult.value as string;
+      // Keep the mirrored User record identical (single source of truth).
+      await User.findByIdAndUpdate(student.user, { email: student.email || undefined });
     }
     if (address) student.address = address;
 
-    if (req.body.year !== undefined) {
-      const y = parseInt(req.body.year, 10);
-      if (y >= 1 && y <= 4) student.year = y;
+    if (yearResult.value !== undefined) {
+      student.year = yearResult.value as number;
     }
-    if (req.body.section !== undefined && String(req.body.section).trim()) {
-      student.section = String(req.body.section).trim().toUpperCase();
+    if (req.body.section !== undefined) {
+      student.section = sectionResult.value || student.section;
     }
 
     if (req.body.admissionType !== undefined || req.body.admission_type !== undefined) {
@@ -1011,6 +1256,93 @@ export async function updateStudent(req: AuthRequest, res: Response) {
   }
 }
 
+/**
+ * Year / Section self-service.
+ *
+ * Requirement: a student may edit Study Year and Section directly, with no
+ * approval workflow. Those are the ONLY two fields a student may write here —
+ * any CGPA/SGPA/arrear payload is rejected with 403 so it cannot be used as a
+ * back door to the academics endpoint.
+ */
+export async function updateStudentYearSection(req: AuthRequest, res: Response) {
+  const id = req.params.id as string;
+
+  try {
+    const student = await findStudentByIdOrReg(id);
+    if (!student) {
+      return sendError(res, 'Student not found.', 404);
+    }
+
+    const access = await checkStudentAccess(req.user, student);
+    if (!access.allowed) {
+      return sendError(res, access.message, access.status);
+    }
+
+    if (req.user?.role === ROLES.STUDENT) {
+      const forbidden: string[] = [];
+      for (const key of Object.keys(req.body || {})) {
+        if (!['year', 'section', 'id', 'studentId'].includes(key)) {
+          forbidden.push(key);
+        }
+      }
+      if (forbidden.length) {
+        return sendError(
+          res,
+          `Students may only update Year and Section here. Rejected fields: ${forbidden.join(', ')}. Use an Academic Edit Request for CGPA/SGPA.`,
+          403
+        );
+      }
+    }
+
+    const errors: string[] = [];
+    const yearResult = parseStudyYear(req.body?.year);
+    if (!yearResult.ok) errors.push(yearResult.error as string);
+
+    const sectionResult = parseSection(req.body?.section);
+    if (!sectionResult.ok) errors.push(sectionResult.error as string);
+
+    if (req.body?.year === undefined && req.body?.section === undefined) {
+      errors.push('Provide a Year and/or Section to update.');
+    }
+    if (errors.length) {
+      return sendError(res, joinErrors(errors), 400, errors);
+    }
+
+    if (yearResult.value !== undefined) {
+      student.year = yearResult.value as number;
+    }
+    if (req.body?.section !== undefined && sectionResult.value) {
+      student.section = sectionResult.value as string;
+    }
+
+    await student.save();
+
+    try {
+      await syncStudentDetailsPdf(student._id.toString(), req.user?.id);
+    } catch (pdfErr) {
+      console.error('Failed to sync student details PDF on year/section update:', pdfErr);
+    }
+
+    await logAudit({
+      userId: req.user!.id,
+      action: 'UPDATE_STUDENT_YEAR_SECTION',
+      entity: 'STUDENT',
+      entityId: student._id.toString(),
+      details: { year: student.year, section: student.section },
+      req,
+    });
+
+    return sendSuccess(
+      res,
+      { year: student.year, section: student.section },
+      `Year and section updated to ${student.year} / ${student.section}.`
+    );
+  } catch (err: any) {
+    console.error('updateStudentYearSection error:', err);
+    return sendError(res, 'Failed to update year and section.', 500);
+  }
+}
+
 // Update student academic records (Semesters 1-8)
 export async function updateStudentAcademics(req: AuthRequest, res: Response) {
   const id = req.params.id as string;
@@ -1036,122 +1368,276 @@ export async function updateStudentAcademics(req: AuthRequest, res: Response) {
       return sendError(res, 'Student not found.', 404);
     }
 
-    // RBAC: Student can update their own academics; Mentor & Admin can also update
-    if (req.user?.role === ROLES.STUDENT) {
-      if (req.user.studentId !== student._id.toString() && req.user.id !== student.user.toString()) {
-        return sendError(res, 'You are not authorized to update these academic records.', 403);
+    // Authorisation: student = self, mentor = assigned mentee, HOD = own department, admin = all.
+    const access = await checkStudentAccess(req.user, student);
+    if (!access.allowed) {
+      return sendError(res, access.message, access.status);
+    }
+
+    const isStudent = req.user?.role === ROLES.STUDENT;
+    const isPrivileged = ([ROLES.FACULTY, ROLES.HOD, ROLES.ADMIN] as string[]).includes(req.user!.role);
+
+    // -----------------------------------------------------------------------
+    // STUDENTS MAY NOT WRITE CGPA / SGPA / ARREARS DIRECTLY.
+    // They must raise an Academic Edit Request instead.
+    // -----------------------------------------------------------------------
+    if (isStudent) {
+      const blocked: string[] = [];
+      if (Array.isArray(semesters)) {
+        semesters.forEach((sem: any) => {
+          if (sem?.cgpa !== undefined) blocked.push('CGPA');
+          if (sem?.sgpa !== undefined) blocked.push('SGPA');
+          if (sem?.arrearsCount !== undefined || sem?.arrears_count !== undefined) blocked.push('Arrear count');
+          if (sem?.arrearsSubjects !== undefined || sem?.arrears_subjects !== undefined) blocked.push('Arrear subjects');
+          if (sem?.clearedSubjects !== undefined || sem?.cleared_subjects !== undefined) blocked.push('Arrear clearances');
+        });
+      }
+      if (blocked.length) {
+        return sendError(
+          res,
+          `Students cannot directly modify ${Array.from(new Set(blocked)).join(', ')}. Submit an Academic Edit Request from your Academic Ledger for mentor approval.`,
+          403
+        );
       }
     }
 
-    if (year !== undefined) {
-      const y = parseInt(year, 10);
-      if (y >= 1 && y <= 4) student.year = y;
-    }
-    if (section !== undefined && String(section).trim()) {
-      student.section = String(section).trim().toUpperCase();
+    // =======================================================================
+    // PHASE 1 — VALIDATE EVERYTHING. Nothing is written in this phase.
+    // =======================================================================
+    const errors: string[] = [];
+
+    const yearResult = parseStudyYear(year);
+    if (!yearResult.ok) errors.push(yearResult.error as string);
+
+    const sectionResult = parseSection(section);
+    if (!sectionResult.ok) errors.push(sectionResult.error as string);
+
+    const tenthMarkResult = parseStrictNumber(tenthMark, { field: '10th standard mark', min: 0, max: 1000 });
+    if (!tenthMarkResult.ok) errors.push(tenthMarkResult.error as string);
+
+    const twelfthMarkResult = parseStrictNumber(twelfthMark, { field: '12th standard mark', min: 0, max: 1000 });
+    if (!twelfthMarkResult.ok) errors.push(twelfthMarkResult.error as string);
+
+    const cutoffResult = parseStrictNumber(cutoffMark, { field: 'TNEA cut-off mark', min: 0, max: 200 });
+    if (!cutoffResult.ok) errors.push(cutoffResult.error as string);
+
+    const admissionTypeValue = admissionType ?? student.school?.admissionType ?? 'COUNSELLING';
+    if (!['COUNSELLING', 'MANAGEMENT', 'LATERAL_ENTRY'].includes(admissionTypeValue)) {
+      errors.push('Admission type must be COUNSELLING, MANAGEMENT or LATERAL_ENTRY.');
     }
 
-    if (
+    // Lateral entry: required only when admission type is LATERAL_ENTRY.
+    let lateralPayload: Record<string, any> | undefined;
+    if (admissionTypeValue === 'LATERAL_ENTRY') {
+      const lat = (lateralEntry ?? {}) as any;
+      const college = String(
+        lat.previousCollegeName ?? lat.previous_college_name ?? student.school?.lateralEntry?.previousCollegeName ?? ''
+      ).trim();
+      const course = String(
+        lat.previousCourseDiploma ?? lat.previous_course_diploma ?? student.school?.lateralEntry?.previousCourseDiploma ?? ''
+      ).trim();
+      if (!college) errors.push('Previous College Name is required for Lateral Entry admission.');
+      if (!course) errors.push('Previous Course / Diploma is required for Lateral Entry admission.');
+
+      const admYear = lat.admissionYear ?? lat.admission_year ?? student.school?.lateralEntry?.admissionYear;
+      if (admYear !== undefined && admYear !== null && String(admYear).trim() !== '') {
+        const yr = parseStrictNumber(admYear, { field: 'Lateral entry admission year', min: 2000, max: 2100, integer: true });
+        if (!yr.ok) errors.push(yr.error as string);
+        else lateralPayload = { admissionYear: yr.value };
+      }
+
+      lateralPayload = {
+        ...(lateralPayload || {}),
+        previousCollegeName: college,
+        previousCourseDiploma: course,
+        previousInstitution: String(
+          lat.previousInstitution ?? lat.previous_institution ?? student.school?.lateralEntry?.previousInstitution ?? ''
+        ).trim(),
+        previousQualificationDetails: String(
+          lat.previousQualificationDetails ??
+            lat.previous_qualification_details ??
+            student.school?.lateralEntry?.previousQualificationDetails ??
+            ''
+        ).trim(),
+      };
+    }
+
+    // Resolve school references before validation completes (needed for the write).
+    let tenthSchoolDoc: any = null;
+    let twelfthSchoolDoc: any = null;
+    if (tenthSchoolId) {
+      if (!mongoose.Types.ObjectId.isValid(String(tenthSchoolId))) errors.push('Invalid 10th standard school reference.');
+      else tenthSchoolDoc = await School.findById(tenthSchoolId);
+    }
+    if (twelfthSchoolId) {
+      if (!mongoose.Types.ObjectId.isValid(String(twelfthSchoolId))) errors.push('Invalid 12th standard school reference.');
+      else twelfthSchoolDoc = await School.findById(twelfthSchoolId);
+    }
+
+    // Semester payloads: strict grade validation, arrear list is authoritative.
+    type SemPlan = {
+      semesterNumber: number;
+      cgpa?: number;
+      sgpa?: number;
+      details: { subjectCode: string; subjectName: string }[];
+      subjectString: string;
+      clearedSubjects?: any[];
+      remarks?: string;
+    };
+    const semesterPlans: SemPlan[] = [];
+    const touchesSemesters = Array.isArray(semesters) && semesters.length > 0;
+
+    if (touchesSemesters && !isPrivileged) {
+      errors.push('Only a mentor, HOD or administrator can modify semester CGPA/SGPA/arrear records.');
+    }
+
+    if (touchesSemesters) {
+      const seenSemesters = new Set<number>();
+      for (const sem of semesters) {
+        const semResult = parseSemesterNumber(sem?.semesterNumber ?? sem?.semester_number);
+        if (!semResult.ok) {
+          errors.push(semResult.error as string);
+          continue;
+        }
+        const semNum = semResult.value as number;
+        if (seenSemesters.has(semNum)) {
+          errors.push(`Semester 0${semNum} appears more than once in the request.`);
+          continue;
+        }
+        seenSemesters.add(semNum);
+
+        const cgpaResult = parseGrade(sem?.cgpa, `Semester 0${semNum} CGPA`, false);
+        if (!cgpaResult.ok) errors.push(cgpaResult.error as string);
+
+        const sgpaResult = parseGrade(sem?.sgpa, `Semester 0${semNum} SGPA`, false);
+        if (!sgpaResult.ok) errors.push(sgpaResult.error as string);
+
+        // Arrear SUBJECT LIST is authoritative. A client-supplied count that
+        // disagrees is ignored (and reported), never persisted.
+        const rawSubjectInput =
+          sem?.arrearSubjectDetails ?? sem?.arrear_subject_details ?? sem?.arrearsSubjects ?? sem?.arrears_subjects;
+        const { codes, details } = normaliseArrearSubjects(rawSubjectInput);
+        if (codes.length === 0) {
+          const claimed = sem?.arrearsCount ?? sem?.arrears_count;
+          if (claimed !== undefined && Number(claimed) > 0) {
+            errors.push(
+              `Semester 0${semNum}: ${claimed} arrear(s) claimed but no subject codes supplied. Provide the subject list instead of a count.`
+            );
+          }
+        }
+
+        semesterPlans.push({
+          semesterNumber: semNum,
+          cgpa: cgpaResult.value,
+          sgpa: sgpaResult.value,
+          details,
+          subjectString: codes.join(', '),
+          clearedSubjects: sem?.clearedSubjects ?? sem?.cleared_subjects,
+          remarks: sem?.remarks,
+        });
+      }
+    }
+
+    if (errors.length) {
+      // NOTHING has been persisted at this point.
+      return sendError(res, joinErrors(errors), 400, errors);
+    }
+
+    // =======================================================================
+    // PHASE 2 — PERSIST. All validation already passed.
+    // =======================================================================
+    if (yearResult.value !== undefined) {
+      student.year = yearResult.value as number;
+    }
+    if (section !== undefined) {
+      student.section = sectionResult.value || student.section;
+    }
+
+    const touchesSchool =
       tenthMark !== undefined ||
+      tenthSchool !== undefined ||
       tenthSchoolId !== undefined ||
       twelfthMark !== undefined ||
+      twelfthSchool !== undefined ||
       twelfthSchoolId !== undefined ||
       cutoffMark !== undefined ||
       scholarshipDetails !== undefined ||
       admissionType !== undefined ||
-      lateralEntry !== undefined
-    ) {
-      let tenthSchoolDoc = null;
-      if (tenthSchoolId) {
-        tenthSchoolDoc = await School.findById(tenthSchoolId);
-      }
-      let twelfthSchoolDoc = null;
-      if (twelfthSchoolId) {
-        twelfthSchoolDoc = await School.findById(twelfthSchoolId);
-      }
+      lateralEntry !== undefined;
 
-      const effectiveAdmissionType = admissionType || student.school?.admissionType || 'COUNSELLING';
+    if (touchesSchool) {
       student.school = {
-        tenthMark: tenthMark !== undefined && tenthMark !== '' ? parseFloat(tenthMark) : student.school?.tenthMark,
+        tenthMark: tenthMarkResult.value ?? student.school?.tenthMark,
         tenthSchool: (tenthSchoolDoc?.displayName || tenthSchool) ?? student.school?.tenthSchool,
         tenthSchoolId: tenthSchoolDoc?._id || student.school?.tenthSchoolId,
-        twelfthMark: twelfthMark !== undefined && twelfthMark !== '' ? parseFloat(twelfthMark) : student.school?.twelfthMark,
+        twelfthMark: twelfthMarkResult.value ?? student.school?.twelfthMark,
         twelfthSchool: (twelfthSchoolDoc?.displayName || twelfthSchool) ?? student.school?.twelfthSchool,
         twelfthSchoolId: twelfthSchoolDoc?._id || student.school?.twelfthSchoolId,
-        cutoffMark: cutoffMark !== undefined && cutoffMark !== '' ? parseFloat(cutoffMark) : student.school?.cutoffMark,
-        admissionType: effectiveAdmissionType,
-        scholarshipDetails: scholarshipDetails !== undefined ? (scholarshipDetails || 'Nil').trim() : student.school?.scholarshipDetails,
-        lateralEntry: effectiveAdmissionType === 'LATERAL_ENTRY' ? {
-          previousCollegeName: lateralEntry?.previousCollegeName || lateralEntry?.previous_college_name || student.school?.lateralEntry?.previousCollegeName || '',
-          previousCourseDiploma: lateralEntry?.previousCourseDiploma || lateralEntry?.previous_course_diploma || student.school?.lateralEntry?.previousCourseDiploma || '',
-          previousInstitution: lateralEntry?.previousInstitution || lateralEntry?.previous_institution || student.school?.lateralEntry?.previousInstitution || '',
-          previousQualificationDetails: lateralEntry?.previousQualificationDetails || lateralEntry?.previous_qualification_details || student.school?.lateralEntry?.previousQualificationDetails || '',
-          admissionYear: lateralEntry?.admissionYear || lateralEntry?.admission_year || student.school?.lateralEntry?.admissionYear || undefined,
-        } : undefined,
-      };
-      await student.save();
+        cutoffMark: cutoffResult.value ?? student.school?.cutoffMark,
+        admissionType: admissionTypeValue,
+        scholarshipDetails:
+          scholarshipDetails !== undefined
+            ? (String(scholarshipDetails).trim() || 'Nil')
+            : student.school?.scholarshipDetails || 'Nil',
+        // Do not persist empty lateral-entry data for non-lateral admissions.
+        lateralEntry: admissionTypeValue === 'LATERAL_ENTRY' ? lateralPayload : undefined,
+      } as any;
     }
 
-    if (Array.isArray(semesters)) {
-      for (const sem of semesters) {
-        const semNum = parseInt(sem.semesterNumber || sem.semester_number, 10);
-        if (semNum >= 1 && semNum <= 8) {
-          const rawCgpa = sem.cgpa !== undefined && sem.cgpa !== '' ? parseFloat(sem.cgpa) : undefined;
-          const rawSgpa = sem.sgpa !== undefined && sem.sgpa !== '' ? parseFloat(sem.sgpa) : undefined;
-          if (rawCgpa !== undefined && (isNaN(rawCgpa) || rawCgpa < 0 || rawCgpa > 10)) {
-            return sendError(res, `Semester ${semNum}: CGPA must be strictly between 0.0 and 10.0`, 400);
-          }
-          if (rawSgpa !== undefined && (isNaN(rawSgpa) || rawSgpa < 0 || rawSgpa > 10)) {
-            return sendError(res, `Semester ${semNum}: SGPA must be strictly between 0.0 and 10.0`, 400);
-          }
-        }
-      }
-    }
+    if (semesterPlans.length) {
+      if (!student.arrearHistory) student.arrearHistory = [];
 
-    if (Array.isArray(semesters)) {
-      if (!student.arrearHistory) {
-        student.arrearHistory = [];
-      }
-      for (const sem of semesters) {
-        const semNum = parseInt(sem.semesterNumber || sem.semester_number, 10);
-        if (semNum >= 1 && semNum <= 8) {
-          const subjects = parseSubjectCodes(sem.arrearsSubjects ?? sem.arrears_subjects);
-          subjects.forEach((code) => {
-            const exists = student.arrearHistory!.some(
-              (h) => h.subjectCode.toUpperCase() === code
-            );
-            if (!exists) {
-              student.arrearHistory!.push({
-                subjectCode: code,
-                originalSemester: semNum,
-                attempt: 1,
-                status: 'ACTIVE',
-                remarks: 'Active Arrear',
-              });
-            }
-          });
+      for (const plan of semesterPlans) {
+        const existing = await AcademicRecord.findOne({
+          student: student._id,
+          semesterNumber: plan.semesterNumber,
+        });
 
-          const existing = await AcademicRecord.findOne({ student: student._id, semesterNumber: semNum });
-          await AcademicRecord.findOneAndUpdate(
-            { student: student._id, semesterNumber: semNum },
-            {
-              student: student._id,
-              semesterNumber: semNum,
-              cgpa: sem.cgpa !== undefined ? parseFloat(sem.cgpa || 0) : existing?.cgpa || 0,
-              sgpa: sem.sgpa !== undefined ? parseFloat(sem.sgpa || sem.cgpa || 0) : existing?.sgpa || 0,
-              arrearsCount: sem.arrearsCount !== undefined || sem.arrears_count !== undefined 
-                ? parseInt(sem.arrearsCount ?? sem.arrears_count ?? 0, 10) 
-                : existing?.arrearsCount || 0,
-              arrearsSubjects: sem.arrearsSubjects ?? sem.arrears_subjects ?? existing?.arrearsSubjects ?? '',
-              clearedSubjects: sem.clearedSubjects ?? sem.cleared_subjects ?? existing?.clearedSubjects ?? [],
-              remarks: sem.remarks ?? existing?.remarks ?? '',
+        // Keep arrear history aligned with the authoritative subject list.
+        plan.details.forEach((d) => {
+          const known = student.arrearHistory!.find((h) => h.subjectCode.toUpperCase() === d.subjectCode);
+          if (!known) {
+            student.arrearHistory!.push({
+              subjectCode: d.subjectCode,
+              originalSemester: plan.semesterNumber,
+              attempt: 1,
+              status: 'ACTIVE',
+              remarks: 'Active Arrear',
+            } as any);
+          }
+        });
+
+        // cgpa/sgpa: only change what was explicitly supplied. An omitted SGPA
+        // must never silently inherit the CGPA value.
+        const nextCgpa = plan.cgpa !== undefined ? plan.cgpa : (existing?.cgpa ?? 0);
+        const nextSgpa = plan.sgpa !== undefined ? plan.sgpa : (existing?.sgpa ?? 0);
+
+        await AcademicRecord.findOneAndUpdate(
+          { student: student._id, semesterNumber: plan.semesterNumber },
+          {
+            $set: {
+              cgpa: nextCgpa,
+              sgpa: nextSgpa,
+              // Derived from the subject list — never from a client count.
+              arrearsCount: plan.details.length,
+              arrearsSubjects: plan.subjectString,
+              arrearSubjectDetails: plan.details,
+              ...(plan.clearedSubjects !== undefined ? { clearedSubjects: plan.clearedSubjects } : {}),
+              ...(plan.remarks !== undefined ? { remarks: plan.remarks } : {}),
             },
-            { upsert: true, returnDocument: 'after' }
-          );
-        }
+            $setOnInsert: {
+              student: student._id,
+              semesterNumber: plan.semesterNumber,
+              clearedSubjects: [],
+              remarks: '',
+            },
+          },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
       }
-      await student.save();
     }
+
+    await student.save();
 
     await logAudit({
       userId: req.user!.id,

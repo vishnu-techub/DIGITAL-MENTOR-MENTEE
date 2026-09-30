@@ -8,13 +8,25 @@ export interface IClearedSubject {
   remarks?: string;
 }
 
+export interface IArrearSubjectDetail {
+  subjectCode: string;
+  subjectName: string;
+}
+
 export interface IAcademicRecord extends Document {
   student: mongoose.Types.ObjectId;
   semesterNumber: number;
   cgpa: number;
   sgpa: number;
+  /**
+   * Derived from `arrearSubjectDetails` on every write. Retained for
+   * backwards compatibility / fast filtering, never treated as the source
+   * of truth (see utils/arrears.util.ts).
+   */
   arrearsCount: number;
   arrearsSubjects: string;
+  /** Authoritative structured arrear list, including subject names. */
+  arrearSubjectDetails?: IArrearSubjectDetail[];
   clearedSubjects?: IClearedSubject[];
   remarks?: string;
   createdAt: Date;
@@ -57,6 +69,12 @@ const AcademicRecordSchema = new Schema<IAcademicRecord>(
       default: '',
       trim: true,
     },
+    arrearSubjectDetails: [
+      {
+        subjectCode: { type: String, trim: true, uppercase: true },
+        subjectName: { type: String, trim: true, default: 'Not Provided' },
+      },
+    ],
     clearedSubjects: [
       {
         subjectCode: { type: String, trim: true, uppercase: true },

@@ -6,14 +6,47 @@ import {
   Department,
   Batch,
   StudentEditRequest,
+  MentorAssignment,
   Notification,
   StudentProgress,
 } from '../../models/index.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
+import { toIdString } from '../../utils/access.util.js';
 import { ROLES } from '../../config/constants.js';
 import { syncStudentDetailsPdf } from '../documents/student-details-pdf.service.js';
+
+/** Escape a user-supplied string so it is safe to embed in a RegExp. */
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Case-insensitive exact-name match, built without a nested template literal. */
+function exactNameRegex(value: string): RegExp {
+  return new RegExp('^' + escapeRegex(value) + '$', 'i');
+}
+
+// Case-insensitive lookup by ObjectId, name, or code.
+async function resolveDepartment(input: any) {
+  const raw = String(input ?? '').trim();
+  if (!raw) return null;
+  if (mongoose.Types.ObjectId.isValid(raw)) {
+    const byId = await Department.findById(raw);
+    if (byId) return byId;
+  }
+  return Department.findOne({ name: exactNameRegex(raw) });
+}
+
+async function resolveBatch(input: any) {
+  const raw = String(input ?? '').trim();
+  if (!raw) return null;
+  if (mongoose.Types.ObjectId.isValid(raw)) {
+    const byId = await Batch.findById(raw);
+    if (byId) return byId;
+  }
+  return Batch.findOne({ name: exactNameRegex(raw) });
+}
 
 // Student submits an Institutional Identity Edit Request
 export async function createIdentityEditRequest(req: AuthRequest, res: Response) {
@@ -27,59 +60,79 @@ export async function createIdentityEditRequest(req: AuthRequest, res: Response)
       return sendError(res, 'Student account record not found.', 404);
     }
 
-    const {
-      fullName,
-      registerNumber,
-      departmentId,
-      batchId,
-      reason,
-    } = req.body;
+    // Accept BOTH wire shapes so the frontend and backend cannot drift again:
+    //   { requestedChanges: { fullName, registerNumber, department, batch }, reason }
+    //   { fullName, registerNumber, departmentId, batchId, reason }
+    const source = (req.body?.requestedChanges && typeof req.body.requestedChanges === 'object')
+      ? req.body.requestedChanges
+      : req.body || {};
 
-    if (!reason || !reason.trim()) {
+    const fullName = source.fullName ?? source.full_name;
+    const registerNumber = source.registerNumber ?? source.register_number;
+    const departmentInput = source.department ?? source.departmentId ?? source.department_id;
+    const batchInput = source.batch ?? source.batchId ?? source.batch_id;
+    const reason = req.body?.reason;
+
+    if (!reason || !String(reason).trim()) {
       return sendError(res, 'A clear reason / explanation is required for requesting identity corrections.', 400);
     }
 
-    // Check if at least one identity field has changed
     const requestedFields: any = {};
     const currentValues: any = {
       fullName: student.fullName,
       registerNumber: student.registerNumber,
-      department: student.department ? (student.department as any)._id : null,
-      departmentName: student.department ? (student.department as any).name : '',
-      batch: student.batch ? (student.batch as any)._id : null,
-      batchName: student.batch ? (student.batch as any).name : '',
+      department: toIdString(student.department),
+      departmentName: (student.department as any)?.name || '',
+      batch: toIdString(student.batch),
+      batchName: (student.batch as any)?.name || '',
     };
 
     let hasChange = false;
 
-    if (fullName && fullName.trim() && fullName.trim() !== student.fullName) {
-      requestedFields.fullName = fullName.trim();
+    if (fullName && String(fullName).trim() && String(fullName).trim() !== student.fullName) {
+      requestedFields.fullName = String(fullName).trim();
       hasChange = true;
     }
 
-    if (registerNumber && registerNumber.trim() && registerNumber.trim().toUpperCase() !== student.registerNumber) {
-      const cleanReg = registerNumber.trim().toUpperCase();
-      // Check if regNo already taken by another student
-      const existing = await Student.findOne({ registerNumber: cleanReg, _id: { $ne: student._id } });
-      if (existing) {
-        return sendError(res, `Register Number ${cleanReg} is already assigned to another student.`, 400);
+    if (registerNumber && String(registerNumber).trim()) {
+      const cleanReg = String(registerNumber).trim().toUpperCase();
+      if (cleanReg !== student.registerNumber) {
+        const existing = await Student.findOne({ registerNumber: cleanReg, _id: { $ne: student._id } });
+        if (existing) {
+          return sendError(res, `Register Number ${cleanReg} is already assigned to another student.`, 400);
+        }
+        requestedFields.registerNumber = cleanReg;
+        hasChange = true;
       }
-      requestedFields.registerNumber = cleanReg;
-      hasChange = true;
     }
 
-    if (departmentId && mongoose.Types.ObjectId.isValid(departmentId)) {
-      const deptDoc = await Department.findById(departmentId);
-      if (deptDoc && (!student.department || (student.department as any)._id.toString() !== departmentId)) {
+    if (departmentInput) {
+      const deptDoc = await resolveDepartment(departmentInput);
+      if (!deptDoc) {
+        return sendError(
+          res,
+          `Department "${String(departmentInput).trim()}" was not found. Select a department from the list.`,
+          400
+        );
+      }
+      // Compare normalised ids — never ObjectId vs populated subdocument.
+      if (toIdString(deptDoc._id) !== toIdString(student.department)) {
         requestedFields.department = deptDoc._id;
         requestedFields.departmentName = deptDoc.name;
         hasChange = true;
       }
     }
 
-    if (batchId && mongoose.Types.ObjectId.isValid(batchId)) {
-      const batchDoc = await Batch.findById(batchId);
-      if (batchDoc && (!student.batch || (student.batch as any)._id.toString() !== batchId)) {
+    if (batchInput) {
+      const batchDoc = await resolveBatch(batchInput);
+      if (!batchDoc) {
+        return sendError(
+          res,
+          `Batch "${String(batchInput).trim()}" was not found. Select a batch from the list.`,
+          400
+        );
+      }
+      if (toIdString(batchDoc._id) !== toIdString(student.batch)) {
         requestedFields.batch = batchDoc._id;
         requestedFields.batchName = batchDoc.name;
         hasChange = true;
@@ -225,6 +278,11 @@ export async function reviewIdentityEditRequest(req: AuthRequest, res: Response)
 
       if (department) {
         student.department = department;
+        // Keep mentor assignments aligned so HOD scoping and mentor views stay correct.
+        await MentorAssignment.updateMany(
+          { student: student._id, status: 'ACTIVE' },
+          { $set: { department } }
+        );
       }
 
       if (batch) {

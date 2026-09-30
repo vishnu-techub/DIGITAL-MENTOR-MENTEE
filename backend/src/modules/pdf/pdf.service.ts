@@ -82,7 +82,10 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
     cutoff_mark: sc.cutoffMark,
     admission_type: studentDoc.admissionType || sc.admissionType || 'COUNSELLING',
     scholarship_details: studentDoc.scholarshipDetails || sc.scholarshipDetails || '',
-    lateral_entry: (studentDoc as any).lateralEntry || null,
+    // Lateral entry data is stored on the `school` subdocument. The previous
+    // code read `student.lateralEntry`, which never existed, so the PDF always
+    // printed "N/A" for lateral-entry students.
+    lateral_entry: sc.lateralEntry || null,
   };
 
   // 5. Fetch Semesters 1 to 8
@@ -338,10 +341,16 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
       ...(school?.admission_type === 'LATERAL_ENTRY' && school?.lateral_entry ? [
         [
           { content: 'Lateral Entry College:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
-          `${school.lateral_entry.previousCollegeName || school.lateral_entry.previousInstitution || 'N/A'} (${school.lateral_entry.previousCourse || 'Diploma'})`,
-          { content: 'Qual Details & Adm Year:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
+          `${school.lateral_entry.previousCollegeName || school.lateral_entry.previousInstitution || 'N/A'}`,
+          { content: 'Previous Course / Diploma:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
+          `${school.lateral_entry.previousCourseDiploma || school.lateral_entry.previousCourse || 'N/A'}`,
+        ] as any,
+        [
+          { content: 'Previous Institution:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
+          `${school.lateral_entry.previousInstitution || 'N/A'}`,
+          { content: 'Qualification & Adm Year:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
           `${school.lateral_entry.previousQualificationDetails || 'N/A'} (Adm: ${school.lateral_entry.admissionYear || 'N/A'})`,
-        ] as any
+        ] as any,
       ] : []),
       [
         { content: 'Scholarship Details:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
@@ -354,6 +363,8 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
   currentY = (doc as any).lastAutoTable.finalY + 6;
 
   // SECTION 3: SEMESTER ACADEMIC PERFORMANCE (Semesters 1 - 8)
+  // SGPA is printed from the stored value. The PDF must never fall back to the
+  // CGPA when SGPA is unrecorded.
   const semesterRows = [1, 2, 3, 4, 5, 6, 7, 8].map((num) => {
     const s = semesters.find((x: any) => x.semester_number === num);
     const arrearsCountDisplay = s ? `${s.arrears_count}` : '0';
@@ -364,6 +375,7 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
     return [
       `Semester 0${num}`,
       s && s.cgpa > 0 ? s.cgpa.toFixed(2) : '-',
+      s && s.sgpa > 0 ? s.sgpa.toFixed(2) : '-',
       arrearsCountDisplay,
       subjectsDisplay,
       statusDisplay,
@@ -377,20 +389,21 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
     head: [
       [{
         content: `3. SEMESTER ACADEMIC PERFORMANCE (SEMESTERS 1 TO 8) — Active: ${arrearStats.activeArrearsCount} | Total History: ${arrearStats.historicalArrearsCount} | Cleared: ${arrearStats.clearedCount}`,
-        colSpan: 5,
+        colSpan: 6,
         styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' },
       }],
-      ['Semester', 'CGPA', 'Semester Arrears', 'Arrear Subjects', 'Clearance Remarks & Status'],
+      ['Semester', 'CGPA', 'SGPA', 'Semester Arrears', 'Arrear Subjects', 'Clearance Remarks & Status'],
     ],
     body: semesterRows,
     headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold', halign: 'center' },
     styles: { fontSize: 8, cellPadding: 1.8, halign: 'center' },
     columnStyles: {
-      0: { fontStyle: 'bold', halign: 'left', cellWidth: 28 },
-      1: { cellWidth: 20 },
-      2: { cellWidth: 30 },
-      3: { halign: 'left', cellWidth: 38 },
-      4: { halign: 'left' },
+      0: { fontStyle: 'bold', halign: 'left', cellWidth: 26 },
+      1: { cellWidth: 16 },
+      2: { cellWidth: 16 },
+      3: { cellWidth: 28 },
+      4: { halign: 'left', cellWidth: 36 },
+      5: { halign: 'left' },
     },
   });
 

@@ -33,6 +33,21 @@ export function removeAuthToken() {
   localStorage.removeItem('ksrce_token');
 }
 
+/** Pull a filename out of a Content-Disposition header. */
+function extractFilename(disposition: string | null): string | null {
+  if (!disposition || !disposition.includes('filename=')) return null;
+  const utf8 = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8) {
+    try {
+      return decodeURIComponent(utf8[1]);
+    } catch {
+      /* fall through to the plain form */
+    }
+  }
+  const plain = disposition.match(/filename="?([^";]+)"?/i);
+  return plain && plain[1] ? plain[1] : null;
+}
+
 async function request<T = any>(
   endpoint: string,
   options: RequestInit = {}
@@ -169,6 +184,46 @@ export const api = {
       request('/students/identity-edit-request', { method: 'POST', body: JSON.stringify(data) }),
     getMyEditRequests: () =>
       request('/students/identity-edit-request/my'),
+    /** Year and Section are the ONLY academic fields a student edits directly. */
+    updateYearSection: (id: string, data: { year?: number; section?: string }) =>
+      request(`/students/${id}/year-section`, { method: 'PUT', body: JSON.stringify(data) }),
+  },
+
+  /**
+   * Academic Edit Requests.
+   * A student CANNOT write CGPA/SGPA/arrears directly — the only route is a
+   * per-semester request reviewed by the assigned mentor, HOD or admin.
+   */
+  academicRequests: {
+    /** Student: raise a correction request for one semester. */
+    create: (data: {
+      semesterNumber: number;
+      requestedCgpa: number;
+      requestedSgpa?: number;
+      currentCgpa?: number;
+      currentSgpa?: number;
+      reason: string;
+      supportingDocumentId?: string;
+    }) =>
+      request('/students/academic-edit-request', { method: 'POST', body: JSON.stringify(data) }),
+    /** Student: own request history. */
+    getMine: () => request<any[]>('/students/academic-edit-request/my'),
+    getById: (id: string) => request(`/students/academic-edit-request/${id}`),
+    /** Mentor / HOD / Admin: review queue. */
+    list: (params: Record<string, string> = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return request(`/students/academic-edit-request${q ? `?${q}` : ''}`);
+    },
+    approve: (id: string, data: { reviewNotes?: string } = {}) =>
+      request(`/students/academic-edit-request/${id}/approve`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    reject: (id: string, rejectionReason: string) =>
+      request(`/students/academic-edit-request/${id}/reject`, {
+        method: 'PATCH',
+        body: JSON.stringify({ rejectionReason }),
+      }),
   },
 
   // Mentorship (Assignment & Reassignment History)
@@ -289,6 +344,55 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify(data),
       }),
+
+    /**
+     * Certificates are PRIVATE. The server no longer exposes a public
+     * `/uploads` mount, so a plain `<img src>` / `<iframe src>` cannot work —
+     * the browser cannot attach an Authorization header to those requests.
+     *
+     * `fetchViewBlob` therefore downloads the file with the bearer token and
+     * hands back a Blob whose `URL.createObjectURL` is safe to place in an
+     * `<img>`/`<iframe>`. Revoke the URL when the preview closes.
+     */
+    fetchViewBlob: async (documentId: string): Promise<{ blob: Blob; mimeType: string; fileName: string }> => {
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}/documents/${documentId}/file`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        if (res.status === 401) removeAuthToken();
+        const body = await res.json().catch(() => null);
+        throw new ApiError(res.status, body?.message || 'You are not authorised to view this document.', `/documents/${documentId}/file`);
+      }
+      return {
+        blob: await res.blob(),
+        mimeType: res.headers.get('content-type') || 'application/octet-stream',
+        fileName: extractFilename(res.headers.get('content-disposition')) || 'document',
+      };
+    },
+
+    /** Separate, explicit download action (never used for inline preview). */
+    download: async (documentId: string, fallbackName?: string) => {
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}/documents/${documentId}/download`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        if (res.status === 401) removeAuthToken();
+        const body = await res.json().catch(() => null);
+        throw new ApiError(res.status, body?.message || 'Download failed.', `/documents/${documentId}/download`);
+      }
+      const fileName = extractFilename(res.headers.get('content-disposition')) || fallbackName || 'document';
+      const url = window.URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      return { success: true, filename: fileName };
+    },
   },
 
   // Monthly Progress

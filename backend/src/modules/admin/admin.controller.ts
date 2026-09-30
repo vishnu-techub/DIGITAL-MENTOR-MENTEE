@@ -33,12 +33,29 @@ export async function getAdminDashboardStats(req: AuthRequest, res: Response) {
     const totalMeetings = await Meeting.countDocuments({ meetingStatus: 'COMPLETED' });
     const pendingMeetings = await Meeting.countDocuments({ meetingStatus: 'PENDING' });
 
-    // Real MongoDB calculation for Active Arrears
-    const arrearAgg = await AcademicRecord.aggregate([
-      { $match: { arrearsCount: { $gt: 0 } } },
-      { $group: { _id: null, totalActiveArrears: { $sum: '$arrearsCount' } } },
-    ]);
-    const activeArrears = arrearAgg[0]?.totalActiveArrears || 0;
+    // Active arrears are derived from the shared calculation utility, which
+    // treats the subject list as the source of truth. Summing the raw
+    // `arrearsCount` column here previously double-counted cleared arrears.
+    const studentsWithRecords = await Student.find({ isActive: true }).select(
+      '_id clearedSubjects arrearHistory'
+    );
+    const allRecords = await AcademicRecord.find({}).select(
+      'student semesterNumber cgpa sgpa arrearsCount arrearsSubjects arrearSubjectDetails clearedSubjects'
+    );
+    const recordsByStudent = new Map<string, any[]>();
+    for (const r of allRecords) {
+      const key = String(r.student);
+      if (!recordsByStudent.has(key)) recordsByStudent.set(key, []);
+      recordsByStudent.get(key)!.push(r);
+    }
+    const activeArrears = studentsWithRecords.reduce((total: number, s: any) => {
+      const stats = calculateArrearStatistics(
+        recordsByStudent.get(String(s._id)) || [],
+        s.clearedSubjects || [],
+        s.arrearHistory || []
+      );
+      return total + stats.activeArrearsCount;
+    }, 0);
 
     // Real MongoDB calculation for Counselling Sessions & Documents
     const counsellingSessions = await CounsellingRecord.countDocuments();
@@ -571,16 +588,48 @@ export async function getMenteesByMentor(req: AuthRequest, res: Response) {
     // Map assignment date onto each student
     const assignmentMap = new Map(activeAssignments.map((a: any) => [a.student.toString(), a]));
 
+    // CGPA / arrears must come from AcademicRecord. The Student model has no
+    // `semesters` field, so reading `s.semesters` silently produced blank
+    // academic data on this screen.
+    const academicRecords = await AcademicRecord.find({ student: { $in: studentIds } }).lean();
+    const recordsByStudent = new Map<string, any[]>();
+    for (const r of academicRecords) {
+      const key = String(r.student);
+      if (!recordsByStudent.has(key)) recordsByStudent.set(key, []);
+      recordsByStudent.get(key)!.push(r);
+    }
+
+    // Counselling counts: the mentor/HOD dashboards filter on
+    // "has arrears but has never had a counselling session", so the count must
+    // come from MongoDB here. Without it every mentee silently reads as zero.
+    const counsellingRows = await CounsellingRecord.find({
+      $or: [{ student: { $in: studentIds } }, { studentId: { $in: studentIds } }],
+    })
+      .select('student studentId')
+      .lean();
+    const counsellingCountByStudent = new Map<string, number>();
+    for (const c of counsellingRows) {
+      const key = String((c as any).student || (c as any).studentId);
+      if (!key) continue;
+      counsellingCountByStudent.set(key, (counsellingCountByStudent.get(key) || 0) + 1);
+    }
+
     const mentees = studentDocs.map((s: any) => {
       const asgn = assignmentMap.get(s._id.toString());
       const dept: any = s.department || {};
       const batch: any = s.batch || {};
+      const records = recordsByStudent.get(s._id.toString()) || [];
       const currentYear = new Date().getFullYear();
       const startYear = batch.startYear || currentYear;
-      const yearOfStudy = Math.min(4, Math.max(1, currentYear - startYear + 1));
-      const cgpaList = (s.semesters || []).map((sem: any) => parseFloat(sem.cgpa) || 0).filter((v: number) => v > 0);
-      const latestCgpa = cgpaList.length > 0 ? cgpaList[cgpaList.length - 1] : null;
-      const arrearStats = calculateArrearStatistics(s.semesters || [], s.clearedSubjects || []);
+      const computedYear = Math.min(4, Math.max(1, currentYear - startYear + 1));
+      // The student-entered/stored Year is authoritative when present; the
+      // batch-derived value is only a fallback for legacy records.
+      const yearOfStudy = s.year || s.yearOfStudy || computedYear;
+      const sorted = [...records].sort(
+        (a: any, b: any) => Number(a.semesterNumber || 0) - Number(b.semesterNumber || 0)
+      );
+      const latestCgpa = sorted.length > 0 ? Number(sorted[sorted.length - 1].cgpa) || null : null;
+      const arrearStats = calculateArrearStatistics(records, s.clearedSubjects || [], s.arrearHistory || []);
 
       return {
         assignment_id: asgn?._id?.toString() || '',
@@ -596,6 +645,7 @@ export async function getMenteesByMentor(req: AuthRequest, res: Response) {
         active_arrears: arrearStats.activeArrearsCount,
         historical_arrears: arrearStats.historicalArrearsCount,
         arrear_status_label: arrearStats.statusLabel,
+        counselling_count: counsellingCountByStudent.get(s._id.toString()) || 0,
         assigned_from: asgn?.assignedFrom || asgn?.createdAt,
         is_profile_complete: s.isProfileComplete || false,
       };

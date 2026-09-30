@@ -32,6 +32,8 @@ import {
   Save,
   Edit,
   AlertCircle,
+  Info,
+  Pencil,
 } from 'lucide-react';
 
 interface StudentDashboardProps {
@@ -40,30 +42,32 @@ interface StudentDashboardProps {
   justCompleted?: boolean;
 }
 
-function getMeetingNotice(nextDateStr?: string) {
-  if (!nextDateStr) {
-    return { title: 'Upcoming Saturday Meeting', badge: 'Fixed Saturday', isPast: false };
+/**
+ * Meeting notice presentation.
+ *
+ * The label is NOT recomputed here. The backend derives it from the ACTUAL
+ * meeting date stored in MongoDB and returns meetingTitle / meetingPhase /
+ * isUpcoming / hasMeetingRecord. This function only maps those server values
+ * onto a badge, so the UI can never claim "Today's Meeting" for a date that is
+ * not actually stored, nor invent an "Upcoming Saturday" when no meeting
+ * record exists.
+ */
+function getMeetingNotice(schedule: any) {
+  if (!schedule || !schedule.hasMeetingRecord || !schedule.isUpcoming) {
+    return { title: 'Meeting Schedule', badge: 'All Caught Up', isPast: true };
   }
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const target = new Date(nextDateStr);
-  target.setHours(0, 0, 0, 0);
-  const diffTime = target.getTime() - today.getTime();
-  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
-
-  if (diffDays < 0) {
-    return { title: `Past Meeting (${nextDateStr})`, badge: 'Past', isPast: true };
-  }
-  if (diffDays === 0) {
-    return { title: "Today's Meeting", badge: "Today", isPast: false };
-  }
-  if (diffDays === 1) {
-    return { title: "Tomorrow's Meeting", badge: "Tomorrow", isPast: false };
-  }
-  if (target.getDay() === 6 && diffDays <= 7) {
-    return { title: "Upcoming Saturday Meeting", badge: "This Saturday", isPast: false };
-  }
-  return { title: `Upcoming Meeting — ${nextDateStr}`, badge: "Upcoming", isPast: false };
+  return {
+    title: schedule.meetingTitle || 'Upcoming Meeting',
+    badge:
+      schedule.meetingPhase === 'TODAY'
+        ? 'Today'
+        : schedule.meetingPhase === 'TOMORROW'
+          ? 'Tomorrow'
+          : schedule.meetingPhase === 'UPCOMING_SATURDAY'
+            ? 'This Saturday'
+            : 'Upcoming',
+    isPast: false,
+  };
 }
 
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, onSelectTab, justCompleted }) => {
@@ -87,6 +91,26 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
     department: '',
     batch: '',
     reason: '',
+  });
+  // Dropdown options for the identity request, loaded from the canonical
+  // Department / Batch collections so the admin never has to match free text.
+  const [departmentOptions, setDepartmentOptions] = useState<any[]>([]);
+  const [batchOptions, setBatchOptions] = useState<any[]>([]);
+
+  // Academic Edit Request State.
+  // A student CANNOT edit CGPA/SGPA/arrears directly. The only path is a
+  // per-semester request reviewed by the assigned mentor, HOD or admin.
+  const [showAcademicRequestModal, setShowAcademicRequestModal] = useState(false);
+  const [submittingAcademicRequest, setSubmittingAcademicRequest] = useState(false);
+  const [academicRequestError, setAcademicRequestError] = useState<string | null>(null);
+  const [myAcademicRequests, setMyAcademicRequests] = useState<any[]>([]);
+  const [ownDocuments, setOwnDocuments] = useState<any[]>([]);
+  const [academicRequestForm, setAcademicRequestForm] = useState({
+    semesterNumber: 1,
+    requestedCgpa: '',
+    requestedSgpa: '',
+    reason: '',
+    supportingDocumentId: '',
   });
 
   // Arrear Clearance State & Validation
@@ -170,6 +194,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
           });
         }
         if (schedRes.success) setSchedule(schedRes.data);
+        // Load the student's own academic correction request history.
+        loadMyAcademicRequests();
       }
     } catch (err: any) {
       console.error('Failed to load student data:', err);
@@ -312,6 +338,28 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
       reason: '',
     });
     setShowIdentityEditModal(true);
+    loadIdentityRequestOptions();
+  };
+
+  /** Departments and batches are read-only reference data available to any
+   *  authenticated user, so the identity request always targets a real record. */
+  const loadIdentityRequestOptions = async () => {
+    try {
+      const [deptRes, batchRes] = await Promise.all([
+        api.admin.getDepartments(),
+        api.admin.getBatches(),
+      ]);
+      if (deptRes.success) {
+        const depts = Array.isArray(deptRes.data) ? deptRes.data : deptRes.data?.departments || [];
+        setDepartmentOptions(depts.filter((d: any) => d.name));
+      }
+      if (batchRes.success) {
+        const batches = Array.isArray(batchRes.data) ? batchRes.data : batchRes.data?.batches || [];
+        setBatchOptions(batches.filter((b: any) => b.name));
+      }
+    } catch {
+      /* the modal still works with free text if reference data is unavailable */
+    }
   };
 
   const handleSubmitIdentityEditRequest = async (e: React.FormEvent) => {
@@ -341,6 +389,101 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
       toast.error('Error submitting edit request: ' + err.message);
     } finally {
       setSubmittingEditRequest(false);
+    }
+  };
+
+  const loadMyAcademicRequests = async () => {
+    try {
+      const res = await api.academicRequests.getMine();
+      if (res.success && Array.isArray(res.data)) setMyAcademicRequests(res.data);
+    } catch {
+      /* non-blocking: the request history is supplementary information */
+    }
+  };
+
+  const openAcademicRequestModal = async (semesterNumber?: number) => {
+    const sem = semesterNumber || academicRequestForm.semesterNumber || 1;
+    const existing = profile?.semesters?.find((s: any) => s.semester_number === sem);
+    setAcademicRequestError(null);
+    setAcademicRequestForm({
+      semesterNumber: sem,
+      requestedCgpa: existing && Number(existing.cgpa) > 0 ? String(existing.cgpa) : '',
+      requestedSgpa: existing && Number(existing.sgpa) > 0 ? String(existing.sgpa) : '',
+      reason: '',
+      supportingDocumentId: '',
+    });
+    setShowAcademicRequestModal(true);
+
+    // Load the student's own documents so an owned StudentDocument can be
+    // attached as supporting evidence.
+    try {
+      if (profile?.student_id || profile?.id) {
+        const docsRes = await api.documents.getByStudent(profile.student_id || profile.id);
+        if (docsRes.success && Array.isArray(docsRes.data)) {
+          setOwnDocuments(docsRes.data.filter((d: any) => !d.isPrimary));
+        }
+      }
+    } catch {
+      setOwnDocuments([]);
+    }
+  };
+
+  /** Strict decimal in [0,10]. Rejects "9.5xyz" exactly like the backend. */
+  const isValidGrade = (value: string) => {
+    if (value === '') return false;
+    return /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(value.trim()) &&
+      Number(value) >= 0 && Number(value) <= 10;
+  };
+
+  const handleSubmitAcademicRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAcademicRequestError(null);
+
+    if (!isValidGrade(academicRequestForm.requestedCgpa)) {
+      setAcademicRequestError('Requested CGPA must be a number between 0 and 10 (for example 8.75).');
+      return;
+    }
+    if (academicRequestForm.requestedSgpa.trim() !== '' && !isValidGrade(academicRequestForm.requestedSgpa)) {
+      setAcademicRequestError('Requested SGPA must be a number between 0 and 10 (for example 8.75).');
+      return;
+    }
+    if (academicRequestForm.reason.trim().length < 5) {
+      setAcademicRequestError('Please provide a meaningful reason (at least 5 characters).');
+      return;
+    }
+
+    const sem = academicRequestForm.semesterNumber;
+    const existing = profile?.semesters?.find((s: any) => s.semester_number === sem);
+
+    setSubmittingAcademicRequest(true);
+    try {
+      const res = await api.academicRequests.create({
+        semesterNumber: sem,
+        requestedCgpa: Number(academicRequestForm.requestedCgpa),
+        ...(academicRequestForm.requestedSgpa.trim() !== ''
+          ? { requestedSgpa: Number(academicRequestForm.requestedSgpa) }
+          : {}),
+        currentCgpa: existing ? Number(existing.cgpa) || 0 : 0,
+        currentSgpa: existing ? Number(existing.sgpa) || 0 : 0,
+        reason: academicRequestForm.reason.trim(),
+        ...(academicRequestForm.supportingDocumentId
+          ? { supportingDocumentId: academicRequestForm.supportingDocumentId }
+          : {}),
+      });
+      if (res.success) {
+        toast.success(
+          `Correction request for Semester 0${sem} submitted. Your mentor has been notified.`
+        );
+        setShowAcademicRequestModal(false);
+        setAcademicRequestForm((f) => ({ ...f, reason: '', supportingDocumentId: '' }));
+        loadMyAcademicRequests();
+      } else {
+        setAcademicRequestError(res.message || 'Failed to submit the academic correction request.');
+      }
+    } catch (err: any) {
+      setAcademicRequestError(err?.message || 'Failed to submit the academic correction request.');
+    } finally {
+      setSubmittingAcademicRequest(false);
     }
   };
 
@@ -556,7 +699,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
             {/* Dynamic Date-Based Meeting Notice Card */}
             {(() => {
-              const notice = getMeetingNotice(schedule?.nextSaturdayDate);
+              const notice = getMeetingNotice(schedule);
               if (notice.isPast) {
                 return (
                   <div className="card" style={{ borderLeft: '4px solid #64748B' }}>
@@ -586,6 +729,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
                     <div style={{ fontSize: '0.8rem', color: '#64748B', backgroundColor: '#F8FAFC', padding: '0.6rem 0.8rem', borderRadius: '8px' }}>
                       Scheduled Date: <strong>{schedule?.nextSaturdayDate}</strong>. Attendance is mandatory as per college mentoring regulations.
                     </div>
+                    {schedule?.meetingDescription && (
+                      <div style={{ marginTop: '0.5rem', fontSize: '0.78rem', color: '#0B2545' }}>
+                        {schedule.meetingDescription}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -1144,14 +1292,35 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
           <div className="card">
             <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
               <h3 className="card-title">Semesters 1 through 8 Grades</h3>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                 <span className={`badge ${activeArrears === 0 ? 'badge-success' : 'badge-danger'}`} style={{ fontSize: '0.85rem', padding: '0.35rem 0.75rem' }}>
                   {arrearStatusLabel}
                 </span>
                 <span style={{ fontSize: '0.75rem', color: '#64748B' }}>
                   (Historical: {historicalArrears} • Cleared: {clearedArrears})
                 </span>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary"
+                  style={{ display: 'flex', alignItems: 'center', gap: '5px' }}
+                  onClick={() => openAcademicRequestModal()}
+                >
+                  <Pencil size={13} /> Request Correction
+                </button>
               </div>
+            </div>
+            <div
+              style={{
+                padding: '0.6rem 1rem',
+                fontSize: '0.78rem',
+                color: '#1D4ED8',
+                background: '#EFF6FF',
+                borderBottom: '1px solid #DBEAFE',
+              }}
+            >
+              CGPA, SGPA and arrear records are maintained by your faculty. To correct a value,
+              raise an Academic Correction Request — your mentor (or HOD/admin) will review it.
+              Year and Section remain directly editable below.
             </div>
             <div className="table-responsive">
               <table className="table">
@@ -1234,34 +1403,23 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
                 </span>
               </div>
               {activeArrears > 0 && (
-                <button
-                  className="btn btn-sm"
-                  onClick={() => {
-                    const firstActive = profile?.active_arrear_subjects?.[0] || '';
-                    setClearArrearForm({
-                      subjectCode: firstActive,
-                      originalSemester: 1,
-                      clearedInSemester: 1,
-                      clearedDate: new Date().toISOString().split('T')[0],
-                      remarks: firstActive ? `${firstActive} Cleared` : '',
-                      attempt: 1,
-                    });
-                    setClearArrearError(null);
-                    setShowClearArrearModal(true);
-                  }}
+                <span
                   style={{
                     display: 'flex',
                     alignItems: 'center',
                     gap: '6px',
-                    backgroundColor: '#ECFDF5',
-                    color: '#047857',
-                    border: '1px solid #10B981',
+                    fontSize: '0.78rem',
+                    color: '#92400E',
+                    background: '#FFFBEB',
+                    border: '1px solid #FDE68A',
+                    padding: '5px 10px',
+                    borderRadius: '6px',
                     fontWeight: 600,
-                    cursor: 'pointer',
                   }}
                 >
-                  <CheckCircle2 size={15} /> Record Arrear Clearance
-                </button>
+                  <AlertCircle size={14} />
+                  Arrear clearance is recorded by your mentor / HOD — not by the student.
+                </span>
               )}
             </div>
             {(!profile?.arrear_history || profile.arrear_history.length === 0) ? (
@@ -1637,6 +1795,252 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
         </form>
       </Modal>
 
+      {/* ACADEMIC EDIT REQUEST MODAL — the only way a student changes CGPA/SGPA */}
+      {showAcademicRequestModal && (
+        <Modal
+          isOpen={showAcademicRequestModal}
+          title="Request Academic Correction"
+          onClose={() => {
+            if (!submittingAcademicRequest) setShowAcademicRequestModal(false);
+          }}
+        >
+          <form onSubmit={handleSubmitAcademicRequest}>
+            <div style={{ padding: '0.5rem 0' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '8px',
+                  marginBottom: '1rem',
+                  padding: '10px 12px',
+                  background: '#EFF6FF',
+                  border: '1px solid #DBEAFE',
+                  borderRadius: '6px',
+                  fontSize: '0.8rem',
+                  color: '#1E3A8A',
+                  lineHeight: 1.45,
+                }}
+              >
+                <Info size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+                <span>
+                  You cannot edit CGPA or SGPA directly. Submit a correction for one semester
+                  at a time — your assigned mentor (or the HOD/admin) reviews it before it is
+                  applied. Your current records stay unchanged until approval.
+                </span>
+              </div>
+
+              {academicRequestError && (
+                <div
+                  style={{
+                    marginBottom: '1rem',
+                    padding: '9px 12px',
+                    background: '#FEF2F2',
+                    border: '1px solid #FECACA',
+                    borderRadius: '6px',
+                    color: '#B91C1C',
+                    fontSize: '0.8rem',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '6px',
+                  }}
+                >
+                  <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+                  <span>{academicRequestError}</span>
+                </div>
+              )}
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Semester *</label>
+                <select
+                  className="form-control"
+                  value={academicRequestForm.semesterNumber}
+                  onChange={(e) => {
+                    const sem = Number(e.target.value);
+                    const existing = profile?.semesters?.find((s: any) => s.semester_number === sem);
+                    setAcademicRequestForm({
+                      ...academicRequestForm,
+                      semesterNumber: sem,
+                      requestedCgpa:
+                        existing && Number(existing.cgpa) > 0 ? String(existing.cgpa) : academicRequestForm.requestedCgpa,
+                      requestedSgpa:
+                        existing && Number(existing.sgpa) > 0 ? String(existing.sgpa) : academicRequestForm.requestedSgpa,
+                    });
+                  }}
+                >
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((sem) => (
+                    <option key={sem} value={sem}>Semester 0{sem}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr 1fr',
+                  gap: '0.75rem',
+                  marginBottom: '1rem',
+                }}
+              >
+                <div>
+                  <label className="form-label">Current CGPA</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    disabled
+                    value={
+                      (() => {
+                        const s = profile?.semesters?.find(
+                          (x: any) => x.semester_number === academicRequestForm.semesterNumber
+                        );
+                        return s && Number(s.cgpa) > 0 ? Number(s.cgpa).toFixed(2) : 'Not recorded';
+                      })()
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="form-label">Requested CGPA *</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    className="form-control"
+                    placeholder="e.g. 8.75"
+                    value={academicRequestForm.requestedCgpa}
+                    onChange={(e) =>
+                      setAcademicRequestForm({ ...academicRequestForm, requestedCgpa: e.target.value })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="form-label">Requested SGPA</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    className="form-control"
+                    placeholder="e.g. 8.90"
+                    value={academicRequestForm.requestedSgpa}
+                    onChange={(e) =>
+                      setAcademicRequestForm({ ...academicRequestForm, requestedSgpa: e.target.value })
+                    }
+                  />
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Reason for Correction *</label>
+                <textarea
+                  className="form-control"
+                  rows={3}
+                  placeholder="Explain the error (e.g. the published result sheet shows 8.75, not 7.90)"
+                  value={academicRequestForm.reason}
+                  onChange={(e) =>
+                    setAcademicRequestForm({ ...academicRequestForm, reason: e.target.value })
+                  }
+                />
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Supporting Document (optional)</label>
+                <select
+                  className="form-control"
+                  value={academicRequestForm.supportingDocumentId}
+                  onChange={(e) =>
+                    setAcademicRequestForm({
+                      ...academicRequestForm,
+                      supportingDocumentId: e.target.value,
+                    })
+                  }
+                >
+                  <option value="">None</option>
+                  {ownDocuments.map((d: any) => (
+                    <option key={d.documentId || d.id} value={d.documentId || d.id}>
+                      {d.fileName || d.title}
+                    </option>
+                  ))}
+                </select>
+                <p style={{ fontSize: '0.72rem', color: '#64748B', margin: '0.35rem 0 0' }}>
+                  Only your own uploaded documents can be attached. Upload the marksheet first if
+                  nothing suitable is listed.
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowAcademicRequestModal(false)}
+                  disabled={submittingAcademicRequest}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={submittingAcademicRequest}
+                >
+                  {submittingAcademicRequest ? 'Submitting...' : 'Submit for Review'}
+                </button>
+              </div>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* MY ACADEMIC CORRECTION REQUESTS */}
+      {myAcademicRequests.length > 0 && (
+        <div className="card" style={{ marginTop: '1.5rem' }}>
+          <div className="card-header">
+            <h3 className="card-title"><Clock size={18} /> My Academic Correction Requests</h3>
+          </div>
+          <div className="table-responsive">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Semester</th>
+                  <th>Current</th>
+                  <th>Requested</th>
+                  <th>Reason</th>
+                  <th>Status</th>
+                  <th>Reviewed By</th>
+                  <th>Reviewer Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {myAcademicRequests.map((r: any) => (
+                  <tr key={r.requestId || r._id || r.id}>
+                    <td style={{ fontWeight: 600 }}>Semester 0{r.semesterNumber}</td>
+                    <td>CGPA {Number(r.currentCgpa || 0).toFixed(2)}</td>
+                    <td>
+                      CGPA {Number(r.requestedCgpa || 0).toFixed(2)}
+                      {r.requestedSgpa !== null && r.requestedSgpa !== undefined
+                        ? ` / SGPA ${Number(r.requestedSgpa).toFixed(2)}`
+                        : ''}
+                    </td>
+                    <td style={{ maxWidth: '220px', fontSize: '0.8rem' }}>{r.reason}</td>
+                    <td>
+                      <span
+                        className={`badge ${
+                          r.status === 'APPROVED'
+                            ? 'badge-success'
+                            : r.status === 'REJECTED'
+                              ? 'badge-danger'
+                              : 'badge-warning'
+                        }`}
+                      >
+                        {r.status}
+                      </span>
+                    </td>
+                    <td>{r.reviewedByName || '—'}</td>
+                    <td style={{ maxWidth: '220px', fontSize: '0.8rem' }}>
+                      {r.reviewNotes || r.rejectionReason || '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* REQUEST IDENTITY EDIT MODAL */}
       {showIdentityEditModal && (
         <Modal
@@ -1680,23 +2084,44 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
                 <div>
                   <label className="form-label">Department</label>
-                  <input
-                    type="text"
+                  <select
                     className="form-control"
                     value={identityEditForm.department}
                     onChange={(e) => setIdentityEditForm({ ...identityEditForm, department: e.target.value })}
-                    placeholder="Department Name"
-                  />
+                  >
+                    <option value="">Select a department</option>
+                    {departmentOptions.map((d: any) => (
+                      <option key={d.code || d.name} value={d.name}>
+                        {d.code ? `${d.code} — ${d.name}` : d.name}
+                      </option>
+                    ))}
+                  </select>
+                  {departmentOptions.length === 0 && (
+                    <p style={{ fontSize: '0.72rem', color: '#64748B', margin: '0.3rem 0 0' }}>
+                      Loading departments…
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="form-label">Batch</label>
-                  <input
-                    type="text"
+                  <select
                     className="form-control"
                     value={identityEditForm.batch}
                     onChange={(e) => setIdentityEditForm({ ...identityEditForm, batch: e.target.value })}
-                    placeholder="e.g. 2023-2027"
-                  />
+                  >
+                    <option value="">Select a batch</option>
+                    {batchOptions.map((b: any) => (
+                      <option key={b.name} value={b.name}>
+                        {b.name}
+                        {b.startYear ? ` (${b.startYear}–${b.endYear || b.startYear + 4})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {batchOptions.length === 0 && (
+                    <p style={{ fontSize: '0.72rem', color: '#64748B', margin: '0.3rem 0 0' }}>
+                      Loading batches…
+                    </p>
+                  )}
                 </div>
               </div>
 

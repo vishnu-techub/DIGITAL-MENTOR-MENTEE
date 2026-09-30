@@ -5,6 +5,8 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { connectDB, isDBConnected } from './config/database.js';
 import { ensureSystemBootstrap } from './database/bootstrap.js';
+import { authenticate } from './middleware/auth.middleware.js';
+import { serveLegacyUpload } from './modules/documents/document.controller.js';
 
 import authRoutes from './modules/auth/auth.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
@@ -14,6 +16,7 @@ import meetingRoutes from './modules/meetings/meeting.routes.js';
 import counsellingRoutes from './modules/counselling/counselling.routes.js';
 import progressRoutes from './modules/monthly-progress/progress.routes.js';
 import notificationRoutes from './modules/notifications/notification.routes.js';
+import { scheduleMeetingNotificationSync } from './modules/notifications/notification.service.js';
 import pdfRoutes from './modules/pdf/pdf.routes.js';
 import auditRoutes from './modules/audit/audit.routes.js';
 import reportRoutes from './modules/reports/report.routes.js';
@@ -42,9 +45,19 @@ app.use(
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
-// Static Document Storage Server
-const uploadsPath = path.resolve(process.cwd(), 'uploads');
-app.use('/uploads', express.static(uploadsPath));
+// ---------------------------------------------------------------------------
+// Document storage is PRIVATE student data.
+// The previous public `express.static('/uploads')` mount allowed anyone holding
+// a URL to read any student's certificates. It is replaced by an authenticated,
+// ownership-checked handler that resolves the file through its StudentDocument
+// record, so existing stored fileUrl values keep working without being public.
+// ---------------------------------------------------------------------------
+app.get('/uploads/*', authenticate, (req, res, next) => {
+  const params = req.params as Record<string, string | undefined>;
+  const wildcard = params['0'] ?? params['splat'];
+  if (wildcard) (req.params as any)[0] = wildcard;
+  return serveLegacyUpload(req as any, res).catch(next);
+});
 
 // Institutional Database Health Check Endpoint (Requirement 13)
 app.get('/api/health', (req, res) => {
@@ -128,14 +141,19 @@ async function startServer() {
     // 2. Synchronize indexes and non-destructive system defaults (Admin account, Feeder schools, master lookups)
     await ensureSystemBootstrap();
 
-    // 3. Start listening for incoming API requests
+    // 3. Start automatic meeting-reminder synchronisation. Reminders must fire
+    //    without an operator pressing a button, so the scheduler runs at boot
+    //    and then hourly. It shares its logic with the manual admin endpoint.
+    scheduleMeetingNotificationSync();
+
+    // 4. Start listening for incoming API requests
     app.listen(PORT, () => {
       console.log(`============================================================`);
       console.log(`KSRCE Digital Mentor-Mentee Management Server`);
       console.log(`K.S.R. College of Engineering (Tiruchengode)`);
       console.log(`Running on: http://localhost:${PORT}`);
       console.log(`Health endpoint: http://localhost:${PORT}/api/health`);
-      console.log(`Static file storage: ${uploadsPath}`);
+      console.log(`Secure document storage (authenticated): ${path.resolve(process.cwd(), 'uploads', 'documents')}`);
       console.log(`============================================================`);
     });
   } catch (err: any) {

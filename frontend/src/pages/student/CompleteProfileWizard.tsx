@@ -10,6 +10,7 @@ import {
   ArrowLeft,
   AlertCircle,
   FileCheck,
+  Info,
 } from 'lucide-react';
 import { SearchableSchoolDropdown } from '../../components/common/SearchableSchoolDropdown';
 
@@ -163,15 +164,9 @@ export const CompleteProfileWizard: React.FC<CompleteProfileWizardProps> = ({ on
         }
       }
 
-      for (const sem of formData.semesters) {
-        if (sem.cgpa !== '' && sem.cgpa !== undefined) {
-          const val = parseFloat(sem.cgpa);
-          if (isNaN(val) || val < 0.0 || val > 10.0) {
-            setError(`Semester ${sem.semesterNumber}: CGPA must be strictly between 0.0 and 10.0`);
-            return false;
-          }
-        }
-      }
+      // Semester CGPA / SGPA / arrears are no longer collected here: a student
+      // must never supply them. They are maintained by the department and
+      // corrected through an Academic Edit Request.
     }
     return true;
   };
@@ -218,12 +213,11 @@ export const CompleteProfileWizard: React.FC<CompleteProfileWizardProps> = ({ on
       admissionType: formData.admissionType,
       scholarshipDetails: formData.scholarshipDetails,
       lateralEntry: formData.admissionType === 'LATERAL_ENTRY' ? formData.lateralEntry : undefined,
-      semesters: formData.semesters.map((s) => ({
-        semesterNumber: s.semesterNumber,
-        cgpa: parseFloat(s.cgpa) || 0,
-        arrearsCount: parseInt(s.arrearsCount, 10) || 0,
-        arrearsSubjects: s.arrearsSubjects || '',
-      })),
+      // NOTE: `semesters` is deliberately NOT sent.
+      // CGPA, SGPA and arrears are maintained by faculty — a student may not
+      // write them, not even on first login. Once the profile is created, any
+      // correction goes through an Academic Edit Request reviewed by the
+      // assigned mentor / HOD / admin.
     };
     try {
       const res = await api.students.completeProfile(payload);
@@ -626,25 +620,39 @@ export const CompleteProfileWizard: React.FC<CompleteProfileWizardProps> = ({ on
           )}
 
           <h4 className="wizard-section-title">Semesters 1–8 Academic Record</h4>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '8px',
+              padding: '10px 12px',
+              background: '#EFF6FF',
+              border: '1px solid #DBEAFE',
+              borderRadius: '6px',
+              fontSize: '0.8rem',
+              color: '#1E3A8A',
+              lineHeight: 1.45,
+              marginBottom: '0.75rem',
+            }}
+          >
+            <Info size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>
+              Semester CGPA, SGPA and arrear results are recorded by the department and
+              cannot be entered here. They will appear on your profile once your mentor
+              or the HOD publishes them. If a published value is wrong, raise an
+              <strong> Academic Correction Request</strong> from your dashboard — you will
+              not be able to edit it directly.
+            </span>
+          </div>
           <div className="semester-scroll">
-            {formData.semesters.map((sem, idx) => (
+            {formData.semesters.map((sem) => (
               <div key={sem.semesterNumber} className="semester-row">
-                <div className="semester-label">Semester {sem.semesterNumber < 10 ? `0${sem.semesterNumber}` : sem.semesterNumber}</div>
+                <div className="semester-label">
+                  Semester {sem.semesterNumber < 10 ? `0${sem.semesterNumber}` : sem.semesterNumber}
+                </div>
                 <div className="semester-fields">
-                  <div>
-                    <label className="sem-field-label">CGPA</label>
-                    <input type="number" step="0.01" className="form-control" placeholder="0.00"
-                      value={sem.cgpa} onChange={(e) => updateSemester(idx, 'cgpa', e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="sem-field-label">Standing Arrears</label>
-                    <input type="number" className="form-control" value={sem.arrearsCount}
-                      onChange={(e) => updateSemester(idx, 'arrearsCount', e.target.value)} />
-                  </div>
-                  <div className="sem-subjects-col">
-                    <label className="sem-field-label">Arrear Subject Codes</label>
-                    <input type="text" className="form-control" placeholder="e.g. CS8301"
-                      value={sem.arrearsSubjects} onChange={(e) => updateSemester(idx, 'arrearsSubjects', e.target.value)} />
+                  <div style={{ gridColumn: '1 / -1', fontSize: '0.8rem', color: '#64748B' }}>
+                    Awaiting entry by your department
                   </div>
                 </div>
               </div>

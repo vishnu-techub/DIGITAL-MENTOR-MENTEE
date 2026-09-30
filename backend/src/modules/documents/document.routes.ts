@@ -3,6 +3,7 @@ import {
   uploadDocument,
   getStudentDocuments,
   downloadDocument,
+  viewDocumentFile,
   deleteDocument,
   deleteAllStudentDocuments,
   verifyDocument,
@@ -14,33 +15,40 @@ import { ROLES } from '../../config/constants.js';
 
 const router = Router();
 
-// Require authentication for all document routes
+// Require authentication for every document route. Certificates are private
+// student data; no document endpoint is reachable anonymously.
 router.use(authenticate);
 
-// 1. Upload certificate / document (Student, Faculty, Admin)
+// 1. Upload certificate / document.
+//    Target student is verified in the controller (students cannot spoof it).
 router.post(
   '/upload',
+  authorize(ROLES.STUDENT, ROLES.FACULTY, ROLES.HOD, ROLES.ADMIN),
   documentUploadMiddleware.single('file'),
   uploadDocument
 );
 
-// 2. List documents for a specific student (Student itself, Mentor, Admin, HOD)
+// 2. List documents for a specific student.
+//    Scoped in the controller: self / assigned mentee / own department / admin.
 router.get('/student/:studentId', getStudentDocuments);
 
-// 3. Download document file
-router.get('/:documentId/download', downloadDocument);
-
-// 4. Delete document (Student can delete own; Admin can delete any)
-router.delete('/:documentId', deleteDocument);
-
-// 5. Delete all uploaded documents for a student (Admin only)
+// 3. Delete all uploaded documents for a student (Admin only)
 router.delete(
   '/student/:studentId/all',
   authorize(ROLES.ADMIN),
   deleteAllStudentDocuments
 );
 
-// 6. Verification status review (Faculty Mentor, Admin, HOD)
+// 4. Inline file view (PDF/images render in the browser, never auto-download)
+router.get('/:documentId/file', viewDocumentFile);
+
+// 5. Forced download
+router.get('/:documentId/download', downloadDocument);
+
+// 6. Delete document (owner or admin/assigned mentor/HOD per controller rules)
+router.delete('/:documentId', deleteDocument);
+
+// 7. Verification status review (Mentor of record, Admin, HOD)
 router.patch(
   '/:documentId/verify',
   authorize(ROLES.FACULTY, ROLES.ADMIN, ROLES.HOD),

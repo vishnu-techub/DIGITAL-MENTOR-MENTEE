@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { api, ApiError } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -156,6 +156,88 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
     monthName: `Evaluation - ${new Date().toLocaleString('default', { month: 'short', year: 'numeric' })}`,
   });
   const [submittingSkills, setSubmittingSkills] = useState(false);
+
+  // â”€â”€ Academic Correction Request review queue â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const [myAcademicRequests, setMyAcademicRequests] = useState<any[]>([]);
+  const [academicRequestsLoading, setAcademicRequestsLoading] = useState(false);
+  const [academicRequestsError, setAcademicRequestsError] = useState<string | null>(null);
+  const [reviewingRequestId, setReviewingRequestId] = useState<string | null>(null);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [reviewAction, setReviewAction] = useState<'APPROVE' | 'REJECT'>('APPROVE');
+  const [reviewTarget, setReviewTarget] = useState<any>(null);
+  const [reviewNote, setReviewNote] = useState('');
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+
+  const loadMyAcademicRequests = async () => {
+    setAcademicRequestsLoading(true);
+    setAcademicRequestsError(null);
+    try {
+      const res = await api.academicRequests.list({ status: '', all: 'true' });
+      if (res.success) {
+        const all = Array.isArray(res.data) ? res.data : res.data?.requests || [];
+        // Only this student's requests belong on this page.
+        setMyAcademicRequests(
+          all.filter((r: any) => {
+            const sid = r.studentId || r.student_id;
+            return !sid || String(sid) === String(studentId);
+          })
+        );
+      } else {
+        setAcademicRequestsError(res.message || 'Failed to load correction requests.');
+      }
+    } catch (err: any) {
+      setAcademicRequestsError(err?.message || 'Failed to load correction requests.');
+    } finally {
+      setAcademicRequestsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (studentId) loadMyAcademicRequests();
+  }, [studentId]);
+
+  const openReviewModal = (request: any, action: 'APPROVE' | 'REJECT') => {
+    setReviewTarget(request);
+    setReviewAction(action);
+    setReviewNote('');
+    setReviewError(null);
+    setShowReviewModal(true);
+  };
+
+  const submitReview = async () => {
+    if (!reviewTarget) return;
+    if (reviewAction === 'REJECT' && reviewNote.trim().length < 5) {
+      setReviewError('A rejection reason is required so the student understands the decision.');
+      return;
+    }
+    const id = reviewTarget.requestId || reviewTarget._id || reviewTarget.id;
+    setReviewSubmitting(true);
+    setReviewError(null);
+    try {
+      const res =
+        reviewAction === 'APPROVE'
+          ? await api.academicRequests.approve(id, { reviewNotes: reviewNote.trim() })
+          : await api.academicRequests.reject(id, reviewNote.trim());
+      if (res.success) {
+        toast.success(
+          reviewAction === 'APPROVE'
+            ? `Approved. The Semester 0${reviewTarget.semesterNumber} record has been updated.`
+            : 'Request rejected. The original academic record is unchanged.'
+        );
+        setShowReviewModal(false);
+        await loadMyAcademicRequests();
+        // Re-read the student so the academic table reflects the change.
+        if (reviewAction === 'APPROVE') fetchStudentData();
+      } else {
+        setReviewError(res.message || 'The review could not be saved.');
+      }
+    } catch (err: any) {
+      setReviewError(err?.message || 'The review could not be saved.');
+    } finally {
+      setReviewSubmitting(false);
+    }
+  };
 
   // Sync initial tab
   useEffect(() => {
@@ -565,7 +647,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   border: '1px solid #BFDBFE',
                 }}
               >
-                MENTOR VIEW • READ-ONLY MENTEE DOSSIER
+                MENTOR VIEW â€¢ READ-ONLY MENTEE DOSSIER
               </span>
             </div>
 
@@ -595,15 +677,15 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               <span>
                 Register No: <strong style={{ color: '#0F172A' }}>{student.register_number}</strong>
               </span>
-              <span>•</span>
+              <span>â€¢</span>
               <span>{student.department_name || 'Information Technology'}</span>
-              <span>•</span>
+              <span>â€¢</span>
               <span>
-                {yearRoman} {student.batch_name ? `• Batch ${student.batch_name}` : ''}
+                {yearRoman} {student.batch_name ? `â€¢ Batch ${student.batch_name}` : ''}
               </span>
-              <span>•</span>
+              <span>â€¢</span>
               <span>Section: <strong style={{ color: '#0F172A' }}>{student.section || 'A'}</strong></span>
-              <span>•</span>
+              <span>â€¢</span>
               <span>
                 Mentor:{' '}
                 <strong style={{ color: '#0B2545' }}>
@@ -819,7 +901,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 {cgpaValue}
               </div>
               <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '4px' }}>
-                CGPA • {student.semesters?.length || 0} Semesters Evaluated →
+                CGPA â€¢ {student.semesters?.length || 0} Semesters Evaluated â†’
               </div>
             </div>
 
@@ -851,7 +933,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 {activeArrearsCount === 0 ? '0 Cleared' : `${activeArrearsCount} Active`}
               </div>
               <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '4px' }}>
-                {student.cleared_arrears_count || 0} Cleared in History →
+                {student.cleared_arrears_count || 0} Cleared in History â†’
               </div>
             </div>
 
@@ -876,7 +958,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 {student.counsellingRecords?.length || 0}
               </div>
               <div style={{ fontSize: '0.78rem', color: '#7C3AED', marginTop: '4px' }}>
-                5-Domain Mentoring Records →
+                5-Domain Mentoring Records â†’
               </div>
             </div>
 
@@ -901,7 +983,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 {student.meetings?.length || 0}
               </div>
               <div style={{ fontSize: '0.78rem', color: '#D97706', marginTop: '4px' }}>
-                Meeting Logs & Attendance →
+                Meeting Logs & Attendance â†’
               </div>
             </div>
 
@@ -926,7 +1008,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 {student.documents?.length || (student.counsellingRecords ? 4 : 0)}
               </div>
               <div style={{ fontSize: '0.78rem', color: '#059669', marginTop: '4px' }}>
-                Certificates & Verification →
+                Certificates & Verification â†’
               </div>
             </div>
 
@@ -951,7 +1033,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 {activeArrearsCount > 0 ? '2 Needing Focus' : 'On Track'}
               </div>
               <div style={{ fontSize: '0.78rem', color: '#2563EB', marginTop: '4px' }}>
-                7 Core Mentoring Domains →
+                7 Core Mentoring Domains â†’
               </div>
             </div>
           </div>
@@ -1016,7 +1098,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                     {student.currentMentor.mentor_name}
                   </div>
                   <div style={{ fontSize: '0.82rem', color: '#64748B', marginTop: '2px' }}>
-                    {student.currentMentor.designation} • {student.currentMentor.cabin_location || 'Faculty Cabin'}
+                    {student.currentMentor.designation} â€¢ {student.currentMentor.cabin_location || 'Faculty Cabin'}
                   </div>
                   <div style={{ fontSize: '0.78rem', color: '#059669', fontWeight: 700, marginTop: '6px' }}>
                     Active Assignment Since: {student.currentMentor.assigned_from || 'Academic Term'}
@@ -1046,7 +1128,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                     Upcoming Saturday Mentoring Session
                   </div>
                   <div style={{ fontSize: '0.76rem', color: '#78350F', marginTop: '2px' }}>
-                    {saturdaySchedule?.time || '10:30 AM'} • {saturdaySchedule?.location || 'Faculty Cabin'}
+                    {saturdaySchedule?.time || '10:30 AM'} â€¢ {saturdaySchedule?.location || 'Faculty Cabin'}
                   </div>
                 </div>
               </div>
@@ -1129,7 +1211,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0B2545', marginTop: '4px' }}>
                 {student.mobile_number ? (
                   <a href={`tel:${student.mobile_number}`} style={{ color: '#1D4ED8', textDecoration: 'none' }}>
-                    📞 {student.mobile_number}
+                    ðŸ“ž {student.mobile_number}
                   </a>
                 ) : (
                   'N/A'
@@ -1144,7 +1226,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0B2545', marginTop: '4px' }}>
                 {student.email ? (
                   <a href={`mailto:${student.email}`} style={{ color: '#1D4ED8', textDecoration: 'none' }}>
-                    ✉️ {student.email}
+                    âœ‰ï¸ {student.email}
                   </a>
                 ) : (
                   `${student.register_number}@ksrce.ac.in`
@@ -1166,7 +1248,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 Year & Batch
               </label>
               <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0F172A', marginTop: '4px' }}>
-                {yearRoman} {student.batch_name ? `• Batch ${student.batch_name}` : ''}
+                {yearRoman} {student.batch_name ? `â€¢ Batch ${student.batch_name}` : ''}
               </div>
             </div>
 
@@ -1186,7 +1268,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 Academic Year & Section
               </label>
               <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0F172A', marginTop: '4px' }}>
-                Year {student.year || '—'} • Section {student.section || '—'}
+                Year {student.year || 'â€”'} â€¢ Section {student.section || 'â€”'}
               </div>
             </div>
 
@@ -1222,23 +1304,23 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem', fontSize: '0.85rem' }}>
                   <div>
                     <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous College Name:</span>
-                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_college_name || student.lateralEntry?.previousCollegeName || '—'}</strong>
+                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_college_name || student.lateralEntry?.previousCollegeName || 'â€”'}</strong>
                   </div>
                   <div>
                     <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous Course / Diploma:</span>
-                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_course || student.lateralEntry?.previousCourse || '—'}</strong>
+                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_course || student.lateralEntry?.previousCourse || 'â€”'}</strong>
                   </div>
                   <div>
                     <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous Institution:</span>
-                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_institution || student.lateralEntry?.previousInstitution || '—'}</strong>
+                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_institution || student.lateralEntry?.previousInstitution || 'â€”'}</strong>
                   </div>
                   <div>
                     <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous Qualification:</span>
-                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_qualification_details || student.lateralEntry?.previousQualificationDetails || '—'}</strong>
+                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_qualification_details || student.lateralEntry?.previousQualificationDetails || 'â€”'}</strong>
                   </div>
                   <div>
                     <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Admission Year:</span>
-                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.admission_year || student.lateralEntry?.admissionYear || '—'}</strong>
+                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.admission_year || student.lateralEntry?.admissionYear || 'â€”'}</strong>
                   </div>
                 </div>
               </div>
@@ -1261,6 +1343,173 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           ============================================================ */}
       {activeTab === 'academic' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* ============================================================
+              ACADEMIC CORRECTION REQUESTS (approve / reject)
+              A student cannot edit CGPA/SGPA directly â€” every change
+              arrives here as a per-semester request awaiting review.
+              ============================================================ */}
+          <div
+            className="card"
+            style={{
+              padding: '1.25rem',
+              backgroundColor: '#ffffff',
+              border: '1px solid #E2E8F0',
+              borderLeft: '5px solid #1D4ED8',
+              borderRadius: '10px',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '0.75rem',
+                marginBottom: myAcademicRequests.length > 0 ? '1rem' : 0,
+              }}
+            >
+              <div>
+                <h3
+                  style={{
+                    fontSize: '1.05rem',
+                    fontWeight: 800,
+                    color: '#0B2545',
+                    margin: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                  }}
+                >
+                  <FileCheck size={18} /> Academic Correction Requests
+                </h3>
+                <p style={{ fontSize: '0.8rem', color: '#64748B', margin: '4px 0 0 0' }}>
+                  {academicRequestsLoading
+                    ? 'Loading requestsâ€¦'
+                    : myAcademicRequests.length === 0
+                      ? 'No correction requests have been raised for this student.'
+                      : `${myAcademicRequests.filter((r: any) => r.status === 'PENDING').length} pending review.`}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={loadMyAcademicRequests}
+                style={{ display: 'flex', alignItems: 'center', gap: '5px' }}
+              >
+                Refresh
+              </button>
+            </div>
+
+            {academicRequestsError && (
+              <div
+                style={{
+                  padding: '9px 12px',
+                  background: '#FEF2F2',
+                  border: '1px solid #FECACA',
+                  borderRadius: '6px',
+                  color: '#B91C1C',
+                  fontSize: '0.8rem',
+                  marginBottom: '0.75rem',
+                }}
+              >
+                {academicRequestsError}
+              </div>
+            )}
+
+            {myAcademicRequests.length > 0 && (
+              <div className="table-responsive">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Semester</th>
+                      <th>Current</th>
+                      <th>Requested</th>
+                      <th>Student Reason</th>
+                      <th>Status</th>
+                      <th>Review</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {myAcademicRequests.map((r: any) => (
+                      <tr key={r.requestId || r._id || r.id}>
+                        <td style={{ fontWeight: 700 }}>Semester 0{r.semesterNumber}</td>
+                        <td>
+                          CGPA {Number(r.currentCgpa || 0).toFixed(2)}
+                          {Number(r.currentSgpa || 0) > 0
+                            ? ` / SGPA ${Number(r.currentSgpa).toFixed(2)}`
+                            : ''}
+                        </td>
+                        <td>
+                          <strong style={{ color: '#1D4ED8' }}>
+                            CGPA {Number(r.requestedCgpa || 0).toFixed(2)}
+                          </strong>
+                          {r.requestedSgpa !== null && r.requestedSgpa !== undefined
+                            ? ` / SGPA ${Number(r.requestedSgpa).toFixed(2)}`
+                            : ''}
+                        </td>
+                        <td style={{ maxWidth: '240px', fontSize: '0.8rem' }}>{r.reason}</td>
+                        <td>
+                          <span
+                            className={`badge ${
+                              r.status === 'APPROVED'
+                                ? 'badge-success'
+                                : r.status === 'REJECTED'
+                                  ? 'badge-danger'
+                                  : 'badge-warning'
+                            }`}
+                          >
+                            {r.status}
+                          </span>
+                        </td>
+                        <td>
+                          {r.status === 'PENDING' ? (
+                            <div style={{ display: 'flex', gap: '0.4rem' }}>
+                              <button
+                                type="button"
+                                className="btn btn-sm"
+                                style={{
+                                  backgroundColor: '#15803D',
+                                  color: '#fff',
+                                  border: '1px solid #15803D',
+                                  fontWeight: 700,
+                                }}
+                                disabled={reviewingRequestId === (r.requestId || r._id || r.id)}
+                                onClick={() =>
+                                  openReviewModal(r, 'APPROVE')
+                                }
+                              >
+                                Approve
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-sm"
+                                style={{
+                                  backgroundColor: '#DC2626',
+                                  color: '#fff',
+                                  border: '1px solid #DC2626',
+                                  fontWeight: 700,
+                                }}
+                                disabled={reviewingRequestId === (r.requestId || r._id || r.id)}
+                                onClick={() => openReviewModal(r, 'REJECT')}
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          ) : (
+                            <span style={{ fontSize: '0.78rem', color: '#64748B' }}>
+                              {r.reviewedByName || 'â€”'}
+                              {r.reviewNotes ? ` â€” ${r.reviewNotes}` : ''}
+                              {r.rejectionReason ? ` â€” ${r.rejectionReason}` : ''}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
           {/* Active Arrears Banner & Action */}
           <div
             className="card"
@@ -1315,7 +1564,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   {student.active_arrear_subjects && student.active_arrear_subjects.length > 0 ? (
                     student.active_arrear_subjects.map((sub: string, idx: number) => (
                       <span key={idx} className="badge badge-danger" style={{ padding: '0.35rem 0.75rem', fontSize: '0.82rem' }}>
-                        {sub} — Active Arrear
+                        {sub} â€” Active Arrear
                       </span>
                     ))
                   ) : (
@@ -1331,7 +1580,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           {/* Semester-Wise Results Table */}
           <div className="card" style={{ padding: '1.5rem', backgroundColor: '#ffffff' }}>
             <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0B2545', marginBottom: '1rem' }}>
-              Semester-Wise Academic Performance (Semesters 01–08)
+              Semester-Wise Academic Performance (Semesters 01â€“08)
             </h3>
 
             <div style={{ overflowX: 'auto' }}>
@@ -1357,10 +1606,10 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                             Semester 0{semNum}
                           </td>
                           <td style={{ padding: '0.75rem 1rem', fontWeight: 700 }}>
-                            {sem.cgpa ? Number(sem.cgpa).toFixed(2) : '—'}
+                            {sem.cgpa ? Number(sem.cgpa).toFixed(2) : 'â€”'}
                           </td>
                           <td style={{ padding: '0.75rem 1rem' }}>
-                            {sem.sgpa ? Number(sem.sgpa).toFixed(2) : '—'}
+                            {sem.sgpa ? Number(sem.sgpa).toFixed(2) : 'â€”'}
                           </td>
                           <td style={{ padding: '0.75rem 1rem' }}>
                             {hasStanding ? (
@@ -1431,7 +1680,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                         </td>
                         <td style={{ padding: '0.6rem 0.85rem' }}>Attempt #{hist.attempt || 1}</td>
                         <td style={{ padding: '0.6rem 0.85rem' }}>
-                          <span className="badge badge-success">🟢 Cleared (Archived)</span>
+                          <span className="badge badge-success">ðŸŸ¢ Cleared (Archived)</span>
                         </td>
                       </tr>
                     ))}
@@ -1476,7 +1725,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   <span style={{ color: '#64748B' }}>Contact:</span>{' '}
                   {student.parent?.father_contact ? (
                     <a href={`tel:${student.parent.father_contact}`} style={{ color: '#1D4ED8', fontWeight: 700, textDecoration: 'none' }}>
-                      📞 {student.parent.father_contact}
+                      ðŸ“ž {student.parent.father_contact}
                     </a>
                   ) : (
                     'Not specified'
@@ -1503,7 +1752,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   <span style={{ color: '#64748B' }}>Contact:</span>{' '}
                   {student.parent?.mother_contact ? (
                     <a href={`tel:${student.parent.mother_contact}`} style={{ color: '#1D4ED8', fontWeight: 700, textDecoration: 'none' }}>
-                      📞 {student.parent.mother_contact}
+                      ðŸ“ž {student.parent.mother_contact}
                     </a>
                   ) : (
                     'Not specified'
@@ -1576,13 +1825,13 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                       {m.mentor_name}
                     </div>
                     <div style={{ fontSize: '0.82rem', color: '#64748B' }}>
-                      {m.designation} • KSRCE Faculty
+                      {m.designation} â€¢ KSRCE Faculty
                     </div>
 
                     <div style={{ fontSize: '0.8rem', color: '#475569', marginTop: '6px' }}>
                       <span>Assigned: <strong>{m.assigned_from || 'Term start'}</strong></span>
                       {m.assigned_until && (
-                        <span> • Concluded: <strong>{m.assigned_until}</strong></span>
+                        <span> â€¢ Concluded: <strong>{m.assigned_until}</strong></span>
                       )}
                     </div>
 
@@ -1713,7 +1962,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                         <Edit2 size={12} /> Edit
                       </button>
                       <span className="badge badge-success">
-                        ✓ Mentor Signed
+                        âœ“ Mentor Signed
                       </span>
                     </div>
                   </div>
@@ -1938,7 +2187,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   Upcoming Saturday Mentoring Session
                 </h3>
                 <p style={{ fontSize: '0.82rem', color: '#78350F', margin: '4px 0 0 0' }}>
-                  Scheduled Time: {saturdaySchedule?.time || '10:30 AM'} • Location: {saturdaySchedule?.location || 'Faculty Cabin / Mentoring Room'}
+                  Scheduled Time: {saturdaySchedule?.time || '10:30 AM'} â€¢ Location: {saturdaySchedule?.location || 'Faculty Cabin / Mentoring Room'}
                 </p>
               </div>
               <button
@@ -1972,7 +2221,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
                       <div style={{ fontWeight: 800, color: '#0B2545', fontSize: '0.95rem' }}>
-                        📅 {m.meeting_date ? new Date(m.meeting_date).toLocaleDateString() : 'Saturday'} ({m.meeting_time || '10:30 AM'})
+                        ðŸ“… {m.meeting_date ? new Date(m.meeting_date).toLocaleDateString() : 'Saturday'} ({m.meeting_time || '10:30 AM'})
                       </div>
                       <span className={`badge ${m.attendance_status === 'PRESENT' ? 'badge-success' : 'badge-danger'}`}>
                         {m.attendance_status || 'PRESENT'}
@@ -1980,7 +2229,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                     </div>
 
                     <div style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '0.5rem' }}>
-                      📍 Location: {m.location || 'Faculty Cabin'}
+                      ðŸ“ Location: {m.location || 'Faculty Cabin'}
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '0.75rem', fontSize: '0.85rem' }}>
@@ -2435,7 +2684,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
       {/* Modal 3: Log Saturday Meeting */}
       {showMeetingModal && (
         <Modal
-          title="Log Saturday Mentor–Mentee Meeting"
+          title="Log Saturday Mentorâ€“Mentee Meeting"
           isOpen={showMeetingModal}
           onClose={() => setShowMeetingModal(false)}
         >
@@ -2674,6 +2923,152 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
         isOpen={showAiBot}
         onClose={() => setShowAiBot(false)}
       />
+
+      {/* APPROVE / REJECT ACADEMIC CORRECTION REQUEST */}
+      {showReviewModal && reviewTarget && (
+        <Modal
+          isOpen={showReviewModal}
+          title={
+            reviewAction === 'APPROVE'
+              ? 'Approve Academic Correction'
+              : 'Reject Academic Correction'
+          }
+          onClose={() => {
+            if (!reviewSubmitting) setShowReviewModal(false);
+          }}
+        >
+          <div style={{ padding: '0.5rem 0' }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: '0.75rem',
+                marginBottom: '1rem',
+                padding: '0.85rem',
+                background: '#F8FAFC',
+                border: '1px solid #E2E8F0',
+                borderRadius: '6px',
+                fontSize: '0.85rem',
+              }}
+            >
+              <div>
+                <div style={{ color: '#64748B', fontSize: '0.75rem' }}>Semester</div>
+                <div style={{ fontWeight: 700 }}>Semester 0{reviewTarget.semesterNumber}</div>
+              </div>
+              <div>
+                <div style={{ color: '#64748B', fontSize: '0.75rem' }}>Student</div>
+                <div style={{ fontWeight: 700 }}>
+                  {reviewTarget.studentName || student?.full_name || reviewTarget.studentRegNumber || '—'}
+                </div>
+              </div>
+              <div>
+                <div style={{ color: '#64748B', fontSize: '0.75rem' }}>Current CGPA</div>
+                <div style={{ fontWeight: 700 }}>{Number(reviewTarget.currentCgpa || 0).toFixed(2)}</div>
+              </div>
+              <div>
+                <div style={{ color: '#64748B', fontSize: '0.75rem' }}>Requested CGPA</div>
+                <div style={{ fontWeight: 700, color: '#1D4ED8' }}>
+                  {Number(reviewTarget.requestedCgpa || 0).toFixed(2)}
+                </div>
+              </div>
+              {reviewTarget.requestedSgpa !== null && reviewTarget.requestedSgpa !== undefined && (
+                <div>
+                  <div style={{ color: '#64748B', fontSize: '0.75rem' }}>Requested SGPA</div>
+                  <div style={{ fontWeight: 700, color: '#1D4ED8' }}>
+                    {Number(reviewTarget.requestedSgpa).toFixed(2)}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ color: '#64748B', fontSize: '0.75rem', marginBottom: '4px' }}>
+                Student Reason
+              </div>
+              <p style={{ margin: 0, fontSize: '0.85rem', color: '#334155', lineHeight: 1.5 }}>
+                {reviewTarget.reason}
+              </p>
+            </div>
+
+            {reviewAction === 'REJECT' && (
+              <div
+                style={{
+                  marginBottom: '1rem',
+                  padding: '9px 12px',
+                  background: '#FEF2F2',
+                  border: '1px solid #FECACA',
+                  borderRadius: '6px',
+                  color: '#991B1B',
+                  fontSize: '0.8rem',
+                }}
+              >
+                Rejecting leaves the original CGPA/SGPA record completely unchanged.
+              </div>
+            )}
+
+            {reviewError && (
+              <div
+                style={{
+                  marginBottom: '1rem',
+                  padding: '9px 12px',
+                  background: '#FEF2F2',
+                  border: '1px solid #FECACA',
+                  borderRadius: '6px',
+                  color: '#B91C1C',
+                  fontSize: '0.8rem',
+                }}
+              >
+                {reviewError}
+              </div>
+            )}
+
+            <div style={{ marginBottom: '1.25rem' }}>
+              <label className="form-label">
+                {reviewAction === 'APPROVE' ? 'Review Note (optional)' : 'Rejection Reason *'}
+              </label>
+              <textarea
+                className="form-control"
+                rows={3}
+                value={reviewNote}
+                onChange={(e) => setReviewNote(e.target.value)}
+                placeholder={
+                  reviewAction === 'APPROVE'
+                    ? 'e.g. Verified against the published result sheet.'
+                    : 'Explain why the correction cannot be approved.'
+                }
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowReviewModal(false)}
+                disabled={reviewSubmitting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={reviewAction === 'APPROVE' ? 'btn btn-primary' : 'btn btn-danger'}
+                onClick={submitReview}
+                disabled={reviewSubmitting}
+                style={
+                  reviewAction === 'APPROVE'
+                    ? { backgroundColor: '#15803D', borderColor: '#15803D' }
+                    : undefined
+                }
+              >
+                {reviewSubmitting
+                  ? 'Saving...'
+                  : reviewAction === 'APPROVE'
+                    ? 'Approve & Apply to Record'
+                    : 'Reject Request'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };

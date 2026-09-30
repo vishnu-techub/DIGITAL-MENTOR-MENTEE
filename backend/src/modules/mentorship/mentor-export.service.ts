@@ -298,16 +298,24 @@ export async function generateMentorMenteesExcel(
   }
 
   // Section 2: Table Column Headers (Row 6)
+  // EMAIL, DEPARTMENT, CGPA and SGPA are included so the export is a complete
+  // academic record rather than a participation-only summary. The arrear column
+  // uses the canonical "Clear" / "Active Arrear" vocabulary shared with the UI,
+  // PDF and dashboard.
   const columns = [
     { key: 'mentorSNo', header: 'S.NO', width: 7 },
     { key: 'mentorName', header: 'MENTOR NAME', width: 24 },
     { key: 'studentSNo', header: 'S.NO', width: 7 },
     { key: 'regNumber', header: 'REG NUMBER', width: 17 },
     { key: 'studentName', header: 'STUDENT NAME (MENTEE)', width: 26 },
+    { key: 'email', header: 'EMAIL', width: 27 },
+    { key: 'department', header: 'DEPARTMENT', width: 22 },
     { key: 'classSection', header: 'CLASS & SECTION', width: 16 },
+    { key: 'cgpa', header: 'CGPA', width: 10 },
+    { key: 'sgpa', header: 'SGPA', width: 10 },
+    { key: 'arrearStatus', header: 'ARREAR STATUS', width: 16 },
     { key: 'nptel', header: 'NPTEL COMPLETED', width: 24 },
     { key: 'globalCert', header: 'GLOBAL CERTIFICATION', width: 25 },
-    { key: 'allClear', header: 'ALL CLEAR', width: 16 },
     { key: 'finalYearPlaced', header: 'FINAL YEAR PLACED', width: 20 },
     { key: 'hackathon', header: 'HACKATHON PARTICIPATION', width: 25 },
     { key: 'symposium', header: 'SYMPOSIUM PARTICIPATION', width: 25 },
@@ -316,6 +324,30 @@ export async function generateMentorMenteesExcel(
     { key: 'extraCurricular', header: 'EXTRA CURRICULAR', width: 23 },
     { key: 'award', header: 'AWARD', width: 24 },
   ];
+
+  // Stable column indexes used by the row writer / conditional styling.
+  const COL = {
+    mentorSNo: 0,
+    mentorName: 1,
+    studentSNo: 2,
+    regNumber: 3,
+    studentName: 4,
+    email: 5,
+    department: 6,
+    classSection: 7,
+    cgpa: 8,
+    sgpa: 9,
+    arrearStatus: 10,
+    nptel: 11,
+    globalCert: 12,
+    finalYearPlaced: 13,
+    hackathon: 14,
+    symposium: 15,
+    otherState: 16,
+    extension: 17,
+    extraCurricular: 18,
+    award: 19,
+  } as const;
 
   columns.forEach((col, index) => {
     ws.getColumn(index + 1).width = col.width;
@@ -341,8 +373,8 @@ export async function generateMentorMenteesExcel(
     };
   });
 
-  // Enable Excel Auto-Filter on Table Headers (A6:P6)
-  ws.autoFilter = { from: 'A6', to: 'P6' };
+  // Enable Excel Auto-Filter on Table Headers (A6:T6)
+  ws.autoFilter = { from: 'A6', to: 'T6' };
 
   // Section 3: Data Mapping & Population (Rows 7+)
   let currentRowIndex = 7;
@@ -356,23 +388,39 @@ export async function generateMentorMenteesExcel(
     const stuProgress = progressMap.get(sId) || [];
     const stuStudentProgress = studentProgressMap.get(sId) || [];
 
-    // 1. ALL CLEAR Calculation
+    // 1. Arrear status — canonical vocabulary shared with UI/PDF/dashboard.
     const arrearStats = calculateArrearStatistics(
       stuAcademics,
       student.clearedSubjects || [],
       student.arrearHistory || []
     );
 
-    let allClearDisplay = 'ALL CLEAR';
-    if (arrearStats.activeArrearsCount > 0) {
-      allClearDisplay = `${arrearStats.activeArrearsCount} ${arrearStats.activeArrearsCount === 1 ? 'ARREAR' : 'ARREARS'}`;
-    }
+    // Exactly "Clear" or "Active Arrear" — the same vocabulary used by the UI,
+    // the PDF and the dashboard. Legacy "ALL CLEAR" / "N ARREARS" is never emitted.
+    const arrearStatusValue = arrearStats.statusLabel;
 
-    // 2. Class & Section
-    const yr = student.year ? (romanYears[student.year] || String(student.year)) : 'III';
+    // 1b. Latest CGPA / SGPA from the stored AcademicRecord (never recomputed,
+    // and SGPA never falls back to CGPA).
+    const orderedAcademics = [...stuAcademics].sort(
+      (a: any, b: any) => Number(a.semesterNumber || 0) - Number(b.semesterNumber || 0)
+    );
+    const latestRecord = orderedAcademics.length > 0 ? orderedAcademics[orderedAcademics.length - 1] : null;
+    const latestCgpa = latestRecord && Number(latestRecord.cgpa) > 0 ? Number(latestRecord.cgpa) : null;
+    const latestSgpa = latestRecord && Number(latestRecord.sgpa) > 0 ? Number(latestRecord.sgpa) : null;
+
+    // 2. Class & Section — uses the stored Year, falling back to the batch-derived
+    // value only when the stored Year is missing.
+    const currentYear = new Date().getFullYear();
+    const batchStartYear = (student.batch as any)?.startYear || currentYear;
+    const derivedYear = Math.min(4, Math.max(1, currentYear - batchStartYear + 1));
+    const effectiveYear = student.year || derivedYear;
+    const yr = romanYears[effectiveYear] || String(effectiveYear);
     const deptCode = (student.department as any)?.code || (faculty?.department as any)?.code || 'IT';
+    const deptName = (student.department as any)?.name || (faculty?.department as any)?.name || departmentName;
     const section = student.section || 'A';
     const classSection = `${yr} ${deptCode} ${section}`.trim();
+    const departmentDisplay = deptName || deptCode;
+    const emailDisplay = (student.email || '').toString().trim() || 'N/A';
 
     // 3. NPTEL Completed (Prioritize StudentProgress collection)
     const nptelProgress = getProgressCategoryEntries(stuStudentProgress, 'NPTEL Certificate');
@@ -640,24 +688,27 @@ export async function generateMentorMenteesExcel(
     const rowMentorName = mentorMapping ? mentorMapping.mentorName : mentorName;
     const rowStudentSNo = mentorMapping ? mentorMapping.studentSNo : index + 1;
 
-    const rowValues = [
-      rowMentorSNo, // Mentor S.No
-      rowMentorName, // Mentor Name
-      rowStudentSNo, // Student S.No (1, 2, 3...)
-      String(student.registerNumber), // Text format preserved
-      student.fullName,
-      classSection,
-      safeNil(nptelValue),
-      safeNil(globalCertValue),
-      allClearDisplay,
-      safeNil(placementValue),
-      safeNil(hackathonValue),
-      safeNil(symposiumValue),
-      safeNil(otherStateValue),
-      safeNil(extensionValue),
-      safeNil(extraCurricularValue),
-      safeNil(awardValue),
-    ];
+    const rowValues: (string | number | null)[] = new Array(columns.length).fill('');
+    rowValues[COL.mentorSNo] = rowMentorSNo;                                  // Mentor S.No
+    rowValues[COL.mentorName] = rowMentorName;                                // Mentor Name
+    rowValues[COL.studentSNo] = rowStudentSNo;                                // Student S.No
+    rowValues[COL.regNumber] = String(student.registerNumber);                // Text format preserved
+    rowValues[COL.studentName] = student.fullName;
+    rowValues[COL.email] = emailDisplay;
+    rowValues[COL.department] = departmentDisplay;
+    rowValues[COL.classSection] = classSection;
+    rowValues[COL.cgpa] = latestCgpa !== null ? Number(latestCgpa.toFixed(2)) : 'N/A';
+    rowValues[COL.sgpa] = latestSgpa !== null ? Number(latestSgpa.toFixed(2)) : 'N/A';
+    rowValues[COL.arrearStatus] = arrearStatusValue;
+    rowValues[COL.nptel] = safeNil(nptelValue);
+    rowValues[COL.globalCert] = safeNil(globalCertValue);
+    rowValues[COL.finalYearPlaced] = safeNil(placementValue);
+    rowValues[COL.hackathon] = safeNil(hackathonValue);
+    rowValues[COL.symposium] = safeNil(symposiumValue);
+    rowValues[COL.otherState] = safeNil(otherStateValue);
+    rowValues[COL.extension] = safeNil(extensionValue);
+    rowValues[COL.extraCurricular] = safeNil(extraCurricularValue);
+    rowValues[COL.award] = safeNil(awardValue);
 
     rowValues.forEach((val, cIndex) => {
       const cell = dataRow.getCell(cIndex + 1);
@@ -665,22 +716,35 @@ export async function generateMentorMenteesExcel(
       cell.font = { name: 'Calibri', size: 9.5 };
 
       // Explicit string format for Register Number to prevent numeric scientific notation
-      if (cIndex === 3) {
+      if (cIndex === COL.regNumber) {
         cell.numFmt = '@';
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
-      } else if (cIndex === 0 || cIndex === 2 || cIndex === 5) {
+      } else if (cIndex === COL.email) {
+        // Emails must stay text so Excel never mangles them.
+        cell.numFmt = '@';
+        cell.alignment = { vertical: 'middle', horizontal: 'left' };
+      } else if (
+        cIndex === COL.mentorSNo ||
+        cIndex === COL.studentSNo ||
+        cIndex === COL.classSection
+      ) {
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
-      } else if (cIndex === 8) {
-        // ALL CLEAR Column Highlighting
+      } else if (cIndex === COL.cgpa || cIndex === COL.sgpa) {
+        // CGPA/SGPA must always render with two decimals (8.1 -> 8.10) so the
+        // institutional report matches the marksheet.
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
-        if (val === 'ALL CLEAR') {
+        if (typeof val === 'number') cell.numFmt = '0.00';
+      } else if (cIndex === COL.arrearStatus) {
+        // Canonical arrear status highlighting.
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        if (val === 'Clear') {
           cell.font = { name: 'Calibri', size: 9.5, bold: true, color: { argb: 'FF059669' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFECFDF5' } };
         } else {
           cell.font = { name: 'Calibri', size: 9.5, bold: true, color: { argb: 'FFDC2626' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF2F2' } };
         }
-      } else if (cIndex === 9) {
+      } else if (cIndex === COL.finalYearPlaced) {
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
         if (typeof val === 'string' && val.includes('PLACED') && !val.includes('NOT')) {
           cell.font = { name: 'Calibri', size: 9.5, bold: true, color: { argb: 'FF0D9488' } };
@@ -690,7 +754,7 @@ export async function generateMentorMenteesExcel(
       }
 
       // Zebra striping for non-highlighted cells
-      if (cIndex !== 8) {
+      if (cIndex !== COL.arrearStatus) {
         if (index % 2 === 1) {
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA_ROW_FILL } };
         }
