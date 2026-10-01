@@ -23,11 +23,16 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
         setShowNotifications(false);
       }
     };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowNotifications(false);
+    };
     if (showNotifications) {
       document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleEscape);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
     };
   }, [showNotifications]);
 
@@ -47,6 +52,16 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
     }
   };
 
+  const getRoleLabel = (role?: string) => {
+    switch (role) {
+      case 'ADMIN': return 'Administrator';
+      case 'HOD': return 'Head of Department';
+      case 'FACULTY': return 'Faculty Mentor';
+      case 'STUDENT': return 'Student';
+      default: return role || 'User';
+    }
+  };
+
   return (
     <header className="ksrce-header">
       <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -54,17 +69,21 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
           <button
             onClick={onToggleSidebar}
             className="btn-hamburger"
-            aria-label="Toggle Navigation Drawer"
+            aria-label={isSidebarOpen ? 'Close navigation drawer' : 'Open navigation drawer'}
+            aria-expanded={isSidebarOpen}
+            aria-controls="primary-sidebar"
             style={{
               background: 'rgba(255, 255, 255, 0.12)',
               border: 'none',
-              borderRadius: '8px',
+              borderRadius: 'var(--radius-md)',
               padding: '0.45rem',
               color: '#ffffff',
               alignItems: 'center',
               justifyContent: 'center',
               cursor: 'pointer',
-              marginRight: '0.75rem',
+              marginRight: 'var(--space-3)',
+              minHeight: 'var(--touch-target)',
+              minWidth: 'var(--touch-target)',
             }}
           >
             {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
@@ -74,7 +93,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
         <div className="ksrce-brand">
           <img
             src="/ksrce-logo.png"
-            alt="K.S.R. College of Engineering"
+            alt="K.S.R. College of Engineering official logo"
             className="ksrce-logo-img"
           />
           <div className="ksrce-brand-text desktop-only">
@@ -95,19 +114,18 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
             onClick={promptInstall}
             className="btn-download-app desktop-only"
             style={{
-              background: 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: '8px',
+              background: 'var(--gold-500)',
+              color: 'var(--primary-900)',
+              border: '1px solid var(--gold-600)',
+              borderRadius: 'var(--radius-md)',
               padding: '0.42rem 0.85rem',
               display: 'flex',
               alignItems: 'center',
               gap: '0.4rem',
               fontWeight: 700,
-              fontSize: '0.78rem',
+              fontSize: 'var(--text-sm)',
               cursor: 'pointer',
-              boxShadow: '0 2px 6px rgba(217, 119, 6, 0.35)',
-              transition: 'all 0.15s ease',
+              transition: 'all var(--motion-fast) var(--ease-standard)',
             }}
             title="Download & Install KSRCE Web App"
           >
@@ -119,14 +137,14 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
             className="badge-app-installed"
             style={{
               backgroundColor: 'rgba(16, 185, 129, 0.18)',
-              color: '#34D399',
-              border: '1px solid rgba(52, 211, 153, 0.4)',
-              borderRadius: '8px',
+              color: '#6EE7B7',
+              border: '1px solid rgba(110, 231, 183, 0.4)',
+              borderRadius: 'var(--radius-md)',
               padding: '0.38rem 0.65rem',
               display: 'flex',
               alignItems: 'center',
               gap: '0.35rem',
-              fontSize: '0.74rem',
+              fontSize: 'var(--text-sm)',
               fontWeight: 700,
             }}
             title="KSRCE Mentoring App is installed"
@@ -140,16 +158,23 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
         <div ref={dropdownRef} style={{ position: 'relative' }}>
           <button
             onClick={() => setShowNotifications(!showNotifications)}
+            aria-label={`Institutional notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ', none unread'}`}
+            aria-expanded={showNotifications}
+            aria-haspopup="true"
             style={{
               background: 'rgba(255, 255, 255, 0.1)',
               border: 'none',
-              borderRadius: '8px',
+              borderRadius: 'var(--radius-md)',
               padding: '0.5rem',
               color: '#ffffff',
               display: 'flex',
               alignItems: 'center',
               position: 'relative',
               cursor: 'pointer',
+              minHeight: 'var(--touch-target)',
+              minWidth: 'var(--touch-target)',
+              justifyContent: 'center',
+              transition: 'background var(--motion-fast) var(--ease-standard)',
             }}
             title="Institutional Notifications"
           >
@@ -178,6 +203,8 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
           {showNotifications && (
             <div
               className="notification-dropdown"
+              role="dialog"
+              aria-label="Institutional notifications"
               style={{
                 position: 'absolute',
                 right: 0,
@@ -185,11 +212,11 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
                 width: '340px',
                 maxWidth: 'calc(100vw - 24px)',
                 backgroundColor: '#ffffff',
-                borderRadius: '12px',
-                boxShadow: '0 10px 25px rgba(0,0,0,0.15)',
-                border: '1px solid #E2E8F0',
-                zIndex: 1000,
-                color: '#1E293B',
+                borderRadius: 'var(--radius-lg)',
+                boxShadow: 'var(--shadow-xl)',
+                border: '1px solid var(--slate-200)',
+                zIndex: 'var(--z-drawer)',
+                color: 'var(--slate-800)',
                 overflow: 'hidden',
               }}
             >
@@ -208,16 +235,19 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
                 </span>
                 {unreadCount > 0 && (
                   <button
+                    type="button"
                     onClick={() => markAsRead('all')}
                     style={{
                       background: 'transparent',
-                      color: '#1D4ED8',
-                      fontSize: '0.75rem',
+                      color: 'var(--primary-600)',
+                      fontSize: 'var(--text-sm)',
                       fontWeight: 600,
                       display: 'flex',
                       alignItems: 'center',
                       gap: '0.25rem',
                       cursor: 'pointer',
+                      padding: '0.25rem 0.4rem',
+                      borderRadius: 'var(--radius-sm)',
                     }}
                   >
                     <CheckCheck size={14} /> Mark all read
@@ -227,32 +257,51 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
 
               <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
                 {notifications.length === 0 ? (
-                  <div style={{ padding: '1.5rem', textAlign: 'center', color: '#64748B', fontSize: '0.85rem' }}>
+                  <div
+                    style={{
+                      padding: '1.75rem 1.5rem',
+                      textAlign: 'center',
+                      color: 'var(--slate-500)',
+                      fontSize: 'var(--text-base)',
+                    }}
+                  >
                     No new notifications.
                   </div>
                 ) : (
                   notifications.map((n) => (
-                    <div
+                    <button
+                      type="button"
                       key={n.id}
                       onClick={() => markAsRead(n.id)}
                       style={{
+                        width: '100%',
+                        textAlign: 'left',
                         padding: '0.75rem 1rem',
-                        borderBottom: '1px solid #F1F5F9',
-                        backgroundColor: n.is_read ? '#ffffff' : '#EFF6FF',
+                        borderBottom: '1px solid var(--slate-100)',
+                        borderLeft: n.is_read ? '3px solid transparent' : '3px solid var(--gold-500)',
+                        backgroundColor: n.is_read ? '#ffffff' : 'var(--primary-50)',
                         cursor: 'pointer',
-                        transition: 'background 0.15s ease',
+                        transition: 'background var(--motion-fast) var(--ease-standard)',
                       }}
                     >
-                      <div style={{ fontWeight: 600, fontSize: '0.8rem', color: '#0F172A', marginBottom: '2px' }}>
+                      <div
+                        style={{
+                          fontWeight: n.is_read ? 500 : 700,
+                          fontSize: 'var(--text-sm)',
+                          color: 'var(--slate-900)',
+                          marginBottom: '2px',
+                        }}
+                      >
                         {n.title}
+                        {!n.is_read && <span className="sr-only"> (unread)</span>}
                       </div>
-                      <div style={{ fontSize: '0.75rem', color: '#475569', lineHeight: 1.4 }}>
+                      <div style={{ fontSize: 'var(--text-sm)', color: 'var(--slate-600)', lineHeight: 1.45 }}>
                         {n.message}
                       </div>
-                      <div style={{ fontSize: '0.68rem', color: '#94A3B8', marginTop: '4px' }}>
+                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--slate-400)', marginTop: '4px' }}>
                         {new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </div>
-                    </div>
+                    </button>
                   ))
                 )}
               </div>
@@ -261,17 +310,17 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
         </div>
 
         {/* User Profile Info - Desktop Only */}
-        <div className="desktop-only" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <div className="desktop-only" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
           <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#ffffff' }}>
+            <div style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: '#ffffff' }}>
               {user?.fullName?.includes('Balasubramanian') ? 'System admin' : (user?.fullName || 'System admin')}
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.4rem', marginTop: '2px' }}>
-              <span className={`badge ${getRoleBadgeClass(user?.role)}`} style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem' }}>
-                {user?.role}
+              <span className={`badge ${getRoleBadgeClass(user?.role)}`} style={{ fontSize: 'var(--text-xs)', padding: '0.1rem 0.45rem' }}>
+                {getRoleLabel(user?.role)}
               </span>
               {user?.dept_code && (
-                <span className="badge badge-info" style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem' }}>
+                <span className="badge badge-info" style={{ fontSize: 'var(--text-xs)', padding: '0.1rem 0.45rem' }}>
                   {user.dept_code}
                 </span>
               )}
@@ -279,14 +328,17 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
           </div>
 
           <button
+            type="button"
             onClick={logout}
-            className="btn btn-secondary btn-sm"
+            className="btn btn-sm"
             style={{
               background: 'rgba(255, 255, 255, 0.15)',
               color: '#ffffff',
-              border: 'none',
+              border: '1px solid rgba(255, 255, 255, 0.3)',
               padding: '0.45rem 0.75rem',
             }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.24)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)'; }}
             title="Sign out of institutional portal"
           >
             <LogOut size={16} /> Logout

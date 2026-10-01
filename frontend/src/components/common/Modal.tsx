@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 
 interface ModalProps {
@@ -22,6 +22,8 @@ export const Modal: React.FC<ModalProps> = ({
   onSubmit,
   formId,
 }) => {
+  const contentRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -36,6 +38,13 @@ export const Modal: React.FC<ModalProps> = ({
     };
   }, [isOpen, onClose]);
 
+  // Move focus into the dialog when it opens so keyboard users are not stranded behind the overlay.
+  useEffect(() => {
+    if (isOpen && contentRef.current) {
+      contentRef.current.focus();
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const ContentTag = onSubmit ? 'form' : 'div';
@@ -45,12 +54,17 @@ export const Modal: React.FC<ModalProps> = ({
       <ContentTag
         id={formId}
         className="modal-content"
+        ref={contentRef as React.RefObject<never>}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        tabIndex={-1}
         style={{ maxWidth }}
         onSubmit={onSubmit}
         onClick={(e: React.MouseEvent) => e.stopPropagation()}
       >
         <div className="modal-header">
-          <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, color: '#0B2545' }}>
+          <h3 style={{ margin: 0, fontSize: 'var(--text-xl)', fontWeight: 700, color: 'var(--primary-800)' }}>
             {title}
           </h3>
           <button
@@ -60,13 +74,19 @@ export const Modal: React.FC<ModalProps> = ({
               background: 'transparent',
               border: 'none',
               cursor: 'pointer',
-              color: '#64748B',
+              color: 'var(--slate-500)',
               display: 'flex',
-              padding: '6px',
-              borderRadius: '6px',
-              transition: 'background-color 0.15s',
+              padding: '0.4rem',
+              borderRadius: 'var(--radius-sm)',
+              minHeight: 'var(--touch-target)',
+              minWidth: 'var(--touch-target)',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'background-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard)',
             }}
-            aria-label="Close modal"
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--slate-100)'; e.currentTarget.style.color = 'var(--slate-800)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--slate-500)'; }}
+            aria-label={`Close ${title}`}
           >
             <X size={20} />
           </button>

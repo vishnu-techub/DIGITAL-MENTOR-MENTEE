@@ -3,12 +3,10 @@ import { api } from '../../api/client';
 import { useToast } from '../../context/ToastContext';
 import {
   Bot,
-  Sparkles,
   Send,
   Copy,
   Check,
   X,
-  HelpCircle,
   MessageSquare,
   BookOpen,
   RefreshCw,
@@ -45,17 +43,41 @@ export const MentorAiBotModal: React.FC<MentorAiBotModalProps> = ({ isOpen, onCl
     {
       id: 'welcome',
       sender: 'ai',
-      text: `Hello Professor! I am your Mentor Advisory AI Assistant.
+      text: `Welcome, Professor. I am your Mentor Advisory AI Assistant.
 
-You can ask me questions regarding student mentorship, study strategies, communication improvement activities, arrear remediation plans, and meeting agendas.
+Ask me about student mentorship, study strategies, communication improvement activities, arrear remediation plans, and meeting agendas.
 
-Every response includes a [Copy] button so you can copy advice to your clipboard.
+Every response includes a Copy button so you can reuse the advice anywhere.
 
-Note: My answers are for your reference only and are NOT automatically added to any student counselling record.`,
+Important: answers are for your reference only and are never written to a student counselling record automatically.`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const ledgerRef = React.useRef<HTMLDivElement>(null);
+
+  // Close on Escape and keep focus inside the dialog while it is open.
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    document.body.style.overflow = 'hidden';
+    inputRef.current?.focus();
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = 'auto';
+    };
+  }, [isOpen, onClose]);
+
+  // Keep the newest message in view as the conversation grows.
+  React.useEffect(() => {
+    if (ledgerRef.current) {
+      ledgerRef.current.scrollTop = ledgerRef.current.scrollHeight;
+    }
+  }, [messages, loading]);
 
   if (!isOpen) return null;
 
@@ -127,7 +149,7 @@ Note: My answers are for your reference only and are NOT automatically added to 
       }
 
       setCopiedId(msgId);
-      toast.success('✓ Copied to clipboard');
+      toast.success('Copied to clipboard');
       setTimeout(() => {
         setCopiedId(null);
       }, 2500);
@@ -138,68 +160,71 @@ Note: My answers are for your reference only and are NOT automatically added to 
 
   return (
     <div
-      role="dialog"
-      aria-modal="true"
+      className="modal-overlay mentor-ai-bot-modal-overlay"
       style={{
-        position: 'fixed',
-        inset: 0,
-        backgroundColor: 'rgba(11, 37, 69, 0.75)',
-        backdropFilter: 'blur(5px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 100000,
-        padding: '1rem',
+        backgroundColor: 'rgba(7, 21, 38, 0.72)',
+        zIndex: 'var(--z-modal)',
       }}
     >
       <div
-        className="card mentor-ai-bot-modal"
+        className="mentor-ai-bot-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mentor-ai-modal-title"
         style={{
           width: '100%',
           maxWidth: '780px',
           maxHeight: '90vh',
-          backgroundColor: '#ffffff',
-          borderRadius: '16px',
+          backgroundColor: 'var(--slate-50)',
+          borderRadius: 'var(--radius-lg)',
           display: 'flex',
           flexDirection: 'column',
-          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)',
-          border: '1px solid #CBD5E1',
+          boxShadow: 'var(--shadow-xl)',
+          border: '1px solid var(--slate-300)',
           overflow: 'hidden',
-          animation: 'fadeInScale 0.2s ease-out',
+          animation: 'scaleUp var(--motion-base) var(--ease-standard)',
         }}
       >
         {/* Header */}
         <div
           style={{
-            padding: '1.25rem 1.5rem',
-            backgroundColor: '#0B2545',
+            padding: 'var(--space-4) var(--space-6)',
+            backgroundColor: 'var(--primary-800)',
             color: '#ffffff',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            borderBottom: '3px solid #C59B27',
+            gap: 'var(--space-3)',
+            borderBottom: '3px solid var(--gold-500)',
+            flexShrink: 0,
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', minWidth: 0 }}>
             <div
+              aria-hidden="true"
               style={{
-                width: '36px',
-                height: '36px',
-                borderRadius: '8px',
+                width: '40px',
+                height: '40px',
+                borderRadius: 'var(--radius-md)',
                 backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                border: '1px solid rgba(212, 175, 55, 0.45)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
+                flexShrink: 0,
               }}
             >
-              <Bot size={22} color="#FDE047" />
+              <Bot size={22} color="var(--gold-400)" />
             </div>
-            <div>
-              <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, color: '#ffffff' }}>
+            <div style={{ minWidth: 0 }}>
+              <h3
+                id="mentor-ai-modal-title"
+                style={{ margin: 0, fontSize: 'var(--text-lg)', fontWeight: 700, color: '#ffffff' }}
+              >
                 Mentor AI Advisory Assistant
               </h3>
-              <div style={{ fontSize: '0.74rem', color: '#CBD5E1', marginTop: '2px' }}>
-                Separate Faculty Consultation Advisor • Q&A & Advice Copier
+              <div style={{ fontSize: 'var(--text-sm)', color: 'var(--gold-400)', marginTop: '2px', fontWeight: 500 }}>
+                Advisory only — never saved to student records
               </div>
             </div>
           </div>
@@ -207,18 +232,24 @@ Note: My answers are for your reference only and are NOT automatically added to 
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label="Close Mentor AI Advisory Assistant"
             style={{
               background: 'transparent',
               border: 'none',
               color: '#ffffff',
               cursor: 'pointer',
               padding: '0.4rem',
-              borderRadius: '6px',
+              borderRadius: 'var(--radius-sm)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              minHeight: 'var(--touch-target)',
+              minWidth: 'var(--touch-target)',
+              flexShrink: 0,
+              transition: 'background var(--motion-fast) var(--ease-standard)',
             }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
           >
             <X size={20} />
           </button>
@@ -227,32 +258,34 @@ Note: My answers are for your reference only and are NOT automatically added to 
         {/* Advisory Safeguard Banner */}
         <div
           style={{
-            padding: '0.6rem 1.25rem',
-            backgroundColor: '#FEF3C7',
-            borderBottom: '1px solid #FDE68A',
-            fontSize: '0.76rem',
+            padding: 'var(--space-3) var(--space-6)',
+            backgroundColor: 'var(--gold-50)',
+            borderBottom: '1px solid var(--gold-100)',
+            fontSize: 'var(--text-sm)',
             color: '#92400E',
             display: 'flex',
-            alignItems: 'center',
-            gap: '0.5rem',
+            alignItems: 'flex-start',
+            gap: 'var(--space-2)',
+            flexShrink: 0,
           }}
         >
-          <Lightbulb size={16} color="#D97706" style={{ flexShrink: 0 }} />
+          <Lightbulb size={16} color="var(--gold-600)" style={{ flexShrink: 0, marginTop: 2 }} />
           <span>
-            <strong>Separate Advisor:</strong> Content is generated for mentor guidance. Click <strong>[Copy]</strong> to copy any recommendation. AI will never automatically insert or save anything to student records.
+            <strong>Advisory only:</strong> Responses are generated for your guidance. Use <strong>Copy Answer</strong> to reuse a recommendation. Nothing is ever inserted or saved into a student record.
           </span>
         </div>
 
-        {/* Quick Suggestion Pills */}
+        {/* Quick Suggestion Chips */}
         <div
           style={{
-            padding: '0.75rem 1.25rem',
-            backgroundColor: '#F8FAFC',
-            borderBottom: '1px solid #E2E8F0',
+            padding: 'var(--space-3) var(--space-6)',
+            backgroundColor: '#ffffff',
+            borderBottom: '1px solid var(--slate-200)',
             overflowX: 'auto',
             display: 'flex',
-            gap: '0.5rem',
+            gap: 'var(--space-2)',
             scrollbarWidth: 'none',
+            flexShrink: 0,
           }}
         >
           {SAMPLE_QUESTIONS.map((q, idx) => (
@@ -265,31 +298,35 @@ Note: My answers are for your reference only and are NOT automatically added to 
               style={{
                 whiteSpace: 'nowrap',
                 backgroundColor: '#ffffff',
-                border: '1px solid #CBD5E1',
+                border: '1px solid var(--slate-300)',
                 borderRadius: '9999px',
                 padding: '0.35rem 0.85rem',
-                fontSize: '0.75rem',
+                fontSize: 'var(--text-sm)',
                 fontWeight: 600,
-                color: '#334155',
+                color: 'var(--slate-700)',
                 cursor: 'pointer',
-                transition: 'all 0.15s ease',
               }}
             >
-              💬 {q}
+              <MessageSquare size={13} aria-hidden="true" />
+              <span>{q}</span>
             </button>
           ))}
         </div>
 
-        {/* Message Ledger */}
+        {/* Conversation */}
         <div
+          ref={ledgerRef}
+          role="log"
+          aria-live="polite"
+          aria-label="Advisor conversation"
           style={{
             flex: 1,
             overflowY: 'auto',
-            padding: '1.25rem',
+            padding: 'var(--space-5) var(--space-6)',
             display: 'flex',
             flexDirection: 'column',
-            gap: '1rem',
-            backgroundColor: '#F1F5F9',
+            gap: 'var(--space-4)',
+            backgroundColor: 'var(--slate-100)',
           }}
         >
           {messages.map((m) => {
@@ -308,81 +345,60 @@ Note: My answers are for your reference only and are NOT automatically added to 
                 <div
                   style={{
                     maxWidth: '88%',
-                    backgroundColor: isUser ? '#0B2545' : '#ffffff',
-                    color: isUser ? '#ffffff' : '#1E293B',
-                    borderRadius: isUser ? '16px 16px 2px 16px' : '16px 16px 16px 2px',
-                    padding: '1rem 1.25rem',
-                    boxShadow: '0 2px 6px rgba(0, 0, 0, 0.06)',
-                    border: isUser ? 'none' : '1px solid #E2E8F0',
+                    backgroundColor: isUser ? 'var(--primary-800)' : '#ffffff',
+                    color: isUser ? '#ffffff' : 'var(--slate-800)',
+                    borderRadius: isUser ? 'var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg)' : 'var(--radius-lg) var(--radius-lg) var(--radius-lg) var(--radius-sm)',
+                    padding: 'var(--space-4) var(--space-5)',
+                    boxShadow: 'var(--shadow-sm)',
+                    border: isUser ? '1px solid var(--primary-700)' : '1px solid var(--slate-200)',
+                    minWidth: 0,
                   }}
                 >
-                  {/* Topic Badge if AI */}
+                  {/* Topic badge for AI answers */}
                   {!isUser && m.topic && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                      <span
-                        style={{
-                          fontSize: '0.72rem',
-                          fontWeight: 800,
-                          textTransform: 'uppercase',
-                          color: '#1D4ED8',
-                          backgroundColor: '#EFF6FF',
-                          padding: '2px 8px',
-                          borderRadius: '4px',
-                        }}
-                      >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.6rem' }}>
+                      <span className="badge badge-info" style={{ fontSize: 'var(--text-xs)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                        <BookOpen size={12} aria-hidden="true" />
                         {m.topic}
                       </span>
                     </div>
                   )}
 
-                  {/* Body text with whitespace preserve */}
-                  <div style={{ fontSize: '0.88rem', lineHeight: 1.6, whiteSpace: 'pre-line' }}>
+                  <div style={{ fontSize: 'var(--text-base)', lineHeight: 1.65, whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>
                     {m.text}
                   </div>
 
-                  {/* Copy Button for AI Responses */}
                   {!isUser && m.id !== 'welcome' && (
                     <div
                       style={{
-                        marginTop: '0.85rem',
-                        paddingTop: '0.65rem',
-                        borderTop: '1px solid #F1F5F9',
+                        marginTop: 'var(--space-3)',
+                        paddingTop: 'var(--space-3)',
+                        borderTop: '1px solid var(--slate-100)',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
+                        gap: 'var(--space-3)',
+                        flexWrap: 'wrap',
                       }}
                     >
                       <button
                         type="button"
                         onClick={() => handleCopyText(m.text, m.id)}
-                        className="btn btn-sm"
-                        style={{
-                          backgroundColor: isCopied ? '#DCFCE7' : '#F8FAFC',
-                          color: isCopied ? '#15803D' : '#0B2545',
-                          border: `1px solid ${isCopied ? '#86EFAC' : '#CBD5E1'}`,
-                          padding: '0.35rem 0.85rem',
-                          borderRadius: '6px',
-                          fontWeight: 700,
-                          fontSize: '0.78rem',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '0.35rem',
-                          cursor: 'pointer',
-                        }}
-                        title="Copy complete AI response to clipboard"
+                        className={`btn btn-sm ${isCopied ? 'btn-success' : 'btn-secondary'}`}
+                        aria-label={isCopied ? 'Response copied to clipboard' : 'Copy this response to clipboard'}
                       >
                         {isCopied ? (
                           <>
-                            <Check size={14} color="#15803D" /> ✓ Copied to clipboard
+                            <Check size={14} aria-hidden="true" /> Copied
                           </>
                         ) : (
                           <>
-                            <Copy size={14} /> Copy Answer
+                            <Copy size={14} aria-hidden="true" /> Copy Answer
                           </>
                         )}
                       </button>
 
-                      <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>{m.timestamp}</span>
+                      <span style={{ fontSize: 'var(--text-xs)', color: 'var(--slate-400)' }}>{m.timestamp}</span>
                     </div>
                   )}
                 </div>
@@ -391,9 +407,9 @@ Note: My answers are for your reference only and are NOT automatically added to 
           })}
 
           {loading && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#64748B', fontSize: '0.85rem', padding: '0.5rem' }}>
-              <RefreshCw size={16} className="spin" />
-              <span>Consulting Mentor AI Advisory Engine...</span>
+            <div role="status" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--slate-600)', fontSize: 'var(--text-base)', padding: '0.5rem' }}>
+              <RefreshCw size={16} className="spin" aria-hidden="true" />
+              <span>Consulting the Mentor AI Advisory engine…</span>
             </div>
           )}
         </div>
@@ -405,43 +421,33 @@ Note: My answers are for your reference only and are NOT automatically added to 
             handleAsk();
           }}
           style={{
-            padding: '1rem 1.25rem',
+            padding: 'var(--space-4) var(--space-6)',
             backgroundColor: '#ffffff',
-            borderTop: '1px solid #E2E8F0',
+            borderTop: '1px solid var(--slate-200)',
             display: 'flex',
-            gap: '0.6rem',
+            gap: 'var(--space-3)',
             alignItems: 'center',
+            flexShrink: 0,
           }}
         >
           <input
+            ref={inputRef}
             type="text"
             className="form-control"
-            placeholder="Type your mentoring question or select a topic above..."
+            aria-label="Ask the Mentor AI Advisory Assistant a question"
+            placeholder="Ask a mentoring question or pick a topic above…"
             value={inputQuestion}
             onChange={(e) => setInputQuestion(e.target.value)}
             disabled={loading}
-            style={{
-              flex: 1,
-              padding: '0.65rem 1rem',
-              fontSize: '0.9rem',
-              borderRadius: '10px',
-            }}
+            style={{ flex: 1, fontSize: 'var(--text-base)' }}
           />
           <button
             type="submit"
             disabled={loading || !inputQuestion.trim()}
             className="btn btn-primary"
-            style={{
-              padding: '0.65rem 1.25rem',
-              fontWeight: 700,
-              fontSize: '0.88rem',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '0.4rem',
-              minHeight: '44px',
-            }}
+            aria-label="Send question to Mentor AI Advisory Assistant"
           >
-            <Send size={16} /> Send
+            <Send size={16} aria-hidden="true" /> Send
           </button>
         </form>
       </div>

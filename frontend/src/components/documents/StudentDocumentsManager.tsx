@@ -3,6 +3,7 @@ import { api } from '../../api/client';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
 import { Modal } from '../common/Modal';
+import { EmptyState } from '../common/EmptyState';
 import {
   FileText,
   Upload,
@@ -536,33 +537,29 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
 
       {/* Empty State */}
       {!loading && filteredDocs.length === 0 && (
-        <div
-          className="card"
-          style={{
-            textAlign: 'center',
-            padding: '3rem 1.5rem',
-            border: '2px dashed #CBD5E1',
-            backgroundColor: '#F8FAFC',
-            borderRadius: '12px',
-          }}
-        >
-          <Award size={48} style={{ color: '#94A3B8', margin: '0 auto 1rem' }} />
-          <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#1E293B', marginBottom: '0.25rem' }}>
-            {documents.length === 0 ? 'No documents uploaded.' : 'No documents found in this section.'}
-          </h3>
-          <p style={{ fontSize: '0.825rem', color: '#64748B', maxWidth: '420px', margin: '0 auto 1.25rem' }}>
-            {activeFilter === 'FORM'
+        <EmptyState
+          compact
+          icon={<Award size={26} aria-hidden="true" />}
+          title={documents.length === 0 ? 'No documents uploaded' : 'No documents found in this section'}
+          description={
+            activeFilter === 'FORM'
               ? 'The Student Details Form PDF will automatically generate and attach here when the student submits or updates their profile details.'
               : isStudent
               ? 'Upload your symposium, hackathon, workshop, NPTEL, and internship certificates to maintain your institutional credentials.'
-              : 'This student has not uploaded any certificates or documents yet.'}
-          </p>
-          {!readOnly && activeFilter !== 'FORM' && (
-            <button className="btn btn-primary btn-sm" onClick={() => setShowUploadModal(true)}>
-              <Upload size={14} /> Upload Certificate
-            </button>
-          )}
-        </div>
+              : 'This student has not uploaded any certificates or documents yet.'
+          }
+          action={
+            !readOnly && activeFilter !== 'FORM' ? (
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setShowUploadModal(true)}
+              >
+                <Upload size={16} aria-hidden="true" /> Upload Certificate
+              </button>
+            ) : undefined
+          }
+        />
       )}
 
       {/* Mobile-Responsive Document Cards (No wide table, no horizontal scrolling) */}
@@ -660,7 +657,7 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
                           gap: '4px',
                         }}
                       >
-                        {isPrimaryForm && <ShieldCheck size={12} style={{ color: '#C59B27' }} />}
+                        {isPrimaryForm && <ShieldCheck size={12} color="var(--gold-400)" aria-hidden="true" />}
                         Type: {docTypeLabel}
                       </span>
                     </div>
@@ -669,9 +666,9 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
                     {isPrimaryForm ? (
                       <span
                         className="badge badge-success"
-                        style={{ fontSize: '0.7rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                        style={{ fontSize: 'var(--text-xs)', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
                       >
-                        <CheckCircle size={11} /> Official
+                        <CheckCircle size={12} aria-hidden="true" /> Official
                       </span>
                     ) : (
                       <span
@@ -682,11 +679,11 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
                             ? 'badge-danger'
                             : 'badge-warning'
                         }`}
-                        style={{ fontSize: '0.7rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                        style={{ fontSize: 'var(--text-xs)', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
                       >
-                        {isVerified && <CheckCircle size={11} />}
-                        {isRejected && <XCircle size={11} />}
-                        {!isVerified && !isRejected && <Clock size={11} />}
+                        {isVerified && <CheckCircle size={12} aria-hidden="true" />}
+                        {isRejected && <XCircle size={12} aria-hidden="true" />}
+                        {!isVerified && !isRejected && <Clock size={12} aria-hidden="true" />}
                         {doc.verificationStatus || 'Pending'}
                       </span>
                     )}
@@ -744,7 +741,7 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#64748B' }}>
-                      <Calendar size={13} />
+                      <Calendar size={13} aria-hidden="true" />
                       <span>
                         Uploaded: <strong>{formattedDate}</strong>
                       </span>

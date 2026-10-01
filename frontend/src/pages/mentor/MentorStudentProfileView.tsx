@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { api, ApiError } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -28,8 +28,8 @@ import {
   AlertCircle,
   Plus,
   CheckCircle2,
+  AlertTriangle,
   Clock,
-  Sparkles,
   Bot,
   FileCheck,
   Send,
@@ -582,20 +582,20 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
 
   // Distinct tabs list (Section 3)
   const TABS: { id: MentorProfileTab; label: string; icon: React.ReactNode }[] = [
-    { id: 'overview', label: '1. Overview', icon: <Layers size={16} /> },
-    { id: 'personal', label: '2. Personal Details', icon: <User size={16} /> },
-    { id: 'academic', label: '3. Academic Details', icon: <GraduationCap size={16} /> },
-    { id: 'parent', label: '4. Parent Details', icon: <Home size={16} /> },
-    { id: 'mentor', label: '5. Mentor History', icon: <History size={16} /> },
-    { id: 'counselling', label: '6. Counselling', icon: <BookOpen size={16} /> },
-    { id: 'progress', label: '7. Student Progress & Certificates', icon: <Award size={16} /> },
-    { id: 'documents', label: '8. Documents / Certificates', icon: <FileCheck size={16} /> },
-    { id: 'meeting', label: '9. Meeting History', icon: <CalendarCheck2 size={16} /> },
-    { id: 'skills', label: '10. Progress & Skills', icon: <Star size={16} /> },
+    { id: 'overview', label: '1. Overview', icon: <Layers size={16} aria-hidden="true" /> },
+    { id: 'personal', label: '2. Personal Details', icon: <User size={16} aria-hidden="true" /> },
+    { id: 'academic', label: '3. Academic Details', icon: <GraduationCap size={16} aria-hidden="true" /> },
+    { id: 'parent', label: '4. Parent Details', icon: <Home size={16} aria-hidden="true" /> },
+    { id: 'mentor', label: '5. Mentor History', icon: <History size={16} aria-hidden="true" /> },
+    { id: 'counselling', label: '6. Counselling', icon: <BookOpen size={16} aria-hidden="true" /> },
+    { id: 'progress', label: '7. Student Progress & Certificates', icon: <Award size={16} aria-hidden="true" /> },
+    { id: 'documents', label: '8. Documents / Certificates', icon: <FileCheck size={16} aria-hidden="true" /> },
+    { id: 'meeting', label: '9. Meeting History', icon: <CalendarCheck2 size={16} aria-hidden="true" /> },
+    { id: 'skills', label: '10. Progress & Skills', icon: <Star size={16} aria-hidden="true" /> },
   ];
 
   return (
-    <div className="mentor-mentee-profile" style={{ maxWidth: '1280px', margin: '0 auto', color: '#1E293B' }}>
+    <div className="mentor-mentee-profile" style={{ maxWidth: '1280px', margin: '0 auto', color: 'var(--slate-800)' }}>
       {/* ============================================================
           1. MENTOR VIEW HEADER (Clean institutional header for mentor)
           ============================================================ */}
@@ -603,12 +603,12 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
         className="card mentor-header-card"
         style={{
           backgroundColor: '#ffffff',
-          borderRadius: '16px',
-          padding: '1.5rem 1.75rem',
-          marginBottom: '1.25rem',
-          border: '1px solid #E2E8F0',
-          boxShadow: '0 4px 12px rgba(11, 37, 69, 0.06)',
-          borderLeft: '5px solid #0B2545',
+          borderRadius: 'var(--radius-lg)',
+          padding: 'var(--space-5) var(--space-6)',
+          marginBottom: 'var(--space-5)',
+          border: '1px solid var(--slate-200)',
+          boxShadow: 'var(--shadow-sm)',
+          borderLeft: '4px solid var(--primary-800)',
         }}
       >
         <div
@@ -616,225 +616,218 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             display: 'flex',
             alignItems: 'flex-start',
             justifyContent: 'space-between',
-            gap: '1.25rem',
+            gap: 'var(--space-5)',
             flexWrap: 'wrap',
           }}
         >
           {/* Left: Mentee Identity */}
-          <div style={{ flex: '1 1 320px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+          <div style={{ flex: '1 1 320px', minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--space-3)', flexWrap: 'wrap' }}>
               {onBack && (
                 <button
                   type="button"
                   onClick={onBack}
                   className="btn btn-secondary btn-sm"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.45rem 0.8rem' }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
                   title="Return to Mentees Roster"
                 >
-                  <ArrowLeft size={16} /> Back to Mentees
+                  <ArrowLeft size={16} aria-hidden="true" /> Back to Mentees
                 </button>
               )}
-              <span
-                style={{
-                  fontSize: '0.72rem',
-                  fontWeight: 800,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  color: '#0B2545',
-                  backgroundColor: '#EFF6FF',
-                  padding: '3px 10px',
-                  borderRadius: '9999px',
-                  border: '1px solid #BFDBFE',
-                }}
-              >
-                MENTOR VIEW • READ-ONLY MENTEE DOSSIER
+              <span className="badge badge-primary" style={{ fontSize: 'var(--text-xs)', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                Mentor View • Read-Only Dossier
               </span>
             </div>
 
             <h1
               style={{
-                fontSize: '1.65rem',
-                fontWeight: 800,
-                color: '#0B2545',
-                margin: '0 0 0.4rem 0',
+                fontSize: 'var(--text-2xl)',
+                fontWeight: 700,
+                color: 'var(--primary-800)',
+                margin: '0 0 var(--space-1) 0',
                 letterSpacing: '-0.01em',
+                overflowWrap: 'anywhere',
               }}
             >
               {student.full_name}
             </h1>
 
             {/* Subtitle details */}
-            <div
+            <dl
               style={{
                 display: 'flex',
                 flexWrap: 'wrap',
-                gap: '0.65rem 1.25rem',
-                fontSize: '0.85rem',
-                color: '#475569',
+                gap: '0.35rem 0.9rem',
+                fontSize: 'var(--text-base)',
+                color: 'var(--slate-600)',
                 alignItems: 'center',
               }}
             >
-              <span>
-                Register No: <strong style={{ color: '#0F172A' }}>{student.register_number}</strong>
-              </span>
-              <span>•</span>
-              <span>{student.department_name || 'Information Technology'}</span>
-              <span>•</span>
-              <span>
-                {yearRoman} {student.batch_name ? `• Batch ${student.batch_name}` : ''}
-              </span>
-              <span>•</span>
-              <span>Section: <strong style={{ color: '#0F172A' }}>{student.section || 'A'}</strong></span>
-              <span>•</span>
-              <span>
-                Mentor:{' '}
-                <strong style={{ color: '#0B2545' }}>
+              <div style={{ display: 'flex', gap: '0.3rem' }}>
+                <dt style={{ color: 'var(--slate-500)' }}>Register No</dt>
+                <dd style={{ margin: 0, fontWeight: 700, color: 'var(--slate-900)' }}>{student.register_number}</dd>
+              </div>
+              <div style={{ display: 'flex', gap: '0.3rem' }}>
+                <dt style={{ color: 'var(--slate-500)' }}>Department</dt>
+                <dd style={{ margin: 0 }}>{student.department_name || 'Information Technology'}</dd>
+              </div>
+              <div style={{ display: 'flex', gap: '0.3rem' }}>
+                <dt style={{ color: 'var(--slate-500)' }}>Year</dt>
+                <dd style={{ margin: 0 }}>
+                  {yearRoman}
+                  {student.batch_name ? ` • Batch ${student.batch_name}` : ''}
+                </dd>
+              </div>
+              <div style={{ display: 'flex', gap: '0.3rem' }}>
+                <dt style={{ color: 'var(--slate-500)' }}>Section</dt>
+                <dd style={{ margin: 0, fontWeight: 700, color: 'var(--slate-900)' }}>{student.section || 'A'}</dd>
+              </div>
+              <div style={{ display: 'flex', gap: '0.3rem' }}>
+                <dt style={{ color: 'var(--slate-500)' }}>Mentor</dt>
+                <dd style={{ margin: 0, fontWeight: 700, color: 'var(--primary-800)' }}>
                   {student.currentMentor?.mentor_name || 'Not Assigned'}
-                </strong>
-              </span>
-            </div>
+                </dd>
+              </div>
+            </dl>
           </div>
 
           {/* Right: Key Institutional Metrics & PDF Action */}
           <div
             style={{
               display: 'flex',
-              alignItems: 'center',
-              gap: '0.85rem',
+              alignItems: 'stretch',
+              gap: 'var(--space-3)',
               flexWrap: 'wrap',
-              alignSelf: 'center',
             }}
           >
-            {/* CGPA Badge */}
+            {/* CGPA Metric */}
             <div
               style={{
-                backgroundColor: '#F8FAFC',
-                border: '1px solid #E2E8F0',
-                borderRadius: '12px',
+                backgroundColor: 'var(--slate-50)',
+                border: '1px solid var(--slate-200)',
+                borderRadius: 'var(--radius-md)',
                 padding: '0.6rem 1rem',
                 textAlign: 'center',
-                minWidth: '95px',
+                minWidth: '92px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
               }}
             >
-              <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--slate-500)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
                 CGPA
               </div>
-              <div style={{ fontSize: '1.3rem', fontWeight: 800, color: '#0B2545' }}>
+              <div style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: 'var(--primary-800)' }}>
                 {cgpaValue}
               </div>
             </div>
 
-            {/* Active Arrears Badge */}
+            {/* Standing Arrears Metric — status carried by icon + text, not colour alone */}
             <div
               style={{
-                backgroundColor: activeArrearsCount > 0 ? '#FEF2F2' : '#F0FDF4',
-                border: `1px solid ${activeArrearsCount > 0 ? '#FECACA' : '#BBF7D0'}`,
-                borderRadius: '12px',
+                backgroundColor: activeArrearsCount > 0 ? 'var(--danger-100)' : 'var(--success-100)',
+                border: `1px solid ${activeArrearsCount > 0 ? '#FECACA' : '#A7F3D0'}`,
+                borderRadius: 'var(--radius-md)',
                 padding: '0.6rem 1rem',
                 textAlign: 'center',
-                minWidth: '115px',
+                minWidth: '128px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
               }}
             >
               <div
                 style={{
-                  fontSize: '0.68rem',
+                  fontSize: 'var(--text-xs)',
                   fontWeight: 700,
-                  color: activeArrearsCount > 0 ? '#B91C1C' : '#15803D',
+                  color: activeArrearsCount > 0 ? '#B91C1C' : '#047857',
                   textTransform: 'uppercase',
+                  letterSpacing: '0.4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.25rem',
                 }}
               >
-                Standing Arrears
+                {activeArrearsCount > 0 ? (
+                  <AlertTriangle size={12} aria-hidden="true" />
+                ) : (
+                  <CheckCircle2 size={12} aria-hidden="true" />
+                )}
+                Arrears
               </div>
               <div
                 style={{
-                  fontSize: '1.25rem',
+                  fontSize: 'var(--text-lg)',
                   fontWeight: 800,
-                  color: activeArrearsCount > 0 ? '#DC2626' : '#16A34A',
+                  color: activeArrearsCount > 0 ? 'var(--danger-600)' : 'var(--success-600)',
                 }}
               >
                 {activeArrearsCount === 0 ? '0 (Cleared)' : `${activeArrearsCount} Active`}
               </div>
             </div>
-
-            {/* Request Update Button */}
-            <button
-              type="button"
-              onClick={() => setShowRequestUpdateModal(true)}
-              className="btn btn-secondary btn-sm"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.4rem',
-                padding: '0.65rem 0.95rem',
-                fontSize: '0.82rem',
-                fontWeight: 700,
-              }}
-              title="Request profile correction to Administrator"
-            >
-              <HelpCircle size={15} /> Request Update
-            </button>
-
-            {/* Prominent Download Student PDF Button */}
-            <button
-              type="button"
-              onClick={handleDownloadPdf}
-              disabled={pdfDownloading}
-              className="btn btn-primary"
-              style={{
-                backgroundColor: '#C59B27',
-                borderColor: '#C59B27',
-                color: '#0B2545',
-                fontWeight: 800,
-                fontSize: '0.85rem',
-                padding: '0.65rem 1.25rem',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                boxShadow: '0 2px 6px rgba(197, 155, 39, 0.3)',
-              }}
-            >
-              <Download size={16} />
-              {pdfDownloading ? 'Generating PDF...' : 'Download Student PDF'}
-            </button>
-
-            {/* Separate Mentor AI Assistant / AI Bot Button */}
-            <button
-              type="button"
-              onClick={() => setShowAiBot(true)}
-              className="btn btn-primary"
-              style={{
-                backgroundColor: '#7C3AED',
-                borderColor: '#7C3AED',
-                color: '#ffffff',
-                fontWeight: 800,
-                fontSize: '0.85rem',
-                padding: '0.65rem 1.25rem',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                boxShadow: '0 2px 8px rgba(124, 58, 237, 0.25)',
-              }}
-              title="Open Separate Mentor AI Advisory Bot"
-            >
-              <Bot size={16} /> AI Assistant / Bot
-            </button>
           </div>
+        </div>
+
+        {/* Action row */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-2)',
+            flexWrap: 'wrap',
+            marginTop: 'var(--space-5)',
+            paddingTop: 'var(--space-4)',
+            borderTop: '1px solid var(--slate-100)',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setShowRequestUpdateModal(true)}
+            className="btn btn-secondary"
+            title="Request profile correction to Administrator"
+          >
+            <HelpCircle size={16} aria-hidden="true" /> Request Update
+          </button>
+
+          <button
+            type="button"
+            onClick={handleDownloadPdf}
+            disabled={pdfDownloading}
+            className="btn btn-gold"
+            aria-label={pdfDownloading ? 'Generating student PDF, please wait' : 'Download student record PDF'}
+          >
+            <Download size={16} aria-hidden="true" />
+            {pdfDownloading ? 'Generating PDF…' : 'Download Student PDF'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowAiBot(true)}
+            className="btn btn-outline"
+            style={{ borderColor: 'var(--primary-600)', color: 'var(--primary-600)' }}
+            title="Open the Mentor AI Advisory Assistant"
+          >
+            <Bot size={16} aria-hidden="true" /> AI Assistant
+          </button>
         </div>
       </div>
 
       {/* ============================================================
-          3. MENTOR PROFILE TABS (Responsive scrollable 9 tabs bar)
+          3. MENTOR PROFILE TABS (Responsive scrollable tab bar)
           ============================================================ */}
       <div
         className="mentor-tab-bar"
+        role="tablist"
+        aria-label="Mentee dossier sections"
         style={{
           display: 'flex',
           gap: '0.4rem',
-          borderBottom: '2px solid #E2E8F0',
-          marginBottom: '1.5rem',
+          borderBottom: '2px solid var(--slate-200)',
+          marginBottom: 'var(--space-6)',
           overflowX: 'auto',
-          paddingBottom: '8px',
-          scrollbarWidth: 'thin',
+          paddingBottom: '2px',
+          scrollbarWidth: 'none',
         }}
       >
         {TABS.map((tab) => {
@@ -843,20 +836,19 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             <button
               key={tab.id}
               type="button"
+              role="tab"
+              aria-selected={isActive}
+              aria-controls={`mentor-tab-pane-${tab.id}`}
               onClick={() => setActiveTab(tab.id)}
               className={`btn btn-sm ${isActive ? 'btn-primary' : 'btn-secondary'}`}
               style={{
                 whiteSpace: 'nowrap',
                 fontWeight: isActive ? 700 : 500,
-                padding: '0.55rem 1rem',
-                borderRadius: '8px',
+                borderRadius: 'var(--radius-md) var(--radius-md) 0 0',
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '0.45rem',
-                backgroundColor: isActive ? '#0B2545' : '#ffffff',
-                color: isActive ? '#ffffff' : '#475569',
-                borderColor: isActive ? '#0B2545' : '#E2E8F0',
-                transition: 'all 0.15s ease',
+                transition: 'all var(--motion-fast) var(--ease-standard)',
               }}
             >
               {tab.icon}
@@ -870,217 +862,196 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           4. OVERVIEW TAB
           ============================================================ */}
       {activeTab === 'overview' && (
-        <div className="tab-pane-overview">
-          {/* Professional 6 Summary Cards (Clicking navigates to corresponding section) */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-              gap: '1rem',
-              marginBottom: '1.5rem',
-            }}
-          >
+        <div
+          className="tab-pane-overview"
+          id="mentor-tab-pane-overview"
+          role="tabpanel"
+          aria-label="Mentee overview"
+        >
+          {/* 6 Summary Cards — each is a real button so it is keyboard reachable */}
+          <div className="overview-summary-grid">
             {/* 1. Academic Performance */}
-            <div
+            <button
+              type="button"
               className="card overview-summary-card"
               onClick={() => setActiveTab('academic')}
-              style={{
-                padding: '1.25rem',
-                cursor: 'pointer',
-                borderLeft: '4px solid #0B2545',
-                transition: 'transform 0.15s ease, box-shadow 0.15s ease',
-              }}
+              aria-label={`Academic Performance, CGPA ${cgpaValue}. Open academic details.`}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                <span className="overview-summary-label">
                   Academic Performance
                 </span>
-                <GraduationCap size={18} color="#0B2545" />
+                <GraduationCap size={18} color="var(--primary-800)" aria-hidden="true" />
               </div>
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0B2545', marginTop: '6px' }}>
+              <div className="overview-summary-value">
                 {cgpaValue}
               </div>
-              <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '4px' }}>
-                CGPA • {student.semesters?.length || 0} Semesters Evaluated →
+              <div className="overview-summary-foot">
+                {student.semesters?.length || 0} Semesters Evaluated
               </div>
-            </div>
+            </button>
 
             {/* 2. Current Arrears */}
-            <div
+            <button
+              type="button"
               className="card overview-summary-card"
               onClick={() => setActiveTab('academic')}
-              style={{
-                padding: '1.25rem',
-                cursor: 'pointer',
-                borderLeft: `4px solid ${activeArrearsCount > 0 ? '#DC2626' : '#16A34A'}`,
-                transition: 'transform 0.15s ease, box-shadow 0.15s ease',
-              }}
+              aria-label={`Current Arrears: ${activeArrearsCount === 0 ? 'none, cleared' : `${activeArrearsCount} active`}. Open academic details.`}
+              style={{ borderLeft: `4px solid ${activeArrearsCount > 0 ? 'var(--danger-600)' : 'var(--success-600)'}` }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                <span className="overview-summary-label">
                   Current Arrears
                 </span>
-                <AlertCircle size={18} color={activeArrearsCount > 0 ? '#DC2626' : '#16A34A'} />
+                {activeArrearsCount > 0 ? (
+                  <AlertCircle size={18} color="var(--danger-600)" aria-hidden="true" />
+                ) : (
+                  <CheckCircle2 size={18} color="var(--success-600)" aria-hidden="true" />
+                )}
               </div>
               <div
-                style={{
-                  fontSize: '1.75rem',
-                  fontWeight: 800,
-                  color: activeArrearsCount > 0 ? '#DC2626' : '#16A34A',
-                  marginTop: '6px',
-                }}
+                className="overview-summary-value"
+                style={{ color: activeArrearsCount > 0 ? 'var(--danger-600)' : 'var(--success-600)' }}
               >
                 {activeArrearsCount === 0 ? '0 Cleared' : `${activeArrearsCount} Active`}
               </div>
-              <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '4px' }}>
-                {student.cleared_arrears_count || 0} Cleared in History →
+              <div className="overview-summary-foot">
+                {student.cleared_arrears_count || 0} Cleared in History
               </div>
-            </div>
+            </button>
 
             {/* 3. Counselling Sessions */}
-            <div
+            <button
+              type="button"
               className="card overview-summary-card"
               onClick={() => setActiveTab('counselling')}
-              style={{
-                padding: '1.25rem',
-                cursor: 'pointer',
-                borderLeft: '4px solid #7C3AED',
-                transition: 'transform 0.15s ease, box-shadow 0.15s ease',
-              }}
+              aria-label={`Counselling Sessions: ${student.counsellingRecords?.length || 0}. Open counselling records.`}
+              style={{ borderLeft: '4px solid var(--primary-600)' }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                <span className="overview-summary-label">
                   Counselling Sessions
                 </span>
-                <BookOpen size={18} color="#7C3AED" />
+                <BookOpen size={18} color="var(--primary-600)" aria-hidden="true" />
               </div>
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0B2545', marginTop: '6px' }}>
+              <div className="overview-summary-value">
                 {student.counsellingRecords?.length || 0}
               </div>
-              <div style={{ fontSize: '0.78rem', color: '#7C3AED', marginTop: '4px' }}>
-                5-Domain Mentoring Records →
+              <div className="overview-summary-foot">
+                5-Domain Mentoring Records
               </div>
-            </div>
+            </button>
 
             {/* 4. Saturday Meetings */}
-            <div
+            <button
+              type="button"
               className="card overview-summary-card"
               onClick={() => setActiveTab('meeting')}
-              style={{
-                padding: '1.25rem',
-                cursor: 'pointer',
-                borderLeft: '4px solid #D97706',
-                transition: 'transform 0.15s ease, box-shadow 0.15s ease',
-              }}
+              aria-label={`Saturday Meetings: ${student.meetings?.length || 0}. Open meeting history.`}
+              style={{ borderLeft: '4px solid var(--gold-600)' }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                <span className="overview-summary-label">
                   Saturday Meetings
                 </span>
-                <CalendarCheck2 size={18} color="#D97706" />
+                <CalendarCheck2 size={18} color="var(--gold-600)" aria-hidden="true" />
               </div>
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0B2545', marginTop: '6px' }}>
+              <div className="overview-summary-value">
                 {student.meetings?.length || 0}
               </div>
-              <div style={{ fontSize: '0.78rem', color: '#D97706', marginTop: '4px' }}>
-                Meeting Logs & Attendance →
+              <div className="overview-summary-foot">
+                Meeting Logs &amp; Attendance
               </div>
-            </div>
+            </button>
 
             {/* 5. Documents */}
-            <div
+            <button
+              type="button"
               className="card overview-summary-card"
               onClick={() => setActiveTab('documents')}
-              style={{
-                padding: '1.25rem',
-                cursor: 'pointer',
-                borderLeft: '4px solid #059669',
-                transition: 'transform 0.15s ease, box-shadow 0.15s ease',
-              }}
+              aria-label={`Documents: ${student.documents?.length || (student.counsellingRecords ? 4 : 0)}. Open documents and certificates.`}
+              style={{ borderLeft: '4px solid var(--success-600)' }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                <span className="overview-summary-label">
                   Documents
                 </span>
-                <FileCheck size={18} color="#059669" />
+                <FileCheck size={18} color="var(--success-600)" aria-hidden="true" />
               </div>
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0B2545', marginTop: '6px' }}>
+              <div className="overview-summary-value">
                 {student.documents?.length || (student.counsellingRecords ? 4 : 0)}
               </div>
-              <div style={{ fontSize: '0.78rem', color: '#059669', marginTop: '4px' }}>
-                Certificates & Verification →
+              <div className="overview-summary-foot">
+                Certificates &amp; Verification
               </div>
-            </div>
+            </button>
 
-            {/* 6. Skills Needing Improvement */}
-            <div
+            {/* 6. Skill Progress */}
+            <button
+              type="button"
               className="card overview-summary-card"
               onClick={() => setActiveTab('skills')}
-              style={{
-                padding: '1.25rem',
-                cursor: 'pointer',
-                borderLeft: '4px solid #2563EB',
-                transition: 'transform 0.15s ease, box-shadow 0.15s ease',
-              }}
+              aria-label={`Skill Progress: ${activeArrearsCount > 0 ? '2 needing focus' : 'on track'}. Open progress and skills.`}
+              style={{ borderLeft: '4px solid var(--primary-500)' }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                <span className="overview-summary-label">
                   Skill Progress
                 </span>
-                <Award size={18} color="#2563EB" />
+                <Award size={18} color="var(--primary-500)" aria-hidden="true" />
               </div>
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0B2545', marginTop: '6px' }}>
+              <div className="overview-summary-value">
                 {activeArrearsCount > 0 ? '2 Needing Focus' : 'On Track'}
               </div>
-              <div style={{ fontSize: '0.78rem', color: '#2563EB', marginTop: '4px' }}>
-                7 Core Mentoring Domains →
+              <div className="overview-summary-foot">
+                7 Core Mentoring Domains
               </div>
-            </div>
+            </button>
           </div>
 
           {/* Mentee Executive Overview & Assigned Mentor Dossier */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '1.25rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 'var(--space-5)' }}>
             {/* Left: Mentee Profile Summary */}
-            <div className="card" style={{ padding: '1.5rem', backgroundColor: '#ffffff' }}>
-              <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0B2545', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <User size={18} color="#0B2545" /> Mentee Identity Snapshot
+            <div className="card">
+              <h3 className="card-title">
+                <User size={18} color="var(--primary-800)" aria-hidden="true" /> Mentee Identity Snapshot
               </h3>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.85rem', fontSize: '0.85rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-3)', fontSize: 'var(--text-base)' }}>
                 <div>
-                  <div style={{ color: '#64748B', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 700 }}>DOB</div>
-                  <div style={{ fontWeight: 600, color: '#0F172A', marginTop: '2px' }}>
+                  <div className="field-label">Date of Birth</div>
+                  <div className="field-value">
                     {student.dob ? new Date(student.dob).toLocaleDateString() : 'Recorded in File'}
                   </div>
                 </div>
                 <div>
-                  <div style={{ color: '#64748B', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 700 }}>Blood Group</div>
-                  <div style={{ fontWeight: 600, color: '#0F172A', marginTop: '2px' }}>
+                  <div className="field-label">Blood Group</div>
+                  <div className="field-value">
                     {student.blood_group || 'N/A'}
                   </div>
                 </div>
                 <div>
-                  <div style={{ color: '#64748B', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 700 }}>Residential Status</div>
-                  <div style={{ fontWeight: 600, color: '#0F172A', marginTop: '2px' }}>
+                  <div className="field-label">Residential Status</div>
+                  <div className="field-value">
                     <span className="badge badge-primary">
                       {student.residential_type?.replace('_', ' ') || 'DAY SCHOLAR'}
                     </span>
                   </div>
                 </div>
                 <div>
-                  <div style={{ color: '#64748B', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 700 }}>Mobile Contact</div>
-                  <div style={{ fontWeight: 600, color: '#0B2545', marginTop: '2px' }}>
+                  <div className="field-label">Mobile Contact</div>
+                  <div className="field-value-accent">
                     {student.mobile_number || 'N/A'}
                   </div>
                 </div>
                 <div style={{ gridColumn: 'span 2' }}>
-                  <div style={{ color: '#64748B', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 700 }}>Father / Guardian Name</div>
-                  <div style={{ fontWeight: 600, color: '#0F172A', marginTop: '2px' }}>
+                  <div className="field-label">Father / Guardian Name</div>
+                  <div className="field-value">
                     {student.parent?.father_name || 'Recorded in dossier'}
                   </div>
                 </div>
                 <div style={{ gridColumn: 'span 2' }}>
-                  <div style={{ color: '#64748B', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 700 }}>Institutional Email</div>
-                  <div style={{ fontWeight: 600, color: '#0B2545', marginTop: '2px' }}>
+                  <div className="field-label">Institutional Email</div>
+                  <div className="field-value-accent">
                     {student.email || `${student.register_number}@ksrce.ac.in`}
                   </div>
                 </div>
@@ -1088,46 +1059,38 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             </div>
 
             {/* Right: Mentor Assignment & Saturday Milestones */}
-            <div className="card" style={{ padding: '1.5rem', backgroundColor: '#ffffff' }}>
-              <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0B2545', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <History size={18} color="#0B2545" /> Mentorship Responsibility
+            <div className="card">
+              <h3 className="section-heading">
+                <History size={18} color="var(--primary-800)" aria-hidden="true" /> Mentorship Responsibility
               </h3>
               {student.currentMentor ? (
-                <div style={{ backgroundColor: '#F8FAFC', borderRadius: '12px', padding: '1rem', border: '1px solid #E2E8F0', marginBottom: '1rem' }}>
-                  <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0B2545' }}>
+                <div style={{ backgroundColor: 'var(--slate-50)', borderRadius: 'var(--radius-md)', padding: 'var(--space-4)', border: '1px solid var(--slate-200)', marginBottom: 'var(--space-4)' }}>
+                  <div style={{ fontSize: 'var(--text-lg)', fontWeight: 700, color: 'var(--primary-800)' }}>
                     {student.currentMentor.mentor_name}
                   </div>
-                  <div style={{ fontSize: '0.82rem', color: '#64748B', marginTop: '2px' }}>
+                  <div style={{ fontSize: 'var(--text-sm)', color: 'var(--slate-500)', marginTop: 'var(--space-1)' }}>
                     {student.currentMentor.designation} • {student.currentMentor.cabin_location || 'Faculty Cabin'}
                   </div>
-                  <div style={{ fontSize: '0.78rem', color: '#059669', fontWeight: 700, marginTop: '6px' }}>
+                  <div style={{ fontSize: 'var(--text-sm)', color: 'var(--success-600)', fontWeight: 600, marginTop: 'var(--space-2)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <CheckCircle2 size={14} aria-hidden="true" />
                     Active Assignment Since: {student.currentMentor.assigned_from || 'Academic Term'}
                   </div>
                 </div>
               ) : (
-                <div style={{ color: '#D97706', fontSize: '0.85rem', marginBottom: '1rem' }}>
-                  No active mentor assignment record found in database.
+                <div className="notice notice-warning" style={{ marginBottom: 'var(--space-4)' }}>
+                  <AlertTriangle size={18} aria-hidden="true" />
+                  <span>No active mentor assignment record found in the system.</span>
                 </div>
               )}
 
               {/* Saturday Meeting Milestone */}
-              <div
-                style={{
-                  backgroundColor: '#FEF3C7',
-                  border: '1px solid #FDE68A',
-                  borderRadius: '12px',
-                  padding: '1rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.85rem',
-                }}
-              >
-                <CalendarCheck2 size={24} color="#D97706" style={{ flexShrink: 0 }} />
+              <div className="notice notice-warning">
+                <CalendarCheck2 size={24} aria-hidden="true" />
                 <div>
-                  <div style={{ fontSize: '0.82rem', fontWeight: 800, color: '#92400E' }}>
+                  <div className="notice-title">
                     Upcoming Saturday Mentoring Session
                   </div>
-                  <div style={{ fontSize: '0.76rem', color: '#78350F', marginTop: '2px' }}>
+                  <div style={{ fontSize: 'var(--text-sm)', color: '#78350F', marginTop: 'var(--space-1)' }}>
                     {saturdaySchedule?.time || '10:30 AM'} • {saturdaySchedule?.location || 'Faculty Cabin'}
                   </div>
                 </div>
@@ -1141,13 +1104,13 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           5. PERSONAL DETAILS TAB (Read-only for mentor with Request Update)
           ============================================================ */}
       {activeTab === 'personal' && (
-        <div className="card" style={{ padding: '2rem', backgroundColor: '#ffffff' }}>
+        <div id="mentor-tab-pane-personal" role="tabpanel" className="card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
             <div>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
+              <h2 className="section-subheading">
                 Mentee Personal Details
               </h2>
-              <p style={{ fontSize: '0.82rem', color: '#64748B', margin: '4px 0 0 0' }}>
+              <p className="section-description">
                 Read-only institutional record. To propose corrections, click Request Update.
               </p>
             </div>
@@ -1169,46 +1132,46 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             }}
           >
             <div>
-              <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div className="field-label">
                 Full Student Name
-              </label>
-              <div style={{ fontSize: '1rem', fontWeight: 700, color: '#0F172A', marginTop: '4px' }}>
+              </div>
+              <div className="field-value">
                 {student.full_name}
               </div>
             </div>
 
             <div>
-              <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div className="field-label">
                 Register Number
-              </label>
-              <div style={{ fontSize: '1rem', fontWeight: 700, color: '#0F172A', marginTop: '4px' }}>
+              </div>
+              <div className="field-value">
                 <code>{student.register_number}</code>
               </div>
             </div>
 
             <div>
-              <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div className="field-label">
                 Date of Birth
-              </label>
-              <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0F172A', marginTop: '4px' }}>
+              </div>
+              <div className="field-value">
                 {student.dob ? new Date(student.dob).toLocaleDateString() : 'Recorded in dossier'}
               </div>
             </div>
 
             <div>
-              <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div className="field-label">
                 Blood Group
-              </label>
+              </div>
               <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#DC2626', marginTop: '4px' }}>
                 {student.blood_group || 'N/A'}
               </div>
             </div>
 
             <div>
-              <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div className="field-label">
                 Contact Number
-              </label>
-              <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0B2545', marginTop: '4px' }}>
+              </div>
+              <div className="field-value-accent">
                 {student.mobile_number ? (
                   <a href={`tel:${student.mobile_number}`} style={{ color: '#1D4ED8', textDecoration: 'none' }}>
                     📞 {student.mobile_number}
@@ -1220,10 +1183,10 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             </div>
 
             <div>
-              <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div className="field-label">
                 Official Email
-              </label>
-              <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0B2545', marginTop: '4px' }}>
+              </div>
+              <div className="field-value-accent">
                 {student.email ? (
                   <a href={`mailto:${student.email}`} style={{ color: '#1D4ED8', textDecoration: 'none' }}>
                     ✉️ {student.email}
@@ -1235,27 +1198,27 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             </div>
 
             <div>
-              <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div className="field-label">
                 Department & Branch
-              </label>
-              <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0F172A', marginTop: '4px' }}>
+              </div>
+              <div className="field-value">
                 {student.department_name || 'Information Technology'} ({student.department_code || 'IT'})
               </div>
             </div>
 
             <div>
-              <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div className="field-label">
                 Year & Batch
-              </label>
-              <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0F172A', marginTop: '4px' }}>
+              </div>
+              <div className="field-value">
                 {yearRoman} {student.batch_name ? `• Batch ${student.batch_name}` : ''}
               </div>
             </div>
 
             <div>
-              <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div className="field-label">
                 Residential Status
-              </label>
+              </div>
               <div style={{ marginTop: '4px' }}>
                 <span className="badge badge-primary">
                   {student.residential_type?.replace('_', ' ') || 'DAY SCHOLAR'}
@@ -1264,19 +1227,19 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             </div>
 
             <div>
-              <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div className="field-label">
                 Academic Year & Section
-              </label>
-              <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0F172A', marginTop: '4px' }}>
+              </div>
+              <div className="field-value">
                 Year {student.year || '—'} • Section {student.section || '—'}
               </div>
             </div>
 
             <div>
-              <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div className="field-label">
                 Admission Type
-              </label>
-              <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0F172A', marginTop: '4px' }}>
+              </div>
+              <div className="field-value">
                 {(student.admission_type || student.admissionType || student.school?.admission_type) === 'LATERAL_ENTRY'
                   ? 'Lateral Entry'
                   : (student.admission_type || student.admissionType || student.school?.admission_type) === 'MANAGEMENT'
@@ -1286,9 +1249,9 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             </div>
 
             <div style={{ gridColumn: 'span 2' }}>
-              <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div className="field-label">
                 Scholarship Details
-              </label>
+              </div>
               <div style={{ fontSize: '0.95rem', color: '#334155', marginTop: '4px' }}>
                 {student.scholarship_details || student.scholarshipDetails || 'No scholarship recorded'}
               </div>
@@ -1327,9 +1290,9 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             )}
 
             <div style={{ gridColumn: 'span 2' }}>
-              <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+              <div className="field-label">
                 Permanent Home Address
-              </label>
+              </div>
               <div style={{ fontSize: '0.95rem', color: '#334155', marginTop: '4px', lineHeight: 1.5 }}>
                 {student.address || 'Address on file in institutional registration book.'}
               </div>
@@ -1342,7 +1305,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           6. ACADEMIC DETAILS TAB (Semester results, Active Arrears, Clearance)
           ============================================================ */}
       {activeTab === 'academic' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        <div id="mentor-tab-pane-academic" role="tabpanel" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
           {/* ============================================================
               ACADEMIC CORRECTION REQUESTS (approve / reject)
               A student cannot edit CGPA/SGPA directly — every change
@@ -1578,8 +1541,8 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           </div>
 
           {/* Semester-Wise Results Table */}
-          <div className="card" style={{ padding: '1.5rem', backgroundColor: '#ffffff' }}>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0B2545', marginBottom: '1rem' }}>
+          <div className="card">
+            <h3 className="section-heading">
               Semester-Wise Academic Performance (Semesters 01–08)
             </h3>
 
@@ -1646,7 +1609,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           </div>
 
           {/* Historical Arrear Clearance Records (Separated from Active!) */}
-          <div className="card" style={{ padding: '1.5rem', backgroundColor: '#ffffff' }}>
+          <div className="card">
             <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0B2545', marginBottom: '0.5rem' }}>
               Historical Arrear Clearance Ledger
             </h3>
@@ -1700,12 +1663,12 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           7. PARENT DETAILS TAB
           ============================================================ */}
       {activeTab === 'parent' && (
-        <div className="card" style={{ padding: '2rem', backgroundColor: '#ffffff' }}>
+        <div id="mentor-tab-pane-parent" role="tabpanel" className="card">
           <div style={{ marginBottom: '1.5rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
+            <h2 className="section-subheading">
               Parent & Guardian Information
             </h2>
-            <p style={{ fontSize: '0.82rem', color: '#64748B', margin: '4px 0 0 0' }}>
+            <p className="section-description">
               Confidential institutional records for mentor-parent communication and emergency contact.
             </p>
           </div>
@@ -1782,12 +1745,12 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           8. MENTOR HISTORY TAB (Timeline format as requested)
           ============================================================ */}
       {activeTab === 'mentor' && (
-        <div className="card" style={{ padding: '2rem', backgroundColor: '#ffffff' }}>
+        <div id="mentor-tab-pane-mentor" role="tabpanel" className="card">
           <div style={{ marginBottom: '1.5rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
+            <h2 className="section-subheading">
               Mentorship Assignment & Reassignment History
             </h2>
-            <p style={{ fontSize: '0.82rem', color: '#64748B', margin: '4px 0 0 0' }}>
+            <p className="section-description">
               Chronological ledger of faculty mentors assigned to this mentee. All records are permanently preserved.
             </p>
           </div>
@@ -1856,16 +1819,16 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           9. COUNSELLING TAB (Student-Specific + AI Assistant)
           ============================================================ */}
       {activeTab === 'counselling' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        <div id="mentor-tab-pane-counselling" role="tabpanel" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
           {/* Header & Add Action */}
           {/* Header & Add Action */}
-          <div className="card" style={{ padding: '1.5rem', backgroundColor: '#ffffff' }}>
+          <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
               <div>
-                <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
+                <h2 className="section-subheading">
                   Mentee Counselling Records & Dossier
                 </h2>
-                <p style={{ fontSize: '0.82rem', color: '#64748B', margin: '4px 0 0 0' }}>
+                <p className="section-description">
                   Student-specific intervention and corrective action records for {student.full_name} ({student.register_number}).
                 </p>
               </div>
@@ -1973,7 +1936,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                         <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
                           Concern / Reason
                         </div>
-                        <div style={{ color: '#0F172A', marginTop: '2px', fontWeight: 600 }}>
+                        <div className="field-value">
                           {c.concern_reason || c.concernReason}
                         </div>
                       </div>
@@ -1983,7 +1946,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                       <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
                         Discussion / Observation
                       </div>
-                      <div style={{ color: '#0F172A', marginTop: '2px', fontWeight: 500, whiteSpace: 'pre-line' }}>
+                      <div className="field-value" style={{ fontWeight: 500, whiteSpace: 'pre-line' }}>
                         {c.discussion_observation || c.discussionObservation || c.challenge_observed || c.challengeObserved}
                       </div>
                     </div>
@@ -2003,7 +1966,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                       <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
                         Action Plan
                       </div>
-                      <div style={{ color: '#0F172A', marginTop: '2px', whiteSpace: 'pre-line' }}>
+                      <div className="field-value" style={{ whiteSpace: 'pre-line' }}>
                         {c.action_plan || c.actionPlan || c.corrective_action || c.correctiveAction}
                       </div>
                     </div>
@@ -2036,7 +1999,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           ) : (
             <div className="card" style={{ padding: '2.5rem', textAlign: 'center', backgroundColor: '#ffffff' }}>
               <BookOpen size={36} color="#94A3B8" style={{ margin: '0 auto 0.75rem auto' }} />
-              <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0B2545', margin: '0 0 0.5rem 0' }}>
+              <h3 className="section-subheading">
                 No Counselling Records for this Mentee Yet
               </h3>
               <p style={{ fontSize: '0.85rem', color: '#64748B', maxWidth: '440px', margin: '0 auto 1.25rem auto' }}>
@@ -2078,17 +2041,19 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           (student.id), never to the logged-in mentor.
           ============================================================ */}
       {activeTab === 'progress' && (
-        <MenteeProgressDashboard
-          studentId={student.id}
-          studentName={student.full_name}
-        />
+        <div id="mentor-tab-pane-progress" role="tabpanel">
+          <MenteeProgressDashboard
+            studentId={student.id}
+            studentName={student.full_name}
+          />
+        </div>
       )}
 
       {/* ============================================================
           8. DOCUMENTS / CERTIFICATES TAB
           ============================================================ */}
       {activeTab === 'documents' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+        <div id="mentor-tab-pane-documents" role="tabpanel" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
           {/* Sub-tab switcher */}
           <div
             style={{
@@ -2148,12 +2113,12 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               studentName={student.full_name}
             />
           ) : (
-            <div className="card" style={{ padding: '1.5rem', backgroundColor: '#ffffff' }}>
+            <div className="card">
               <div style={{ marginBottom: '1.5rem' }}>
-                <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
+                <h2 className="section-subheading">
                   Mentee Certificates & Documents
                 </h2>
-                <p style={{ fontSize: '0.82rem', color: '#64748B', margin: '4px 0 0 0' }}>
+                <p className="section-description">
                   Review, verify, and manage certificates uploaded by {student.full_name}.
                 </p>
               </div>
@@ -2172,7 +2137,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           12. MEETING HISTORY TAB (Saturday meetings & schedule)
           ============================================================ */}
       {activeTab === 'meeting' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        <div id="mentor-tab-pane-meeting" role="tabpanel" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
           {/* Upcoming Saturday Meeting Banner */}
           <div
             className="card"
@@ -2204,8 +2169,8 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           </div>
 
           {/* Previous Meetings List */}
-          <div className="card" style={{ padding: '1.5rem', backgroundColor: '#ffffff' }}>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0B2545', marginBottom: '1rem' }}>
+          <div className="card">
+            <h3 className="section-heading">
               Previous Saturday Meetings Ledger
             </h3>
 
@@ -2239,7 +2204,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                         <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
                           Challenges Discussed
                         </div>
-                        <div style={{ color: '#0F172A', marginTop: '2px' }}>
+                        <div className="field-value">
                           {m.challenges_discussed || 'Regular academic & mentoring review'}
                         </div>
                       </div>
@@ -2248,7 +2213,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                         <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
                           Corrective Action & Remarks
                         </div>
-                        <div style={{ color: '#0F172A', marginTop: '2px' }}>
+                        <div className="field-value">
                           {m.mentor_remarks || m.corrective_action || 'Mentee advised to maintain course focus.'}
                         </div>
                       </div>
@@ -2269,14 +2234,14 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           13. PROGRESS & SKILLS TAB (7 core domains tracked)
           ============================================================ */}
       {activeTab === 'skills' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          <div className="card" style={{ padding: '1.5rem', backgroundColor: '#ffffff' }}>
+        <div id="mentor-tab-pane-skills" role="tabpanel" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+          <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
               <div>
-                <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
+                <h2 className="section-subheading">
                   Mentor Skill Assessment & Progress Tracker
                 </h2>
-                <p style={{ fontSize: '0.82rem', color: '#64748B', margin: '4px 0 0 0' }}>
+                <p className="section-description">
                   Evaluating 7 core professional and academic competencies for {student.full_name}.
                 </p>
               </div>
