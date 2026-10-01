@@ -1009,11 +1009,18 @@ async function main() {
     assert(stillThere >= 2, `generating the record book changed the document count (${stillThere})`);
     const viewOk = await http('GET', `/api/documents/${newId}/file`, { token: tokens.student });
     assert(viewOk.status === 200, `document no longer viewable after generation -> ${viewOk.status}`);
-    const delOk = await http('DELETE', `/api/documents/${newId}`, { token: tokens.student });
-    assert(delOk.status === 200, `document no longer deletable after generation -> ${delOk.status}`);
+    // A fresh upload is PENDING, and a PENDING record is deliberately read-only
+    // for its owner, so the student's own delete is refused with 409 (see
+    // utils/record-permission.util.ts). Cleanup therefore uses the mentor/admin
+    // housekeeping delete, which the same contract allows for a record that is
+    // not yet official.
+    const studentDel = await http('DELETE', `/api/documents/${newId}`, { token: tokens.student });
+    assert(studentDel.status === 409, `student delete of a PENDING record should be refused -> ${studentDel.status}`);
+    const delOk = await http('DELETE', `/api/documents/${newId}`, { token: tokens.admin });
+    assert(delOk.status === 200, `admin housekeeping delete after generation -> ${delOk.status}`);
 
     return { status: 'PASS',
-      evidence: `upload AO2026-1395.pdf (2 pages, 400x600) -> ${up.status}, 1 record linked to student ${String(stuA._id).slice(-6)} with eventName/organizer/eventDate persisted; listed in Student Documents with category "${listed.category}"; record book -> 200 ${buf.length} B, Section 8 lists the title, category and event name, output has ${sizes.length} pages of which ${certPages.length} are the 400x600 certificate pages and both certificate page texts are present after inflation; student->other student ${otherBook.status}, admin->stuB book ${adminBook.status} with 0 400x600 pages and no certificate text; document still viewable (${viewOk.status}) and deletable (${delOk.status}) after generation`,
+      evidence: `upload AO2026-1395.pdf (2 pages, 400x600) -> ${up.status}, 1 record linked to student ${String(stuA._id).slice(-6)} with eventName/organizer/eventDate persisted; listed in Student Documents with category "${listed.category}"; record book -> 200 ${buf.length} B, Section 8 lists the title, category and event name, output has ${sizes.length} pages of which ${certPages.length} are the 400x600 certificate pages and both certificate page texts are present after inflation; student->other student ${otherBook.status}, admin->stuB book ${adminBook.status} with 0 400x600 pages and no certificate text; document still viewable (${viewOk.status}) after generation, student delete of the PENDING record correctly refused (${studentDel.status}) and admin housekeeping delete succeeded (${delOk.status})`,
       fix: 'pdf.service.generateStudentPdf now reads StudentDocument for the student and renders Section 8 metadata plus embedded annexures (images inline, PDFs appended via pdf-lib)' };
   });
 
@@ -1120,11 +1127,15 @@ async function main() {
     const loaded = await PDFLib.load(buf);
     assert(loaded.getPageCount() > 0, 'generated record book has no pages');
 
-    const delOk = await http('DELETE', `/api/documents/${imgId}`, { token: tokens.student });
-    assert(delOk.status === 200, `cleanup delete -> ${delOk.status}`);
+    // Same ownership rule as the PDF case: PENDING is read-only for the student,
+    // so cleanup goes through the admin housekeeping delete.
+    const studentDel = await http('DELETE', `/api/documents/${imgId}`, { token: tokens.student });
+    assert(studentDel.status === 409, `student delete of a PENDING record should be refused -> ${studentDel.status}`);
+    const delOk = await http('DELETE', `/api/documents/${imgId}`, { token: tokens.admin });
+    assert(delOk.status === 200, `admin housekeeping delete -> ${delOk.status}`);
 
     return { status: 'PASS',
-      evidence: `upload nss-activity-photo.png (genuine ${W}x${H} PNG) -> ${up.status}; record book -> 200 ${buf.length} B containing a /Subtype/Image XObject of exactly ${W}x${H}, drawn via /I0 Do (inline jsPDF addImage), plus the Section 8 caption "NSS Activity Camp Photo"; annexure embedding notice ${noticeIdx >= 0 ? 'present (for pre-existing malformed stub PDFs) and does not list the PNG' : 'absent'}; ${loaded.getPageCount()} pages, valid PDF`,
+      evidence: `upload nss-activity-photo.png (genuine ${W}x${H} PNG) -> ${up.status}; record book -> 200 ${buf.length} B containing a /Subtype/Image XObject of exactly ${W}x${H}, drawn via /I0 Do (inline jsPDF addImage), plus the Section 8 caption "NSS Activity Camp Photo"; annexure embedding notice ${noticeIdx >= 0 ? 'present (for pre-existing malformed stub PDFs) and does not list the PNG' : 'absent'}; ${loaded.getPageCount()} pages, valid PDF; student delete of the PENDING record correctly refused (${studentDel.status}), admin housekeeping delete (${delOk.status})`,
       fix: 'generateStudentPdf embeds image documents inline with doc.addImage, aspect-fitted, and only reports the annexure notice for files it genuinely could not embed' };
   });
 

@@ -20,7 +20,7 @@ import {
   type RecordState,
 } from '../../utils/record-permission.util.js';
 import { syncStudentDetailsPdf } from './student-details-pdf.service.js';
-import { resolveStoredUploadPath, resolveWritableUploadsDir } from '../../config/storage.js';
+import { resolveWritableUploadsDir, locateStoredUpload } from '../../config/storage.js';
 
 // Ensure a writable upload directory exists (safe on read-only hosts such as Render)
 export const UPLOADS_DIR = resolveWritableUploadsDir('documents');
@@ -98,11 +98,16 @@ function sniffFileType(filePath: string): 'application/pdf' | 'image/png' | 'ima
 }
 
 /**
- * Resolve a stored fileUrl to an absolute path, refusing anything that escapes
- * the uploads directory (path traversal defence).
+ * Resolve a stored fileUrl to an absolute path through the ONE shared uploads
+ * resolver. This is the same function the Official Record Book generator uses, so
+ * a file that can be previewed in Student Documents can also be embedded as an
+ * annexure, and vice versa. Path traversal is refused by the resolver itself.
  */
-function resolveStoredPath(fileUrl: string): string | null {
-  return resolveStoredUploadPath(fileUrl);
+function resolveStoredPath(
+  fileUrl: string,
+  meta: { fileName?: string | null; fileSize?: number | null; fileType?: string | null } = {}
+): string | null {
+  return locateStoredUpload(fileUrl, meta)?.path ?? null;
 }
 
 /** Locate a Student by ObjectId or register number. */
@@ -357,7 +362,11 @@ async function streamDocumentFile(req: AuthRequest, res: Response, disposition: 
     return sendError(res, access.message, access.status);
   }
 
-  const filePath = resolveStoredPath(doc.fileUrl);
+  const filePath = resolveStoredPath(doc.fileUrl, {
+    fileName: doc.fileName,
+    fileSize: doc.fileSize,
+    fileType: doc.fileType,
+  });
   if (!filePath || !fs.existsSync(filePath)) {
     return sendError(res, 'Physical file not found on server.', 404);
   }
@@ -416,7 +425,11 @@ export async function serveLegacyUpload(req: AuthRequest, res: Response) {
       return sendError(res, access.message, access.status);
     }
 
-    const filePath = resolveStoredPath(doc.fileUrl);
+    const filePath = resolveStoredPath(doc.fileUrl, {
+      fileName: doc.fileName,
+      fileSize: doc.fileSize,
+      fileType: doc.fileType,
+    });
     if (!filePath || !fs.existsSync(filePath)) {
       return sendError(res, 'Physical file not found on server.', 404);
     }
@@ -494,7 +507,11 @@ export async function deleteDocument(req: AuthRequest, res: Response) {
     // Metadata first: if the unlink fails we must not leave a dangling record.
     await StudentDocument.findByIdAndDelete(documentId);
 
-    const filePath = resolveStoredPath(doc.fileUrl);
+    const filePath = resolveStoredPath(doc.fileUrl, {
+      fileName: doc.fileName,
+      fileSize: doc.fileSize,
+      fileType: doc.fileType,
+    });
     let fileRemoved = true;
     if (filePath && fs.existsSync(filePath)) {
       try {
@@ -896,7 +913,11 @@ export async function deleteAllStudentDocuments(req: AuthRequest, res: Response)
       await StudentDocument.findByIdAndDelete(doc._id);
       deletedCount++;
 
-      const filePath = resolveStoredPath(doc.fileUrl);
+      const filePath = resolveStoredPath(doc.fileUrl, {
+        fileName: doc.fileName,
+        fileSize: doc.fileSize,
+        fileType: doc.fileType,
+      });
       if (filePath && fs.existsSync(filePath)) {
         try {
           fs.unlinkSync(filePath);

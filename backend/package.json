@@ -10,6 +10,7 @@
     "db:migrate": "tsx src/database/migrate.ts",
     "db:bootstrap": "tsx src/database/bootstrap.ts",
     "db:clean": "tsx src/database/clean-demo-data.ts",
+    "db:repair-files": "tsx src/database/repair-missing-document-files.ts",
     "test:critical": "tsx src/tests/critical-reassignment.test.ts",
     "test:directory": "tsx src/tests/student-directory-pagination.test.ts",
     "test:export": "tsx src/tests/overall-mentee-export.test.ts",

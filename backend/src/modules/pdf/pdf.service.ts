@@ -15,8 +15,16 @@ import {
 } from '../../models/index.js';
 import { calculateArrearStatistics } from '../../utils/arrears.util.js';
 // Reuse the single existing uploads abstraction (traversal-safe). Documents are
-// read through it, never through a second, parallel storage resolution.
-import { resolveStoredUploadPath, UPLOADS_BASE } from '../../config/storage.js';
+// read through it, never through a second, parallel storage resolution. The
+// SAME resolver is used by the document view/download endpoints, so a file the
+// portal can display is never reported as missing in the record book.
+import {
+  resolveStoredUploadPath,
+  locateStoredUpload,
+  describeUploadRoots,
+  sniffStoredFileType,
+  UPLOADS_BASE,
+} from '../../config/storage.js';
 
 let logoBase64: string | null = null;
 try {
@@ -727,29 +735,70 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
   for (const d of studentDocuments) {
     if (d.is_system_form) continue; // never self-embed this dossier
 
-    // Resolve through the single existing uploads helper. A `null` result and a
-    // missing file are DIFFERENT faults and are reported as such: `null` means
-    // the stored URL is not inside the uploads root (unreadable/invalid record),
-    // while a resolved-but-absent path means the bytes are genuinely not on this
-    // host. Collapsing both into "file not on disk" hid the real cause.
-    const absPath = resolveStoredUploadPath(d.file_url);
-    if (!absPath) {
+    // Resolve through the ONE existing uploads helper -- the same
+    // `locateStoredUpload` the Student Documents view/download endpoints use, so
+    // a file that the portal can display is never reported as missing here. It
+    // searches every known upload root (explicit UPLOADS_DIR, a mounted
+    // persistent disk, the backend package directory, the legacy cwd-relative
+    // directory, the tmp fallback) and only then falls back to a byte-exact
+    // content-identity recovery anchored on the recorded file name and size.
+    const located = locateStoredUpload(d.file_url, {
+      fileName: d.file_name,
+      fileSize: d.file_size,
+      fileType: d.file_type,
+    });
+    if (!located) {
+      // Only claim the bytes are gone AFTER the same resolver the application
+      // uses everywhere else has searched every root it knows about. A record
+      // whose stored path is not even inside the uploads tree is a different
+      // fault and is named as such.
+      if (!resolveStoredUploadPath(d.file_url)) {
+        notEmbedded.push({
+          name: d.file_name,
+          reason: `Stored path "${d.file_url}" is not inside the uploads directory, so it cannot be looked up at all. This record needs administrator repair.`,
+        });
+        continue;
+      }
       notEmbedded.push({
         name: d.file_name,
-        reason: `Stored path "${d.file_url}" is not inside the uploads directory. This record needs administrator repair; the file itself was never located.`,
-      });
-      continue;
-    }
-    if (!fs.existsSync(absPath)) {
-      notEmbedded.push({
-        name: d.file_name,
-        reason: 'The upload is registered in the database but no file exists on this server. Uploads are stored on local disk that does not survive a redeploy, so the record survived and the file did not.',
+        reason: `No file with these exact bytes was found in any upload location searched (${describeUploadRoots()}), and no other file matches the recorded size of ${d.file_size} bytes. The record is intact but the file itself was lost.`,
       });
       missingFileReasons.set(d.file_url, (missingFileReasons.get(d.file_url) || 0) + 1);
       continue;
     }
 
-    const mime = (d.file_type || '').toLowerCase();
+    if (located.recovered) {
+      // A file found away from its recorded path is a real storage fault even
+      // though the content is available, so it is logged for the operator.
+      console.warn(
+        `generateStudentPdf: "${d.file_name}" was not at its recorded path (${d.file_url}); ` +
+          `resolved it by ${located.strategy} to ${located.path}`
+      );
+    }
+
+    const absPath = located.path;
+    if (!fs.existsSync(absPath)) {
+      // Defensive: `locateStoredUpload` only returns paths it has stat'ed, so a
+      // failure here means the file vanished between the lookup and this read.
+      notEmbedded.push({
+        name: d.file_name,
+        reason: 'The file was located but disappeared from disk while the record book was being generated. Please retry.',
+      });
+      continue;
+    }
+
+    // Trust the BYTES, not the declared MIME type. A record can say `pdf` while
+    // holding a scan (or the reverse), and choosing the wrong branch is what
+    // silently produced blank annexures.
+    const sniffed = sniffStoredFileType(absPath);
+    const declared = (d.file_type || '').toLowerCase().trim();
+    const mime = sniffed || declared;
+
+    if (sniffed && declared && sniffed !== (declared === 'image/jpg' ? 'image/jpeg' : declared)) {
+      console.warn(
+        `generateStudentPdf: "${d.file_name}" is stored as "${declared}" but its content is "${sniffed}"; embedding it as ${sniffed}.`
+      );
+    }
 
     if (mime === 'application/pdf') {
       if (annexurePdfs.length >= EMBED_LIMITS.pdfFiles) {
@@ -810,9 +859,12 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
         { maxWidth: pageWidth - margin * 2 }
       );
 
-      // Fit the image inside the printable area, preserving aspect ratio.
+      // Fit the image inside the printable area, preserving aspect ratio. The
+      // band runs from just under the caption to just above the footer rule at
+      // `pageHeight - 12`, so a full-height scan is never drawn over the footer.
       const maxW = pageWidth - margin * 2;
-      const maxH = pageHeight - 60;
+      const bandTop = 50;
+      const maxH = pageHeight - 16 - bandTop;
       const ratio = props.width > 0 && props.height > 0 ? props.height / props.width : 0.7;
       let drawW = maxW;
       let drawH = drawW * ratio;
@@ -820,7 +872,11 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
         drawH = maxH;
         drawW = drawH / ratio;
       }
-      doc.addImage(dataUrl, fmt, margin + (maxW - drawW) / 2, 50, drawW, drawH);
+      // Centred in both axes so a tall scan is not pinned to the top edge and a
+      // wide one is not jammed against the left margin.
+      const drawX = margin + (maxW - drawW) / 2;
+      const drawY = bandTop + Math.max(0, (maxH - drawH) / 2);
+      doc.addImage(dataUrl, fmt, drawX, drawY, drawW, drawH);
       imageCount++;
     } catch (e: any) {
       notEmbedded.push({
@@ -843,8 +899,11 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
   // from the server log rather than guessed at from the generated PDF.
   if (missingFileReasons.size > 0) {
     console.error(
-      `generateStudentPdf: ${missingFileReasons.size} stored file(s) for reg no ${student.register_number} have no bytes on this host. ` +
-        `Uploads are held on ${UPLOADS_BASE}, which is ephemeral - a redeploy or a different host discards them while the MongoDB record survives. ` +
+      `generateStudentPdf: ${missingFileReasons.size} stored file(s) for reg no ${student.register_number} could not be resolved ` +
+        `after searching every upload root (${describeUploadRoots()}). ` +
+        `New uploads are written to ${UPLOADS_BASE}, which is ephemeral unless a persistent disk is mounted - ` +
+        `a redeploy, a changed working directory, or a different host discards the bytes while the MongoDB record survives. ` +
+        `Run "npm --prefix backend run db:repair-files" to re-attach a backup copy. ` +
         `Affected: ${JSON.stringify([...missingFileReasons.keys()])}`
     );
   }
@@ -1000,6 +1059,10 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
     }
 
     if (notEmbedded.length > 0) {
+      // Reached ONLY when a document's bytes could not be resolved or decoded
+      // after every known upload root had been searched, so it never appears in
+      // place of a certificate that is in fact available. Each row names the file
+      // and the precise reason, so the entry is a diagnostic, not a verdict.
       const notice = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
       const nw = notice.internal.pageSize.getWidth();
       notice.setFont('helvetica', 'bold');
@@ -1010,7 +1073,7 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
       notice.setFontSize(8.5);
       notice.setTextColor(60, 60, 60);
       notice.text(
-        'The documents listed below are registered in Section 8 of this record book but could not be reproduced as annexures. They remain available in full through the Student Documents screen. The specific reason for each one is stated below.',
+        'Every certificate above is reproduced in full as an annexure. The entries below are the only exceptions: they are registered in Section 8 but their file could not be read at generation time. The file name and the exact reason are stated for each one.',
         nw / 2,
         62,
         { align: 'center', maxWidth: nw - 40 }
