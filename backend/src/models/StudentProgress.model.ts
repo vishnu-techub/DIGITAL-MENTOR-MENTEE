@@ -14,7 +14,13 @@ export type ProgressCategory =
 
 export type ProgressLevel = 'College' | 'State' | 'National' | 'International';
 
-export type ProgressStatus = 'Pending' | 'Verified' | 'Rejected';
+export type ProgressStatus =
+  | 'Pending'
+  | 'Approved'
+  | 'Editing'
+  | 'Submitted'
+  | 'Verified'
+  | 'Rejected';
 
 export interface IStudentProgress extends Document {
   studentId: mongoose.Types.ObjectId;
@@ -144,7 +150,7 @@ const StudentProgressSchema = new Schema<IStudentProgress>(
     },
     status: {
       type: String,
-      enum: ['Pending', 'Verified', 'Rejected'],
+      enum: ['Pending', 'Approved', 'Editing', 'Submitted', 'Verified', 'Rejected'],
       default: 'Pending',
       index: true,
     },

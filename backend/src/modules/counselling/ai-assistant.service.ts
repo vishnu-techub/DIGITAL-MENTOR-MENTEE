@@ -243,6 +243,110 @@ function getInstitutionalBotAnswer(question: string, q: string): AiBotResponse {
 }
 
 /**
+ * Values that are official record data and must never be altered by a writing
+ * assistant: register numbers, subject codes, marks, CGPA/SGPA, dates and IDs.
+ *
+ * A writing assistant corrects *prose*. If a correction would drop, reorder or
+ * restate any of these, it is not a correction - it is data corruption. These
+ * tokens are extracted from the original and required to survive verbatim in the
+ * candidate, so an unsafe suggestion is rejected rather than shown.
+ *
+ * Matched shapes:
+ *   8.5 / 91.4 / 7.25          decimals (marks, CGPA, SGPA, attendance %)
+ *   731523104999               long digit runs (register numbers, IDs)
+ *   24ITT36 / CSE / NPTEL      uppercase codes and acronyms
+ *   2026-03-14 / 14-03-2026    dates in either order
+ */
+/**
+ * Capitals used as emphasis rather than as codes. Excluded from the protected
+ * set so that shouting prose ("THE STUDENT MUST SUBMIT") is still normalised.
+ */
+const ENGLISH_STOPWORDS_UPPER: ReadonlySet<string> = new Set([
+  'THE', 'AND', 'FOR', 'NOT', 'BUT', 'YOU', 'ALL', 'CAN', 'WAS', 'ARE', 'HAS', 'HAD',
+  'HIS', 'HER', 'ITS', 'OUR', 'WHO', 'WHY', 'HOW', 'MAY', 'MUST', 'SHOULD', 'WILL',
+  'WITH', 'FROM', 'THIS', 'THAT', 'THEY', 'THEM', 'THEN', 'THAN', 'VERY', 'MUCH',
+  'MANY', 'SOME', 'ONLY', 'ALSO', 'JUST', 'LIKE', 'WELL', 'DUE', 'YES', 'OK',
+]);
+
+const PROTECTED_VALUE_PATTERNS: readonly RegExp[] = [
+  /\b\d{1,4}[-/]\d{1,2}[-/]\d{2,4}\b/g, // dates
+  // Alphanumeric codes: letters plus at least one digit, in any arrangement, so
+  // 24ITT36 / CS101 / NPTEL-2024 all match. Starts with a letter or digit because
+  // institutional codes are commonly year-prefixed (24ITT36).
+  /\b(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{3,}\b/g,
+  /\b[A-Z]{2,6}\b/g, // short uppercase codes: CSE, ECE, NPTEL, CGPA
+  /\b\d+\.\d+\b/g, // decimals: 8.5, 91.4
+  /\b\d{4,}\b/g, // long digit runs: register numbers, IDs
+];
+
+/**
+ * Every protected official value present in `text`, de-duplicated.
+ * Order is preserved so the result is stable and easy to assert on.
+ */
+export function extractProtectedValues(text: string): string[] {
+  const found = new Set<string>();
+
+  // Dates are matched first and then masked out, so the year inside
+  // "14-03-2026" is not additionally reported as a bare 4-digit ID. Requiring
+  // the full date to survive is the stronger and less surprising rule.
+  const dates = text.match(PROTECTED_VALUE_PATTERNS[0]) || [];
+  let masked = text.replace(PROTECTED_VALUE_PATTERNS[0], (d) => ' '.repeat(d.length));
+
+  for (const date of dates) {
+    if (!ENGLISH_STOPWORDS_UPPER.has(date)) found.add(date);
+  }
+
+  for (const pattern of PROTECTED_VALUE_PATTERNS.slice(1)) {
+    for (const match of masked.match(pattern) || []) {
+      // Ordinary words typed in capitals ("THE", "AND") are emphasis, not record
+      // data, so they are not protected and remain free to be recased.
+      if (!ENGLISH_STOPWORDS_UPPER.has(match)) found.add(match);
+    }
+  }
+
+  return [...found];
+}
+
+/**
+ * True when every protected value from `original` still appears verbatim in
+ * `candidate`. This is the last line of defence behind the prompt: an LLM can
+ * ignore instructions, but it cannot make a number survive that it deleted.
+ */
+export function preservesProtectedValues(original: string, candidate: string): boolean {
+  const protectedValues = extractProtectedValues(original);
+  if (protectedValues.length === 0) return true;
+  return protectedValues.every((value) => candidate.includes(value));
+}
+
+/**
+ * Strip the wrapper an LLM may add around its answer: code fences, surrounding
+ * quotes, and a leading label such as "Corrected text:". Only the corrected
+ * prose is ever returned, so it can be applied to a textarea as-is.
+ */
+export function sanitizeLlmOutput(raw: string): string {
+  let text = raw.trim();
+
+  // ```...``` fences, with or without a language tag.
+  text = text.replace(/^```[a-zA-Z]*\s*/, '').replace(/\s*```$/, '').trim();
+
+  // A leading label the model may have prepended.
+  text = text.replace(/^(corrected(\s+(text|version|sentence))?|suggestion|output)\s*:\s*/i, '');
+
+  // Matching surrounding quotes.
+  if (/^".*"$/.test(text) || /^'.*'$/.test(text)) {
+    text = text.slice(1, -1).trim();
+  }
+
+  // An LLM that returns prose instead of a correction is not usable; anything
+  // containing a newline with a sentence fragment is treated as commentary.
+  if (/\n\s*\n/.test(text) && text.split('\n').filter((l) => l.trim()).length > 4) {
+    return '';
+  }
+
+  return text;
+}
+
+/**
  * 2. Auto Spelling + Grammar Correction Engine (Writing Assistance)
  * Strictly preserves mentor's meaning without inventing facts.
  */
@@ -263,13 +367,22 @@ export async function correctGrammarAndSpelling(text: string): Promise<GrammarCh
   if (apiKey && original.length > 8) {
     try {
       const llmCorrected = await callExternalGrammarLlm(apiKey, model, original);
-      if (llmCorrected && llmCorrected.trim() !== original.trim()) {
-        return {
-          original,
-          corrected: llmCorrected.trim(),
-          hasCorrections: true,
-          source: 'LLM',
-        };
+      const candidate = sanitizeLlmOutput(llmCorrected || '');
+
+      if (candidate && candidate.trim() !== original.trim()) {
+        // An LLM can ignore the prompt. It cannot make a deleted number survive,
+        // so any suggestion that loses or alters an official value is discarded
+        // and the deterministic rule engine is used instead.
+        if (!preservesProtectedValues(original, candidate)) {
+          console.warn('AI suggestion altered an official value; falling back to the rule-based engine.');
+        } else {
+          return {
+            original,
+            corrected: candidate.trim(),
+            hasCorrections: true,
+            source: 'LLM',
+          };
+        }
       }
     } catch (err: any) {
       console.warn('External grammar check failed, applying rule-based engine:', err.message);
@@ -286,6 +399,16 @@ export async function correctGrammarAndSpelling(text: string): Promise<GrammarCh
     hasCorrections,
     source: 'INSTITUTIONAL_GRAMMAR_ENGINE',
   };
+}
+
+/**
+ * A token that looks like official record data rather than prose: an all-caps
+ * word that is entirely uppercase (CSE, CGPA, NPTEL) or that contains a digit
+ * (24ITT36). Such tokens are passed through untouched by the rule engine.
+ */
+function isOfficialToken(token: string): boolean {
+  if (!token || !/[A-Z]/.test(token)) return false;
+  return token === token.toUpperCase() || /\d/.test(token);
 }
 
 /**
@@ -340,10 +463,14 @@ function runRuleBasedGrammarEngine(raw: string): string {
     preformance: 'performance',
   };
 
-  // Replace misspelled words using word boundary regex
+  // Replace misspelled words using word boundary regex.
+  // Official codes are skipped: an all-caps token containing a digit (24ITT36)
+  // or a short all-caps token (CSE, CGPA) is record data, not prose, so it is
+  // never "corrected" even if it happens to resemble a dictionary word.
   for (const [wrong, right] of Object.entries(spellMap)) {
     const regex = new RegExp(`\\b${wrong}\\b`, 'gi');
     str = str.replace(regex, (match) => {
+      if (isOfficialToken(match)) return match;
       // Match case
       if (match[0] === match[0].toUpperCase()) {
         return right.charAt(0).toUpperCase() + right.slice(1);
@@ -516,10 +643,10 @@ Proofread and correct the following text:
 "${text}"
 
 Rules:
-1. Fix all spelling mistakes, grammar errors, punctuation, and capitalization.
-2. PRESERVE THE STAFF'S INTENDED MEANING 100%. Do not invent facts, student names, problems, or academic details.
-3. Keep the tone concise, professional, and natural.
-4. Output ONLY the corrected text. Do NOT add preamble, quotes, explanations, or notes.`;
+1. Fix spelling mistakes, grammar errors, punctuation, and capitalization. Make the wording professional and natural.
+2. PRESERVE THE WRITER'S INTENDED MEANING EXACTLY. Do not invent facts, names, problems, or academic details. Do not add or remove information.
+3. NEVER alter official record values. Copy names, register numbers, certificate names, department names, subject codes, dates, marks, CGPA, SGPA, percentages and identifiers VERBATIM, character for character. Only the surrounding prose may change.
+4. Output ONLY the corrected text. No preamble, no quotes, no labels, no explanations, no notes, no markdown.`;
 
   return new Promise((resolve) => {
     if (apiKey.startsWith('sk-')) {

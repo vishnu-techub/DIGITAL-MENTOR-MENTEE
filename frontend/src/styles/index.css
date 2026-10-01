@@ -623,6 +623,48 @@ div.desktop-only.table-responsive {
 .badge-info    { background: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE; }
 .badge-primary { background: #F1F5F9; color: #0B2545; border: 1px solid #CBD5E1; }
 .badge-neutral { background: #F8FAFC; color: #64748B; border: 1px solid #E2E8F0; }
+/* `badge-secondary` is used across the dashboards but was never defined, so
+   those badges rendered unstyled. */
+.badge-secondary { background: #F1F5F9; color: #334155; border: 1px solid #CBD5E1; }
+
+/* ---------------------------------------------------------------------------
+   Record state presentation (see src/lib/recordStatus.tsx)
+   The state and its wording always come from the backend. These classes only
+   control appearance.
+   --------------------------------------------------------------------------- */
+
+/* The short explanation of the current state, shown under a status badge. */
+.record-state-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.76rem;
+  color: #64748B;
+  line-height: 1.4;
+}
+
+.record-state-hint--locked {
+  color: #92400E;
+  font-weight: 600;
+}
+
+/* An action that the backend does not currently permit. Rendered INSTEAD of a
+   silently disabled button so the reason for the restriction is always visible. */
+.unavailable-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: #64748B;
+  background: #F8FAFC;
+  border: 1px dashed #CBD5E1;
+  cursor: help;
+  max-width: 100%;
+}
 
 /* Buttons System */
 .btn {

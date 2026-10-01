@@ -13,6 +13,7 @@ export type ApiErrorType =
   | 'STUDENT_NOT_FOUND'
   | 'MENTOR_NOT_FOUND'
   | 'CONFLICT'
+  | 'RECORD_LOCKED'
   | 'VALIDATION_ERROR'
   | 'TOO_MANY_REQUESTS'
   | 'SERVER_ERROR'
@@ -100,13 +101,30 @@ export function formatApiError(status: number, rawMessage?: string, endpoint?: s
     };
   }
 
-  // 409 Conflict / Duplicate Record
+  // 409 Conflict.
+  // The backend uses 409 for two distinct situations: a genuine duplicate, and a
+  // refused state-machine transition (a read-only or mentor-confirmed record).
+  // The server's own message is authoritative in both cases, so it is surfaced
+  // verbatim rather than relabelled as "Duplicate Entry", which was actively
+  // misleading for a locked record.
   if (status === 409) {
+    const isLockConflict =
+      msgLower.includes('permanently locked') ||
+      msgLower.includes('read-only') ||
+      msgLower.includes('cannot move to') ||
+      msgLower.includes('cannot be submitted') ||
+      msgLower.includes('cannot be deleted') ||
+      msgLower.includes('cannot be edited');
+
     return {
-      type: 'CONFLICT',
+      type: isLockConflict ? 'RECORD_LOCKED' : 'CONFLICT',
       statusCode: 409,
-      title: 'Duplicate Entry',
-      message: rawMessage || 'A record with this information already exists in the institutional database.',
+      title: isLockConflict ? 'Record Locked' : 'Duplicate Entry',
+      message:
+        rawMessage ||
+        (isLockConflict
+          ? 'This record is read-only in its current state.'
+          : 'A record with this information already exists in the institutional database.'),
     };
   }
 

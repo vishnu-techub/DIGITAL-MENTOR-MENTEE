@@ -7,6 +7,7 @@ import {
   getStudentProgressList,
   updateStudentProgress,
   deleteStudentProgress,
+  submitStudentProgress,
   getMenteeProgressForMentor,
   verifyMenteeProgress,
   progressUploadMiddleware,
@@ -41,6 +42,15 @@ router.delete(
   '/:id',
   authorize(ROLES.STUDENT, ROLES.ADMIN, ROLES.HOD),
   deleteStudentProgress
+);
+
+// Student submits an editable achievement for mentor review.
+// Owner-only at the route: a mentor/HOD/admin can review the record but must
+// never be able to push it into the review queue on the student's behalf.
+router.post(
+  '/:id/submit',
+  authorize(ROLES.STUDENT),
+  submitStudentProgress
 );
 
 export default router;

@@ -2,6 +2,17 @@
  * KSRCE Digital Mentor-Mentee System Typed API Client
  */
 
+import type { RecordState, RecordPermissions } from '../lib/recordStatus';
+
+export type { RecordState, RecordPermissions };
+
+/** Every student record returned by the API carries the server-derived capabilities. */
+export interface PermissionedRecord {
+  _id: string;
+  permissions: RecordPermissions;
+  [key: string]: any;
+}
+
 export interface ApiResponse<T = any> {
   success: boolean;
   statusCode: number;
@@ -327,6 +338,10 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ question }),
       }),
+    /**
+     * Proofreading is advisory only: it returns a suggestion and never writes to
+     * any record. The caller must ask the user before applying it.
+     */
     checkGrammar: (text: string) =>
       request<{
         original: string;
@@ -360,8 +375,9 @@ export const api = {
       }),
     getByStudent: (studentId: string) =>
       request<any[]>(`/documents/student/${studentId}`),
-    // Edit / re-submit a certificate. The backend resets a student edit to
-    // Pending and refuses any edit of a mentor-confirmed (Verified) one.
+    // Save a certificate. Legal only from a student-editable state
+    // (Approved / Editing / Rejected); Pending, Submitted and Verified are
+    // refused server-side with a reason.
     update: (
       documentId: string,
       data: {
@@ -377,13 +393,17 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(data),
       }),
+    // Submit an editable record for mentor review (Approved/Editing/Rejected ->
+    // Submitted). A save is a draft and deliberately does NOT do this.
+    submit: (documentId: string) =>
+      request(`/documents/${documentId}/submit`, { method: 'POST' }),
     delete: (documentId: string) =>
       request(`/documents/${documentId}`, { method: 'DELETE' }),
     deleteAll: (studentId: string) =>
       request(`/documents/student/${studentId}/all`, { method: 'DELETE' }),
     verify: (
       documentId: string,
-      data: { verificationStatus: 'Pending' | 'Verified' | 'Rejected'; rejectionReason?: string }
+      data: { verificationStatus: RecordState; rejectionReason?: string }
     ) =>
       request(`/documents/${documentId}/verify`, {
         method: 'PATCH',
@@ -577,9 +597,14 @@ export const api = {
       request<any>(`/student/progress/${id}`, {
         method: 'DELETE',
       }),
+    // Submit an editable achievement for mentor review.
+    submit: (id: string) =>
+      request<any>(`/student/progress/${id}/submit`, {
+        method: 'POST',
+      }),
     getMenteeProgress: (studentId: string) =>
       request<{ records: any[]; summary: any }>(`/mentor/mentees/${studentId}/progress`),
-    verifyMenteeProgress: (studentId: string, id: string, status: string, rejectionReason?: string, source?: 'DOCUMENT' | 'PROGRESS') =>
+    verifyMenteeProgress: (studentId: string, id: string, status: RecordState, rejectionReason?: string, source?: 'DOCUMENT' | 'PROGRESS') =>
       request<any>(`/mentor/mentees/${studentId}/progress/${id}/verify`, {
         method: 'PUT',
         body: JSON.stringify({ status, rejectionReason, source }),

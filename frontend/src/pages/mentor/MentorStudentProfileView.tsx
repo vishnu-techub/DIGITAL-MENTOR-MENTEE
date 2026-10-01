@@ -353,6 +353,14 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
     }
   };
 
+  // Meeting fields live in a different form object, so they need their own
+  // setter. Kept deliberately explicit so a field can never be routed to the
+  // wrong form by a copy-paste mistake.
+  const handleMeetingUseCorrection = (fieldKey: 'challengesDiscussed' | 'mentorRemarks', correctedText: string) => {
+    if (!correctedText) return;
+    setMeetingForm((prev) => ({ ...prev, [fieldKey]: correctedText }));
+  };
+
   // Open modal for creating new counselling record
   const handleOpenAddCounselling = () => {
     setEditingCounsellingId(null);
@@ -2598,6 +2606,19 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               error={counsellingErrors.actionPlan}
             />
 
+            {/* Mentor Remarks - free-text closing note saved with the record */}
+            <GrammarAssistField
+              fieldId="counsellingMentorRemarks"
+              label="Mentor Remarks"
+              rows={2}
+              placeholder="Overall remarks on the mentee's progress, attitude and readiness..."
+              value={counsellingForm.mentorRemarks}
+              activeAiField={activeAiField}
+              onActiveFieldChange={setActiveAiField}
+              onUseCorrection={handleUseCorrection}
+              onChange={(val) => setCounsellingForm((prev) => ({ ...prev, mentorRemarks: val }))}
+            />
+
             {/* Field 7 & 8: Follow-up Date & Status */}
             <div
               style={{
@@ -2704,27 +2725,31 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               </div>
             </div>
 
-            <div className="form-group" style={{ marginBottom: '1rem' }}>
-              <label className="form-label">Challenges & Topics Discussed</label>
-              <textarea
-                className="form-control"
-                rows={2}
-                placeholder="Review of semester attendance, arrears, lab submissions..."
-                value={meetingForm.challengesDiscussed}
-                onChange={(e) => setMeetingForm({ ...meetingForm, challengesDiscussed: e.target.value })}
-              />
-            </div>
+            <GrammarAssistField
+              fieldId="meetingChallenges"
+              label="Challenges & Topics Discussed"
+              rows={2}
+              placeholder="Review of semester attendance, arrears, lab submissions..."
+              value={meetingForm.challengesDiscussed}
+              activeAiField={activeAiField}
+              onActiveFieldChange={setActiveAiField}
+              onUseCorrection={(fieldId, corrected) =>
+                handleMeetingUseCorrection('challengesDiscussed', corrected)
+              }
+              onChange={(val) => setMeetingForm({ ...meetingForm, challengesDiscussed: val })}
+            />
 
-            <div className="form-group" style={{ marginBottom: '1rem' }}>
-              <label className="form-label">Mentor Remarks & Action Agreed Upon</label>
-              <textarea
-                className="form-control"
-                rows={2}
-                placeholder="Guidance given during Saturday session..."
-                value={meetingForm.mentorRemarks}
-                onChange={(e) => setMeetingForm({ ...meetingForm, mentorRemarks: e.target.value })}
-              />
-            </div>
+            <GrammarAssistField
+              fieldId="meetingMentorRemarks"
+              label="Mentor Remarks & Action Agreed Upon"
+              rows={2}
+              placeholder="Guidance given during Saturday session..."
+              value={meetingForm.mentorRemarks}
+              activeAiField={activeAiField}
+              onActiveFieldChange={setActiveAiField}
+              onUseCorrection={(fieldId, corrected) => handleMeetingUseCorrection('mentorRemarks', corrected)}
+              onChange={(val) => setMeetingForm({ ...meetingForm, mentorRemarks: val })}
+            />
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
               <button

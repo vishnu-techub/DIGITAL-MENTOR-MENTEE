@@ -4,6 +4,7 @@ import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
 import { Modal } from '../common/Modal';
 import { EmptyState } from '../common/EmptyState';
+import { RecordStatusBadge, readPermissions } from '../../lib/recordStatus';
 import {
   FileText,
   Upload,
@@ -20,6 +21,9 @@ import {
   ShieldCheck,
   Calendar,
   ExternalLink,
+  Edit,
+  Send,
+  Lock,
 } from 'lucide-react';
 
 interface StudentDocumentsManagerProps {
@@ -88,9 +92,15 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
 
   // Verification modal state
   const [selectedDocForVerify, setSelectedDocForVerify] = useState<any | null>(null);
-  const [verifyAction, setVerifyAction] = useState<'Verified' | 'Rejected'>('Verified');
+  // The review decision offered here. APPROVED is the PENDING -> APPROVED step
+  // that lets the student edit; VERIFIED is the SUBMITTED -> CONFIRMED step.
+  const [verifyAction, setVerifyAction] = useState<'Approved' | 'Verified' | 'Rejected'>('Verified');
   const [rejectionReason, setRejectionReason] = useState('');
   const [verifying, setVerifying] = useState(false);
+
+  // Edit / resubmit a certificate. Saving is a draft; submitting is separate.
+  const [editingDoc, setEditingDoc] = useState<any | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   // Preview modal state.
   // The file is private, so we hold an authenticated Blob URL rather than the
@@ -282,6 +292,71 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
     }
   };
 
+  /** Open the edit form for a certificate in a student-editable state. */
+  const handleOpenEdit = (doc: any) => {
+    setEditingDoc({
+      id: doc.id || doc._id,
+      title: doc.title || '',
+      category: doc.category || '',
+      eventName: doc.eventName || '',
+      organizer: doc.organizer || '',
+      eventDate: doc.eventDate || '',
+      description: doc.description || '',
+    });
+  };
+
+  /**
+   * Save the certificate. A save is a DRAFT: the backend keeps the record in an
+   * editable state, and the student submits it separately. The certificate file
+   * itself is immutable after upload and is not part of this form.
+   */
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingDoc) return;
+    if (!editingDoc.title.trim()) {
+      toast.warning('Please provide a title for this certificate.');
+      return;
+    }
+
+    setSavingEdit(true);
+    try {
+      const res = await api.documents.update(editingDoc.id, {
+        title: editingDoc.title,
+        category: editingDoc.category,
+        eventName: editingDoc.eventName,
+        organizer: editingDoc.organizer,
+        eventDate: editingDoc.eventDate,
+        description: editingDoc.description,
+      });
+      if (res.success) {
+        setEditingDoc(null);
+        toast.success(res.message || 'Changes saved. Submit it when you are ready for review.');
+        fetchDocuments();
+      } else {
+        toast.error(res.message || 'Failed to save the certificate.');
+      }
+    } catch (err: any) {
+      toast.error('Failed to save the certificate: ' + err.message);
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  /** Submit an editable certificate to the mentor. Moves it to SUBMITTED. */
+  const handleSubmitForReview = async (docId: string) => {
+    try {
+      const res = await api.documents.submit(docId);
+      if (res.success) {
+        toast.success(res.message || 'Submitted for mentor review.');
+        fetchDocuments();
+      } else {
+        toast.error(res.message || 'Failed to submit the certificate.');
+      }
+    } catch (err: any) {
+      toast.error('Failed to submit for review: ' + err.message);
+    }
+  };
+
   const handleDelete = async (docId: string, title: string) => {
     if (!window.confirm(`Are you sure you want to permanently delete "${title}"?`)) return;
 
@@ -336,7 +411,7 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
       if (res.success) {
         setSelectedDocForVerify(null);
         setRejectionReason('');
-        toast.success('Document verification status updated.');
+        toast.success(res.message || 'Review decision recorded.');
         fetchDocuments();
       } else {
         toast.error(res.message || 'Verification update failed.');
@@ -575,8 +650,12 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
           {filteredDocs.map((doc, index) => {
             const isPrimaryForm = doc.isPrimary || doc.documentType === 'student_details_form';
             const isPdf = doc.fileType?.includes('pdf') || doc.fileName?.toLowerCase().endsWith('.pdf');
-            const isVerified = isPrimaryForm || doc.verificationStatus === 'Verified';
-            const isRejected = doc.verificationStatus === 'Rejected';
+            // Authoritative capabilities from the API. Every action button below
+            // is gated on these, never on the role alone.
+            const perms = readPermissions(doc);
+            const state = perms?.state;
+            const isVerified = isPrimaryForm || state === 'Verified';
+            const isRejected = state === 'Rejected';
 
             // Document type display text
             const docTypeLabel = isPrimaryForm
@@ -667,25 +746,12 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
                       <span
                         className="badge badge-success"
                         style={{ fontSize: 'var(--text-xs)', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                        title="System-maintained Student Details Form. It is generated from the student profile and is not an uploaded certificate."
                       >
                         <CheckCircle size={12} aria-hidden="true" /> Official
                       </span>
                     ) : (
-                      <span
-                        className={`badge ${
-                          isVerified
-                            ? 'badge-success'
-                            : isRejected
-                            ? 'badge-danger'
-                            : 'badge-warning'
-                        }`}
-                        style={{ fontSize: 'var(--text-xs)', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
-                      >
-                        {isVerified && <CheckCircle size={12} aria-hidden="true" />}
-                        {isRejected && <XCircle size={12} aria-hidden="true" />}
-                        {!isVerified && !isRejected && <Clock size={12} aria-hidden="true" />}
-                        {doc.verificationStatus || 'Pending'}
-                      </span>
+                      <RecordStatusBadge record={doc} />
                     )}
                   </div>
 
@@ -834,25 +900,83 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
                     </button>
                   </div>
 
-                  <div style={{ display: 'flex', gap: '0.4rem' }}>
-                    {/* Review Button for Mentors */}
-                    {canVerify && !isPrimaryForm && (
+                  <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                    {/* Mentor review. Gated on the server's canReview /
+                        canConfirm, so the two-stage approval and confirmation
+                        flow is driven by the backend, not by guessing. */}
+                    {perms?.canReview && !isPrimaryForm && (
                       <button
                         type="button"
                         className="btn btn-sm btn-primary"
                         style={{ fontSize: '0.75rem', padding: '5px 10px' }}
+                        title={
+                          perms.canConfirm
+                            ? 'Confirm this submitted record as an official verified entry'
+                            : 'Review this request'
+                        }
                         onClick={() => {
                           setSelectedDocForVerify(doc);
-                          setVerifyAction('Verified');
+                          setVerifyAction(perms.canConfirm ? 'Verified' : 'Approved');
                           setRejectionReason(doc.rejectionReason || '');
                         }}
                       >
-                        <FileCheck size={13} /> Review
+                        <FileCheck size={13} /> {perms.canConfirm ? 'Confirm' : 'Review'}
                       </button>
                     )}
 
-                    {/* Delete Certificate (Admin or Student; never delete Student Details Form) */}
-                    {(isAdmin || (!readOnly && isStudent)) && !isPrimaryForm && (
+                    {/* Student edit + submit, only from a student-editable state. */}
+                    {perms?.canEdit && !isPrimaryForm && (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-secondary"
+                        title={
+                          state === 'Editing'
+                            ? 'Continue editing this certificate'
+                            : state === 'Rejected'
+                            ? 'Edit the changes your mentor requested'
+                            : 'Edit this certificate'
+                        }
+                        style={{ fontSize: '0.75rem', padding: '5px 10px' }}
+                        onClick={() => handleOpenEdit(doc)}
+                      >
+                        <Edit size={13} />
+                        {state === 'Editing'
+                          ? 'Continue Editing'
+                          : state === 'Rejected'
+                          ? 'Edit & Resubmit'
+                          : 'Edit'}
+                      </button>
+                    )}
+
+                    {perms?.canSubmit && !isPrimaryForm && (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-primary"
+                        style={{ fontSize: '0.75rem', padding: '5px 10px' }}
+                        title={
+                          state === 'Rejected'
+                            ? 'Resubmit this certificate to your mentor'
+                            : 'Submit this certificate to your mentor for review'
+                        }
+                        onClick={() => handleSubmitForReview(doc.id || doc._id)}
+                      >
+                        <Send size={13} />
+                        {state === 'Rejected' ? 'Resubmit' : 'Submit'}
+                      </button>
+                    )}
+
+                    {/* Read-only states show the reason instead of a dead button. */}
+                    {!perms?.canEdit && perms?.reason && !isPrimaryForm && (
+                      <span className="unavailable-action" title={perms.explanation}>
+                        <Lock size={13} aria-hidden="true" />
+                        {perms.reason}
+                      </span>
+                    )}
+
+                    {/* Delete Certificate. Gated on the server's canDelete, so a
+                        read-only or confirmed record can never show a working
+                        delete control. */}
+                    {perms?.canDelete && !isPrimaryForm && (
                       <button
                         type="button"
                         className="btn btn-sm btn-danger"
@@ -1054,7 +1178,14 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
       </Modal>
 
       {/* VERIFY / REJECT MODAL (For Mentor / Faculty) */}
-      {selectedDocForVerify && (
+      {selectedDocForVerify && (() => {
+        // Which decisions are legal is a backend fact, read from the record's
+        // own permission payload. Only a SUBMITTED record can be confirmed; only
+        // a PENDING or REJECTED one can be approved for further editing.
+        const sel = readPermissions(selectedDocForVerify);
+        const canConfirmSelected = !!sel?.canConfirm;
+        const canApproveSelected = sel?.state === 'Pending' || sel?.state === 'Rejected';
+        return (
         <Modal
           isOpen={!!selectedDocForVerify}
           title={`Review Certificate: ${selectedDocForVerify.fileName || selectedDocForVerify.title}`}
@@ -1069,7 +1200,10 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
 
             <div className="form-group">
               <label className="form-label">Review Decision</label>
-              <div style={{ display: 'flex', gap: '1rem' }}>
+              {/* The available decisions come from the server. A PENDING record
+                  can only be approved or rejected; only a SUBMITTED record can
+                  be confirmed to the terminal verified state. */}
+              {canConfirmSelected && (
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
                   <input
                     type="radio"
@@ -1078,19 +1212,35 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
                     checked={verifyAction === 'Verified'}
                     onChange={() => setVerifyAction('Verified')}
                   />
-                  <span style={{ color: '#059669', fontWeight: 600 }}>Verify & Endorse</span>
+                  <span style={{ color: '#059669', fontWeight: 600 }}>
+                    Confirm — make this an official verified record
+                  </span>
                 </label>
+              )}
+              {canApproveSelected && (
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
                   <input
                     type="radio"
                     name="verifyAction"
-                    value="Rejected"
-                    checked={verifyAction === 'Rejected'}
-                    onChange={() => setVerifyAction('Rejected')}
+                    value="Approved"
+                    checked={verifyAction === 'Approved'}
+                    onChange={() => setVerifyAction('Approved')}
                   />
-                  <span style={{ color: '#DC2626', fontWeight: 600 }}>Reject with Reason</span>
+                  <span style={{ color: '#1D4ED8', fontWeight: 600 }}>
+                    Approve — let the student edit and submit
+                  </span>
                 </label>
-              </div>
+              )}
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="verifyAction"
+                  value="Rejected"
+                  checked={verifyAction === 'Rejected'}
+                  onChange={() => setVerifyAction('Rejected')}
+                />
+                <span style={{ color: '#DC2626', fontWeight: 600 }}>Reject with Reason</span>
+              </label>
             </div>
 
             {verifyAction === 'Rejected' && (
@@ -1120,10 +1270,116 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
               </button>
               <button
                 type="submit"
-                className={`btn ${verifyAction === 'Verified' ? 'btn-success' : 'btn-danger'}`}
+                className={`btn ${
+                  verifyAction === 'Rejected'
+                    ? 'btn-danger'
+                    : verifyAction === 'Approved'
+                    ? 'btn-primary'
+                    : 'btn-success'
+                }`}
                 disabled={verifying}
               >
-                {verifying ? 'Saving...' : `Confirm ${verifyAction}`}
+                {verifying
+                  ? 'Saving...'
+                  : verifyAction === 'Rejected'
+                  ? 'Send Back for Changes'
+                  : verifyAction === 'Approved'
+                  ? 'Approve Request'
+                  : 'Confirm as Verified'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+        );
+      })()}
+
+      {/* EDIT / RESUBMIT MODAL (student, editable states only) */}
+      {editingDoc && (
+        <Modal
+          isOpen={!!editingDoc}
+          title="Edit Certificate Details"
+          onClose={() => !savingEdit && setEditingDoc(null)}
+        >
+          <form onSubmit={handleSaveEdit}>
+            <p style={{ fontSize: '0.82rem', color: '#475569', marginBottom: '1rem', lineHeight: 1.6 }}>
+              Correct the details below, then save. Saving keeps this record editable; use
+              <strong> Submit</strong> afterwards to send it to your mentor for review. The
+              certificate file itself cannot be changed after upload.
+            </p>
+
+            <div className="form-group">
+              <label className="form-label">Title <span style={{ color: '#DC2626' }}>*</span></label>
+              <input
+                type="text"
+                className="form-control"
+                required
+                value={editingDoc.title}
+                onChange={(e) => setEditingDoc({ ...editingDoc, title: e.target.value })}
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Category</label>
+              <input
+                type="text"
+                className="form-control"
+                value={editingDoc.category}
+                onChange={(e) => setEditingDoc({ ...editingDoc, category: e.target.value })}
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Event Name</label>
+              <input
+                type="text"
+                className="form-control"
+                value={editingDoc.eventName}
+                onChange={(e) => setEditingDoc({ ...editingDoc, eventName: e.target.value })}
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Organizer</label>
+              <input
+                type="text"
+                className="form-control"
+                value={editingDoc.organizer}
+                onChange={(e) => setEditingDoc({ ...editingDoc, organizer: e.target.value })}
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Event Date</label>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="e.g. 12-08-2026"
+                value={editingDoc.eventDate}
+                onChange={(e) => setEditingDoc({ ...editingDoc, eventDate: e.target.value })}
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Description</label>
+              <textarea
+                className="form-control"
+                rows={3}
+                value={editingDoc.description}
+                onChange={(e) => setEditingDoc({ ...editingDoc, description: e.target.value })}
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1.25rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={savingEdit}
+                onClick={() => setEditingDoc(null)}
+              >
+                Cancel
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={savingEdit}>
+                {savingEdit ? 'Saving...' : 'Save Changes'}
               </button>
             </div>
           </form>

@@ -20,7 +20,13 @@ export type DocumentCategory =
   | 'Extra Curricular'
   | 'Other';
 
-export type VerificationStatus = 'Pending' | 'Verified' | 'Rejected';
+export type VerificationStatus =
+  | 'Pending'
+  | 'Approved'
+  | 'Editing'
+  | 'Submitted'
+  | 'Verified'
+  | 'Rejected';
 
 export type DocumentType = 'student_details_form' | 'certificate' | 'other';
 
@@ -124,7 +130,7 @@ const StudentDocumentSchema = new Schema<IStudentDocument>(
     },
     verificationStatus: {
       type: String,
-      enum: ['Pending', 'Verified', 'Rejected'],
+      enum: ['Pending', 'Approved', 'Editing', 'Submitted', 'Verified', 'Rejected'],
       default: 'Pending',
       index: true,
     },

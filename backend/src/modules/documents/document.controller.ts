@@ -8,7 +8,17 @@ import { sendSuccess, sendError } from '../../utils/response.js';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
 import { ROLES } from '../../config/constants.js';
-import { checkStudentAccess, toIdString } from '../../utils/access.util.js';
+import { checkStudentAccess, isSelf, toIdString } from '../../utils/access.util.js';
+import {
+  RECORD_STATE,
+  RECORD_STATES,
+  CONFIRMED_LOCK_REASON,
+  canTransition,
+  canStudentTransition,
+  deriveRecordPermissions,
+  isTerminal,
+  type RecordState,
+} from '../../utils/record-permission.util.js';
 import { syncStudentDetailsPdf } from './student-details-pdf.service.js';
 import { resolveStoredUploadPath, resolveWritableUploadsDir } from '../../config/storage.js';
 
@@ -40,10 +50,9 @@ const ALLOWED_MIME = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png']
  * confirmed state in this schema; once reached the record is an official
  * verified entry and is permanently immutable.
  */
-export const CONFIRMED_DOCUMENT_STATUS = 'Verified';
+export const CONFIRMED_DOCUMENT_STATUS = RECORD_STATE.CONFIRMED;
 
-export const CONFIRMED_DOCUMENT_LOCK_MESSAGE =
-  'This certificate has been confirmed by your mentor and is now an official verified entry. Confirmed certificates are permanently locked and can no longer be edited, deleted or re-submitted.';
+export const CONFIRMED_DOCUMENT_LOCK_MESSAGE = CONFIRMED_LOCK_REASON;
 
 // File validation filter (MIME level; magic bytes are verified after landing on disk)
 const fileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
@@ -197,7 +206,11 @@ export async function uploadDocument(req: AuthRequest, res: Response) {
       eventDate: eventDate?.trim() || '',
       description: description?.trim() || '',
       uploadedBy: req.user?.id ? new mongoose.Types.ObjectId(req.user.id) : undefined,
-      verificationStatus: 'Pending',
+      // An upload ALWAYS lands in PENDING. Uploading a certificate must never
+      // make it verified — only a mentor confirmation of a SUBMITTED record
+      // does that, and the value is hardcoded here so no request field, and no
+      // client, can influence it.
+      verificationStatus: RECORD_STATE.PENDING,
       uploadedAt: new Date(),
     });
 
@@ -236,9 +249,12 @@ export async function uploadDocument(req: AuthRequest, res: Response) {
         fileType: newDoc.fileType,
         fileSize: newDoc.fileSize,
         verificationStatus: newDoc.verificationStatus,
+        // Capabilities are computed on the server and sent to the client, so
+        // the UI never has to decide what is editable.
+        permissions: deriveRecordPermissions(newDoc.verificationStatus, req.user?.role),
         uploadedAt: newDoc.uploadedAt,
       },
-      'Document uploaded successfully.',
+      'Document uploaded successfully. It is now waiting for mentor approval.',
       201
     );
   } catch (err: any) {
@@ -296,7 +312,10 @@ export async function getStudentDocuments(req: AuthRequest, res: Response) {
       organizer: d.organizer || '',
       eventDate: d.eventDate || '',
       description: d.description || '',
-      verificationStatus: d.verificationStatus || 'Pending',
+      verificationStatus: d.verificationStatus || RECORD_STATE.PENDING,
+      // The authoritative capability set for this caller. The UI renders these
+      // verbatim instead of re-deriving them from the status string.
+      permissions: deriveRecordPermissions(d.verificationStatus, req.user?.role),
       rejectionReason: d.rejectionReason || '',
       rejectedByName: d.rejectedBy?.fullName || null,
       rejectedDate: d.rejectedDate || null,
@@ -441,8 +460,9 @@ export async function deleteDocument(req: AuthRequest, res: Response) {
     }
 
     // A mentor-confirmed certificate is an official verified entry. It is
-    // immutable: the backend refuses the delete even if the UI hides the button.
-    if (doc.verificationStatus === CONFIRMED_DOCUMENT_STATUS) {
+    // immutable for EVERYONE, including admins: the backend refuses the delete
+    // even if the UI hides the button.
+    if (isTerminal(doc.verificationStatus)) {
       return sendError(res, CONFIRMED_DOCUMENT_LOCK_MESSAGE, 409);
     }
 
@@ -454,6 +474,21 @@ export async function deleteDocument(req: AuthRequest, res: Response) {
     const access = await checkStudentAccess(req.user, student);
     if (!access.allowed) {
       return sendError(res, access.message, access.status);
+    }
+
+    // The owner may only delete while the record is in an editable state. PENDING
+    // and SUBMITTED are read-only for the student, so a delete attempt there is
+    // refused with the reason instead of silently succeeding. Mentors and admins
+    // keep their housekeeping delete for non-confirmed records.
+    if (req.user?.role === ROLES.STUDENT) {
+      const perms = deriveRecordPermissions(doc.verificationStatus, req.user.role);
+      if (!perms.canDelete) {
+        return sendError(
+          res,
+          perms.reason ?? 'This certificate cannot be deleted in its current state.',
+          409
+        );
+      }
     }
 
     // Metadata first: if the unlink fails we must not leave a dangling record.
@@ -505,10 +540,10 @@ export async function deleteDocument(req: AuthRequest, res: Response) {
 // step of the state machine was unreachable and a rejected certificate could
 // only ever be deleted and re-uploaded.
 //
-// A student edit returns the certificate to Pending, which is what puts the
-// corrected copy back in front of the mentor. A mentor-confirmed (Verified)
-// certificate stays permanently locked, enforced here rather than only in the
-// UI.
+// Saving a certificate. The record must be in a student-editable state; a
+// PENDING, SUBMITTED or CONFIRMED record is refused here, on the server. The
+// state machine lives in record-permission.util.ts — this handler only applies
+// it.
 export async function updateDocument(req: AuthRequest, res: Response) {
   const documentId = req.params.documentId as string;
 
@@ -530,7 +565,9 @@ export async function updateDocument(req: AuthRequest, res: Response) {
       );
     }
 
-    if (doc.verificationStatus === CONFIRMED_DOCUMENT_STATUS) {
+    // A confirmed (Verified) record is an immutable official entry: no edit, no
+    // delete, no re-submission, in any direction.
+    if (isTerminal(doc.verificationStatus)) {
       return sendError(res, CONFIRMED_DOCUMENT_LOCK_MESSAGE, 409);
     }
 
@@ -542,6 +579,17 @@ export async function updateDocument(req: AuthRequest, res: Response) {
     const access = await checkStudentAccess(req.user, student);
     if (!access.allowed) {
       return sendError(res, access.message, access.status);
+    }
+
+    // PENDING and SUBMITTED are read-only for the student, so refuse the save
+    // with the reason rather than letting the write through.
+    if (!canStudentTransition(doc.verificationStatus, RECORD_STATE.APPROVED)) {
+      return sendError(
+        res,
+        deriveRecordPermissions(doc.verificationStatus, req.user?.role).reason ??
+          'This certificate is read-only in its current state.',
+        409
+      );
     }
 
     const { title, category, eventName, organizer, eventDate, description } = req.body || {};
@@ -561,10 +609,12 @@ export async function updateDocument(req: AuthRequest, res: Response) {
     if (eventDate !== undefined) doc.eventDate = String(eventDate).trim();
     if (description !== undefined) doc.description = String(description).trim();
 
-    // Only the OWNER re-enters review. A mentor correcting metadata must not
-    // silently reset their own review decision, so the reset is student-only.
+    // A save is a draft, not a submission. The student stays in an editable
+    // state and goes back in front of the mentor only when they explicitly
+    // submit, which is what `submitDocument` does. Saving also clears the
+    // outstanding rejection trail, since the record has now been corrected.
     if (req.user?.role === ROLES.STUDENT) {
-      doc.verificationStatus = 'Pending';
+      doc.verificationStatus = RECORD_STATE.APPROVED;
       doc.rejectionReason = '';
       doc.rejectedBy = undefined;
       doc.rejectedDate = undefined;
@@ -598,8 +648,9 @@ export async function updateDocument(req: AuthRequest, res: Response) {
         eventDate: doc.eventDate,
         description: doc.description,
         verificationStatus: doc.verificationStatus,
+        permissions: deriveRecordPermissions(doc.verificationStatus, req.user?.role),
       },
-      'Certificate updated and returned to the mentor for review.'
+      'Changes saved. Submit the record when you are ready for mentor review.'
     );
   } catch (err: any) {
     console.error('updateDocument error:', err);
@@ -614,19 +665,28 @@ export async function updateDocument(req: AuthRequest, res: Response) {
   }
 }
 
-// 6. Verify / Reject Document (Mentor / Admin / HOD)
+// 6. Mentor review decision (Mentor / Admin / HOD).
+//    PENDING -> APPROVED (student may then edit) or REJECTED.
+//    SUBMITTED -> CONFIRMED (displayed VERIFIED, immutable) or REJECTED.
 export async function verifyDocument(req: AuthRequest, res: Response) {
   const documentId = req.params.documentId as string;
   const status = req.body.verificationStatus || req.body.status;
   const rejectionReason = req.body.rejectionReason;
 
-  if (!status || !['Verified', 'Rejected', 'Pending'].includes(status)) {
-    return sendError(res, 'Valid verificationStatus is required (Pending, Verified, Rejected).', 400);
+  // Accept every persisted state so the request cannot be rejected merely for
+  // naming a state the machine does not contain; the transition guard below is
+  // what actually decides whether the move is legal.
+  if (!status || !(RECORD_STATES as readonly string[]).includes(String(status))) {
+    return sendError(
+      res,
+      `A valid verificationStatus is required (${RECORD_STATES.join(', ')}).`,
+      400
+    );
   }
 
-  const verificationStatus = status as 'Pending' | 'Verified' | 'Rejected';
+  const verificationStatus = status as RecordState;
 
-  if (verificationStatus === 'Rejected' && (!rejectionReason || rejectionReason.trim() === '')) {
+  if (verificationStatus === RECORD_STATE.REJECTED && (!rejectionReason || rejectionReason.trim() === '')) {
     return sendError(res, 'Rejection reason is mandatory when rejecting a document.', 400);
   }
 
@@ -655,20 +715,33 @@ export async function verifyDocument(req: AuthRequest, res: Response) {
       return sendError(res, access.message, access.status);
     }
 
-    // A confirmed certificate may not have its status changed in either
-    // direction: it is an immutable official record.
-    if (doc.verificationStatus === CONFIRMED_DOCUMENT_STATUS && verificationStatus !== CONFIRMED_DOCUMENT_STATUS) {
-      return sendError(res, CONFIRMED_DOCUMENT_LOCK_MESSAGE, 409);
+    // The single authority on whether a state change is legal. A confirmed
+    // record is frozen in every direction, and only a mentor may act at all.
+    if (!canTransition(doc.verificationStatus, verificationStatus, req.user?.role)) {
+      if (isTerminal(doc.verificationStatus)) {
+        return sendError(res, CONFIRMED_DOCUMENT_LOCK_MESSAGE, 409);
+      }
+      return sendError(
+        res,
+        `A record in state "${doc.verificationStatus}" cannot move to "${verificationStatus}". Allowed next states from ${doc.verificationStatus}: ${
+          RECORD_STATES.filter((s) =>
+            canTransition(doc.verificationStatus, s, req.user?.role)
+          ).join(', ') || 'none'
+        }.`,
+        409
+      );
     }
 
+    const fromStatus = doc.verificationStatus;
     doc.verificationStatus = verificationStatus;
-    if (verificationStatus === 'Rejected') {
+    if (verificationStatus === RECORD_STATE.REJECTED) {
       doc.rejectionReason = rejectionReason.trim();
       doc.rejectedBy = req.user?.id && mongoose.Types.ObjectId.isValid(req.user.id)
         ? new mongoose.Types.ObjectId(req.user.id)
         : undefined;
       doc.rejectedDate = new Date();
-    } else if (verificationStatus === 'Verified') {
+    } else {
+      // Any non-rejection decision clears the outstanding rejection trail.
       doc.rejectionReason = '';
       doc.rejectedBy = undefined;
       doc.rejectedDate = undefined;
@@ -678,21 +751,110 @@ export async function verifyDocument(req: AuthRequest, res: Response) {
 
     await logAudit({
       userId: req.user!.id,
-      action: verificationStatus === 'Verified' ? 'VERIFY_DOCUMENT' : 'REJECT_DOCUMENT',
+      action:
+        verificationStatus === RECORD_STATE.CONFIRMED
+          ? 'VERIFY_DOCUMENT'
+          : verificationStatus === RECORD_STATE.REJECTED
+            ? 'REJECT_DOCUMENT'
+            : 'APPROVE_DOCUMENT',
       entity: 'DOCUMENT',
       entityId: doc._id.toString(),
-      details: { verificationStatus, rejectionReason: doc.rejectionReason },
+      details: {
+        from: fromStatus,
+        to: verificationStatus,
+        rejectionReason: doc.rejectionReason,
+      },
       req,
     });
 
     return sendSuccess(
       res,
-      { id: doc._id.toString(), verificationStatus: doc.verificationStatus, rejectionReason: doc.rejectionReason },
-      `Document marked as ${verificationStatus}.`
+      {
+        id: doc._id.toString(),
+        verificationStatus: doc.verificationStatus,
+        permissions: deriveRecordPermissions(doc.verificationStatus, req.user?.role),
+        rejectionReason: doc.rejectionReason,
+      },
+      verificationStatus === RECORD_STATE.CONFIRMED
+        ? 'Document confirmed. It is now a verified record and permanently locked.'
+        : verificationStatus === RECORD_STATE.REJECTED
+          ? 'Changes requested. The student may now correct and resubmit this document.'
+          : 'Request approved. The student may now edit and submit this document.'
     );
   } catch (err: any) {
     console.error('verifyDocument error:', err);
     return sendError(res, 'Failed to update document verification status.', 500);
+  }
+}
+
+/**
+ * Student submits an editable record for mentor review. This is the explicit
+ * APPROVED/EDITING/REJECTED -> SUBMITTED move; it is deliberately separate from
+ * a save, so a draft never silently re-enters the mentor queue.
+ */
+export async function submitDocument(req: AuthRequest, res: Response) {
+  const documentId = req.params.documentId as string;
+
+  try {
+    if (!mongoose.Types.ObjectId.isValid(documentId)) {
+      return sendError(res, 'Invalid document reference.', 400);
+    }
+
+    const doc = await StudentDocument.findById(documentId);
+    if (!doc) {
+      return sendError(res, 'Document not found.', 404);
+    }
+
+    const student = await Student.findById(doc.studentId);
+    if (!student) {
+      return sendError(res, 'The owning student record no longer exists.', 404);
+    }
+
+    // Submitting is the owner's decision. `checkStudentAccess` would happily let a
+    // mentor through (they can view the record), but a mentor must express that
+    // through review, not by pushing the student's record into the queue on their
+    // behalf, which would skip the student's own final read of what they sent.
+    if (!isSelf(req.user, student)) {
+      return sendError(res, 'Only the owning student can submit this certificate for review.', 403);
+    }
+
+    if (!canStudentTransition(doc.verificationStatus, RECORD_STATE.SUBMITTED)) {
+      if (isTerminal(doc.verificationStatus)) {
+        return sendError(res, CONFIRMED_DOCUMENT_LOCK_MESSAGE, 409);
+      }
+      return sendError(
+        res,
+        deriveRecordPermissions(doc.verificationStatus, req.user?.role).reason ??
+          'This record cannot be submitted in its current state.',
+        409
+      );
+    }
+
+    const from = doc.verificationStatus;
+    doc.verificationStatus = RECORD_STATE.SUBMITTED;
+    await doc.save();
+
+    await logAudit({
+      userId: req.user!.id,
+      action: 'SUBMIT_DOCUMENT',
+      entity: 'DOCUMENT',
+      entityId: documentId,
+      details: { from, to: RECORD_STATE.SUBMITTED, registerNumber: student.registerNumber },
+      req,
+    });
+
+    return sendSuccess(
+      res,
+      {
+        id: doc._id.toString(),
+        verificationStatus: doc.verificationStatus,
+        permissions: deriveRecordPermissions(doc.verificationStatus, req.user?.role),
+      },
+      'Submitted for mentor review. The record is now read-only while your mentor reviews it.'
+    );
+  } catch (err: any) {
+    console.error('submitDocument error:', err);
+    return sendError(res, 'Failed to submit document.', 500);
   }
 }
 
@@ -726,7 +888,7 @@ export async function deleteAllStudentDocuments(req: AuthRequest, res: Response)
       }
 
       // Confirmed certificates are locked; they are reported, never purged.
-      if (doc.verificationStatus === CONFIRMED_DOCUMENT_STATUS) {
+      if (isTerminal(doc.verificationStatus)) {
         retainedVerified++;
         continue;
       }

@@ -35,7 +35,8 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
   const [showSuggestion, setShowSuggestion] = useState(false);
   const [appliedFeedback, setAppliedFeedback] = useState(false);
   const [noIssuesFeedback, setNoIssuesFeedback] = useState(false);
-  
+  const [checkError, setCheckError] = useState<string | null>(null);
+
   const lastCheckedValueRef = useRef<string>('');
   const debounceTimerRef = useRef<any>(null);
   const feedbackTimerRef = useRef<any>(null);
@@ -95,6 +96,7 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
     const trimmed = value.trim();
     if (!trimmed) return;
     setChecking(true);
+    setCheckError(null);
     try {
       const res = await api.counselling.checkGrammar(trimmed);
       lastCheckedValueRef.current = trimmed;
@@ -118,8 +120,12 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
         setNoIssuesFeedback(true);
         setTimeout(() => setNoIssuesFeedback(false), 2500);
       }
-    } catch (err) {
-      // Fallback
+    } catch {
+      // The field is left exactly as typed. Only a short, non-technical message
+      // is shown; the server never sends API keys or provider internals.
+      setSuggestedCorrection(null);
+      setShowSuggestion(false);
+      setCheckError("Couldn't check your text just now. Your text is unchanged — please try again.");
     } finally {
       setChecking(false);
     }
@@ -165,6 +171,7 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
     // Dismiss suggestion panel without modifying the textarea
     setShowSuggestion(false);
     setSuggestedCorrection(null);
+    setCheckError(null);
     onActiveFieldChange?.(null);
   };
 
@@ -226,7 +233,7 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
               }}
               title="Grammar or spelling suggestions available"
             >
-              <Sparkles size={12} color="#1D4ED8" /> Fix Grammar
+              <Sparkles size={12} color="#1D4ED8" /> Improve Grammar
             </button>
           )}
 
@@ -258,7 +265,7 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
                 </>
               ) : (
                 <>
-                  <Sparkles size={12} color="#3B82F6" /> Fix Grammar
+                  <Sparkles size={12} color="#3B82F6" /> Improve Grammar
                 </>
               )}
             </button>
@@ -276,6 +283,7 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
         value={value}
         onChange={(e) => {
           setAppliedFeedback(false);
+          setCheckError(null);
           onChange(e.target.value);
         }}
         style={{
@@ -294,6 +302,28 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
       {error && (
         <div style={{ color: '#DC2626', fontSize: '0.78rem', marginTop: '4px', fontWeight: 600 }}>
           {error}
+        </div>
+      )}
+
+      {checkError && (
+        <div
+          role="alert"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.35rem',
+            color: '#B45309',
+            backgroundColor: '#FFFBEB',
+            border: '1px solid #FDE68A',
+            borderRadius: '6px',
+            fontSize: '0.76rem',
+            fontWeight: 600,
+            marginTop: '0.35rem',
+            padding: '0.3rem 0.55rem',
+          }}
+        >
+          <span aria-hidden="true">⚠</span>
+          {checkError}
         </div>
       )}
 
@@ -356,7 +386,7 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
                 boxShadow: '0 1px 2px rgba(2, 132, 199, 0.2)',
               }}
             >
-              <Check size={14} /> Use Correction
+              <Check size={14} /> Apply Correction
             </button>
 
             <button

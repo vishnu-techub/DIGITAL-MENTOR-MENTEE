@@ -25,6 +25,7 @@ import { ROLES } from '../../config/constants.js';
 // Reuse the single existing uploads abstraction: this must never introduce a
 // second storage system or re-derive the uploads root.
 import { resolveStoredUploadPath } from '../../config/storage.js';
+import { RECORD_STATE } from '../../utils/record-permission.util.js';
 
 // Dashboard Overview Statistics
 export async function getAdminDashboardStats(req: AuthRequest, res: Response) {
@@ -971,23 +972,35 @@ export async function deleteAllDocuments(req: AuthRequest, res: Response) {
 
   try {
     // Snapshot file locations BEFORE the records disappear, so the on-disk
-    // cleanup still knows what to remove.
-    const docs = await StudentDocument.find({})
-      .select('_id fileName fileUrl')
+    // cleanup still knows what to remove. `verificationStatus` is selected so
+    // mentor-confirmed records can be excluded from the purge.
+    const allDocs = await StudentDocument.find({})
+      .select('_id fileName fileUrl verificationStatus')
       .lean();
 
-    if (docs.length === 0) {
+    // CONFIRMED records are official verified academic records: immutable at the
+    // API level for EVERY caller, admin included. They are counted and reported
+    // as retained, never deleted. This was previously an unfiltered
+    // `deleteMany({})`, which silently destroyed mentor-confirmed records.
+    const docs = allDocs.filter((d: any) => d.verificationStatus !== RECORD_STATE.CONFIRMED);
+    const retainedConfirmed = allDocs.length - docs.length;
+
+    if (allDocs.length === 0) {
       // Nothing to purge: a successful no-op, deliberately not audit-logged so
       // the audit trail only ever records real destructive actions.
       return sendSuccess(
         res,
-        { documentsDeleted: 0, filesDeleted: 0, filesNotDeleted: 0, filesNotDeletedNames: [], filesAlreadyAbsent: 0 },
+        { documentsDeleted: 0, filesDeleted: 0, filesNotDeleted: 0, filesNotDeletedNames: [], filesAlreadyAbsent: 0, retainedConfirmed: 0 },
         'No documents found.'
       );
     }
 
-    // One atomic database operation for the whole repository.
-    const { deletedCount } = await StudentDocument.deleteMany({});
+    // One atomic database operation for the whole deletable set. Ids are named
+    // explicitly rather than filtered, so there is no window in which a newly
+    // confirmed record could be swept up by a broad filter.
+    const { deletedCount } = await StudentDocument.deleteMany({
+      _id: { $in: docs.map((d: any) => d._id) },
+    });
 
     let filesDeleted = 0;
     let filesAlreadyAbsent = 0;
@@ -1029,6 +1042,7 @@ export async function deleteAllDocuments(req: AuthRequest, res: Response) {
         filesDeleted,
         filesNotDeleted,
         filesAlreadyAbsent,
+        retainedConfirmed,
         failedFileNames: filesNotDeletedNames.slice(0, MAX_REPORTED_FILE_FAILURES),
         failedFileNamesTruncated: filesNotDeleted > MAX_REPORTED_FILE_FAILURES,
       },
@@ -1037,8 +1051,14 @@ export async function deleteAllDocuments(req: AuthRequest, res: Response) {
 
     let message =
       deletedCount === 0
-        ? 'No documents found.'
-        : `All documents deleted (${deletedCount} document record(s) and ${filesDeleted} stored file(s) removed).`;
+        ? retainedConfirmed > 0
+          ? `Nothing was deleted. All ${retainedConfirmed} document(s) on record are mentor-confirmed and permanently locked.`
+          : 'No documents found.'
+        : `All deletable documents deleted (${deletedCount} document record(s) and ${filesDeleted} stored file(s) removed).${
+            retainedConfirmed > 0
+              ? ` ${retainedConfirmed} mentor-confirmed document(s) were retained; confirmed records are permanently locked.`
+              : ''
+          }`;
 
     if (filesNotDeleted > 0) {
       message += ` ${filesNotDeleted} stored file(s) could not be removed from disk and must be cleared manually.`;
@@ -1053,6 +1073,7 @@ export async function deleteAllDocuments(req: AuthRequest, res: Response) {
         filesNotDeletedNames: filesNotDeletedNames.slice(0, MAX_REPORTED_FILE_FAILURES),
         filesNotDeletedNamesTruncated: filesNotDeleted > MAX_REPORTED_FILE_FAILURES,
         filesAlreadyAbsent,
+        retainedConfirmed,
       },
       message
     );

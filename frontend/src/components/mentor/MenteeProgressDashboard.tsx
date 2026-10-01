@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
 import { useToast } from '../../context/ToastContext';
 import { Modal } from '../common/Modal';
+import { RecordStatusBadge, readPermissions, readState, RECORD_STATES } from '../../lib/recordStatus';
+import { GrammarAssistField } from './GrammarAssistField';
 import {
   Award,
   CheckCircle2,
@@ -60,7 +62,7 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
 
   // Verification modal state
   const [verifyTarget, setVerifyTarget] = useState<any | null>(null);
-  const [verifyStatus, setVerifyStatus] = useState<'Verified' | 'Rejected'>('Verified');
+  const [verifyStatus, setVerifyStatus] = useState<'Approved' | 'Verified' | 'Rejected'>('Verified');
   const [rejectionReason, setRejectionReason] = useState('');
   const [submittingVerify, setSubmittingVerify] = useState(false);
 
@@ -90,7 +92,7 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
     fetchProgress();
   }, [studentId]);
 
-  const handleOpenVerifyModal = (record: any, status: 'Verified' | 'Rejected') => {
+  const handleOpenVerifyModal = (record: any, status: 'Approved' | 'Verified' | 'Rejected') => {
     setVerifyTarget(record);
     setVerifyStatus(status);
     setRejectionReason('');
@@ -116,7 +118,14 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
       );
 
       if (res.success) {
-        toast.success(`Achievement marked as ${verifyStatus} successfully.`);
+        toast.success(
+          res.message ||
+            (verifyStatus === 'Verified'
+              ? 'Confirmed. The record is now a verified, permanently locked entry.'
+              : verifyStatus === 'Approved'
+              ? 'Approved. The student can now edit and submit this record.'
+              : 'Changes requested. The student can correct and resubmit.')
+        );
         setVerifyTarget(null);
         await fetchProgress();
       } else {
@@ -138,7 +147,7 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
   // Filter records
   const filteredRecords = records.filter((r) => {
     const matchCat = selectedCategory === 'ALL' || r.category === selectedCategory;
-    const matchStat = selectedStatus === 'ALL' || r.status === selectedStatus;
+    const matchStat = selectedStatus === 'ALL' || readState(r) === selectedStatus;
     return matchCat && matchStat;
   });
 
@@ -340,8 +349,11 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
           <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#475569', marginRight: '0.5rem' }}>
             Filter Status:
           </span>
-          {['ALL', 'Pending', 'Verified', 'Rejected'].map((status) => {
-            const count = status === 'ALL' ? records.length : records.filter((r) => r.status === status).length;
+          {['ALL', ...RECORD_STATES].map((status) => {
+            const count =
+              status === 'ALL'
+                ? records.length
+                : records.filter((r) => readState(r) === status).length;
             return (
               <button
                 key={status}
@@ -389,14 +401,15 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '1.25rem' }}>
           {filteredRecords.map((r) => {
-                    const isVerified = r.status === 'Verified';
-                    const isRejected = r.status === 'Rejected';
-                    const isPending = !isVerified && !isRejected;
-                    // A mentor-confirmed record is permanently locked. The
-                    // backend rejects any attempt to reopen it with HTTP 409, so
-                    // the buttons are removed here to match that behaviour
-                    // rather than offering a control that would only fail.
-                    const isLocked = isVerified;
+                    // Authoritative capabilities for THIS reviewer, computed by
+                    // the backend. The lock is no longer re-derived on the
+                    // client: a confirmed record is locked because the server
+                    // says so, and the review buttons reflect the server's
+                    // canReview / canConfirm rather than a local guess.
+                    const perms = readPermissions(r);
+                    const isVerified = perms?.state === 'Verified';
+                    const isRejected = perms?.state === 'Rejected';
+                    const isLocked = !!perms?.locked;
                     const key = `${r.source || 'RECORD'}-${r._id || r.id}`;
 
                     return (
@@ -451,17 +464,7 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                       {r.rawCategory && r.rawCategory !== r.category ? `${r.category} · ${r.rawCategory}` : r.category}
                     </span>
 
-                    <span
-                      className={`badge ${
-                        isVerified ? 'badge-success' : isRejected ? 'badge-danger' : 'badge-warning'
-                      }`}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                    >
-                      {isVerified && <CheckCircle2 size={12} />}
-                      {isRejected && <XCircle size={12} />}
-                      {isPending && <Clock size={12} />}
-                      {r.status || 'Pending'}
-                    </span>
+                    <RecordStatusBadge record={r} />
                   </div>
 
                   {/* Title */}
@@ -617,8 +620,11 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                     </span>
                   )}
 
-                  {/* Verification Buttons */}
-                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  {/* Review actions. A PENDING record can be approved (which
+                      hands editing to the student) or sent back. Only a
+                      SUBMITTED record can be confirmed to the terminal verified
+                      state. Both decisions come from the server's permission set. */}
+                  <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                     {isLocked ? (
                       <span
                         className="badge badge-success"
@@ -629,31 +635,53 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                           fontSize: '0.74rem',
                           padding: '4px 9px',
                         }}
-                        title="Confirmed by your mentor. This record is permanently locked and can no longer be edited, deleted or re-submitted."
+                        title={perms?.explanation || 'This record is permanently locked.'}
                       >
-                        <FileCheck size={12} /> Confirmed & Locked
+                        <FileCheck size={12} /> {perms?.label ?? 'VERIFIED'} — Permanently Locked
                       </span>
-                    ) : (
+                    ) : perms?.canReview ? (
                       <>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenVerifyModal(r, 'Verified')}
-                          className="btn btn-sm"
-                          style={{
-                            fontSize: '0.76rem',
-                            padding: '0.35rem 0.7rem',
-                            backgroundColor: '#F0FDF4',
-                            color: '#166534',
-                            borderColor: '#BBF7D0',
-                            fontWeight: 700,
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '3px',
-                          }}
-                          title="Verify Achievement"
-                        >
-                          <CheckCircle2 size={13} /> Verify
-                        </button>
+                        {perms.canConfirm ? (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenVerifyModal(r, 'Verified')}
+                            className="btn btn-sm"
+                            style={{
+                              fontSize: '0.76rem',
+                              padding: '0.35rem 0.7rem',
+                              backgroundColor: '#F0FDF4',
+                              color: '#166534',
+                              borderColor: '#BBF7D0',
+                              fontWeight: 700,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '3px',
+                            }}
+                            title="Confirm this submitted record as an official verified entry. It becomes permanently locked."
+                          >
+                            <CheckCircle2 size={13} /> Confirm
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenVerifyModal(r, 'Approved')}
+                            className="btn btn-sm"
+                            style={{
+                              fontSize: '0.76rem',
+                              padding: '0.35rem 0.7rem',
+                              backgroundColor: '#EFF6FF',
+                              color: '#1D4ED8',
+                              borderColor: '#BFDBFE',
+                              fontWeight: 700,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '3px',
+                            }}
+                            title="Approve this request so the student can edit it and submit for final review"
+                          >
+                            <CheckCircle2 size={13} /> Approve
+                          </button>
+                        )}
 
                         <button
                           type="button"
@@ -670,11 +698,18 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                             alignItems: 'center',
                             gap: '3px',
                           }}
-                          title="Reject with Reason"
+                          title="Send back for changes with a reason"
                         >
-                          <XCircle size={13} /> {isRejected ? 'Rejected ✕' : 'Reject'}
+                          <XCircle size={13} /> {isRejected ? 'Rejected ✕' : 'Request Changes'}
                         </button>
                       </>
+                    ) : (
+                      <span
+                        className="unavailable-action"
+                        title={perms?.explanation || 'No review action is available for this record.'}
+                      >
+                        {perms?.explanation || 'No review action available'}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -689,7 +724,13 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
           ============================================================ */}
       {verifyTarget && (
         <Modal
-          title={verifyStatus === 'Verified' ? 'Verify Achievement Record' : 'Reject Achievement Record'}
+          title={
+            verifyStatus === 'Verified'
+              ? 'Confirm Achievement Record'
+              : verifyStatus === 'Approved'
+              ? 'Approve Achievement Request'
+              : 'Request Changes'
+          }
           isOpen={!!verifyTarget}
           onClose={() => setVerifyTarget(null)}
           onSubmit={handleConfirmVerification}
@@ -705,10 +746,15 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
               </button>
               <button
                 type="submit"
-                className={`btn ${verifyStatus === 'Verified' ? 'btn-success' : 'btn-danger'}`}
+                className={`btn ${verifyStatus === 'Rejected' ? 'btn-danger' : verifyStatus === 'Approved' ? 'btn-primary' : 'btn-success'}`}
                 disabled={submittingVerify}
                 style={{
-                  backgroundColor: verifyStatus === 'Verified' ? '#16A34A' : '#DC2626',
+                  backgroundColor:
+                    verifyStatus === 'Verified'
+                      ? '#16A34A'
+                      : verifyStatus === 'Approved'
+                      ? '#1D4ED8'
+                      : '#DC2626',
                   color: '#ffffff',
                   fontWeight: 700,
                 }}
@@ -716,8 +762,10 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                 {submittingVerify
                   ? 'Saving...'
                   : verifyStatus === 'Verified'
-                  ? 'Confirm Verification'
-                  : 'Confirm Rejection'}
+                  ? 'Confirm as Verified'
+                  : verifyStatus === 'Approved'
+                  ? 'Approve Request'
+                  : 'Send Back for Changes'}
               </button>
             </div>
           }
@@ -726,32 +774,36 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
             <p style={{ fontSize: '0.85rem', color: '#475569', margin: 0 }}>
               {verifyStatus === 'Verified' ? (
                 <>
-                  Are you sure you want to verify <strong>"{verifyTarget.activityName}"</strong> under{' '}
-                  <strong>{verifyTarget.category}</strong>? This will confirm the validity of the achievement.
+                  Confirm <strong>"{verifyTarget.activityName}"</strong> under{' '}
+                  <strong>{verifyTarget.category}</strong> as an official verified academic record?
+                  This is the terminal state: it becomes permanently locked and can no longer be
+                  edited, deleted or re-submitted by anyone.
+                </>
+              ) : verifyStatus === 'Approved' ? (
+                <>
+                  Approve <strong>"{verifyTarget.activityName}"</strong> under{' '}
+                  <strong>{verifyTarget.category}</strong>? The student will be able to edit this
+                  record and then submit it for your final review.
                 </>
               ) : (
                 <>
-                  Please provide a clear reason for rejecting <strong>"{verifyTarget.activityName}"</strong>. The
-                  student will be notified and can view your feedback.
+                  Please provide a clear reason for sending back{' '}
+                  <strong>"{verifyTarget.activityName}"</strong>. The student will see your feedback
+                  and can correct the record and resubmit it.
                 </>
               )}
             </p>
 
             {verifyStatus === 'Rejected' && (
-              <div className="form-group">
-                <label className="form-label" style={{ fontWeight: 700, fontSize: '0.85rem' }}>
-                  Rejection Reason <span style={{ color: '#DC2626' }}>*</span>
-                </label>
-                <textarea
-                  className="form-control"
-                  rows={3}
-                  required
-                  placeholder="e.g. Certificate blur or invalid institution credentials; please re-upload clear certificate copy..."
-                  value={rejectionReason}
-                  onChange={(e) => setRejectionReason(e.target.value)}
-                  style={{ fontSize: '0.85rem' }}
-                />
-              </div>
+              <GrammarAssistField
+                fieldId="progressRejectionReason"
+                label="Rejection Reason"
+                required
+                rows={3}
+                placeholder="e.g. Certificate blur or invalid institution credentials; please re-upload clear certificate copy..."
+                value={rejectionReason}
+                onChange={setRejectionReason}
+              />
             )}
           </div>
         </Modal>

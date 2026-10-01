@@ -12,6 +12,17 @@ import { ROLES } from '../../config/constants.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
 import { checkStudentAccess } from '../../utils/access.util.js';
+import {
+  RECORD_STATE,
+  RECORD_STATES,
+  CONFIRMED_LOCK_REASON,
+  canTransition,
+  canStudentTransition,
+  deriveRecordPermissions,
+  isTerminal,
+  type RecordState,
+  type RecordPermissions,
+} from '../../utils/record-permission.util.js';
 import { resolveStoredUploadPath, resolveWritableUploadsDir } from '../../config/storage.js';
 
 // Setup a Writable Uploads Directory for Progress Certificates
@@ -79,10 +90,9 @@ async function resolveAuthStudent(req: AuthRequest) {
  * VerificationStatus); the UI labels it "Verified". Once reached it is
  * immutable - nothing below ever silently demotes or reopens it.
  */
-export const CONFIRMED_STATUS = 'Verified';
+export const CONFIRMED_STATUS = RECORD_STATE.CONFIRMED;
 
-const CONFIRMED_LOCK_MESSAGE =
-  'This record has been confirmed by your mentor and is now an official verified entry. Confirmed records are permanently locked and can no longer be edited, deleted or re-submitted.';
+const CONFIRMED_LOCK_MESSAGE = CONFIRMED_LOCK_REASON;
 
 // ---------------------------------------------------------------------------
 // Canonical student -> certificate relationship
@@ -167,6 +177,8 @@ export interface UnifiedProgressRecord {
   reviewedAt: Date | null;
   createdAt: Date | null;
   fileAvailable: boolean;
+  /** Server-derived capability set for the requesting user. */
+  permissions: RecordPermissions;
 }
 
 /**
@@ -209,12 +221,15 @@ export async function buildUnifiedProgressRecords(studentObjectId: any): Promise
       description: d.description || '',
       certificateUrl: d.fileUrl || '',
       fileName: d.fileName || '',
-      status: (d.verificationStatus || 'Pending') as ProgressStatus,
+      status: (d.verificationStatus || RECORD_STATE.PENDING) as ProgressStatus,
       rejectionReason: d.rejectionReason || '',
       reviewerName: '',
       reviewedAt: d.rejectedDate || null,
       createdAt: d.uploadedAt || d.createdAt || null,
       fileAvailable: Boolean(absPath && fs.existsSync(absPath)),
+      // Filled in by the caller with the REQUESTING user's role; a placeholder
+      // here keeps the merge below from having to special-case each branch.
+      permissions: deriveRecordPermissions(d.verificationStatus, ROLES.FACULTY),
     });
   }
 
@@ -228,7 +243,10 @@ export async function buildUnifiedProgressRecords(studentObjectId: any): Promise
       if (existing) {
         // Keep whichever status is further along the workflow; never regress a
         // confirmed document back to pending because of a stale progress row.
-        if (existing.status !== 'Verified' && p.status === 'Verified') existing.status = 'Verified';
+        if (existing.status !== RECORD_STATE.CONFIRMED && p.status === RECORD_STATE.CONFIRMED) {
+          existing.status = RECORD_STATE.CONFIRMED;
+          existing.permissions = deriveRecordPermissions(RECORD_STATE.CONFIRMED, ROLES.FACULTY);
+        }
         if (existing.activityName === 'Certificate' && p.activityName) {
           existing.activityName = p.activityName;
         }
@@ -258,12 +276,13 @@ export async function buildUnifiedProgressRecords(studentObjectId: any): Promise
       description: p.description || '',
       certificateUrl: p.certificateUrl || '',
       fileName: p.fileName || '',
-      status: (p.status || 'Pending') as ProgressStatus,
+      status: (p.status || RECORD_STATE.PENDING) as ProgressStatus,
       rejectionReason: p.rejectionReason || '',
       reviewerName: p.reviewerName || '',
       reviewedAt: p.reviewedAt || null,
       createdAt: p.createdAt || null,
       fileAvailable: Boolean(absPath && fs.existsSync(absPath)),
+      permissions: deriveRecordPermissions(p.status, ROLES.FACULTY),
     });
   }
 
@@ -292,7 +311,20 @@ function summariseProgress(records: UnifiedProgressRecord[]) {
     extensionActivities: byCategory('Extension Activity'),
     extraCurricular: byCategory('Extra Curricular'),
     others: byCategory('Other approved achievements/activities'),
-    pending: byStatus('Pending'),
+    // AWAITING_REVIEW counts everything a mentor still has to act on: the
+    // initial PENDING request and the student's SUBMITTED record alike. The
+    // editable states (APPROVED / EDITING) are the student's to work on, not the
+    // mentor's, so they are counted separately rather than inflating the
+    // reviewer's queue.
+    pending: records.filter(
+      (r) => r.status === RECORD_STATE.PENDING || r.status === RECORD_STATE.SUBMITTED
+    ).length,
+    awaitingApproval: byStatus(RECORD_STATE.PENDING),
+    awaitingConfirmation: byStatus(RECORD_STATE.SUBMITTED),
+    editableByStudent: byStatus(RECORD_STATE.APPROVED) + byStatus(RECORD_STATE.EDITING),
+    approved: byStatus(RECORD_STATE.APPROVED),
+    editing: byStatus(RECORD_STATE.EDITING),
+    submitted: byStatus(RECORD_STATE.SUBMITTED),
     verified: byStatus(CONFIRMED_STATUS),
     rejected: byStatus('Rejected'),
     total: records.length,
@@ -367,7 +399,8 @@ export async function createStudentProgress(req: AuthRequest, res: Response) {
       fileName,
       fileSize,
       fileType,
-      status: 'Pending',
+      // An upload ALWAYS lands in PENDING; it can never auto-verify.
+      status: RECORD_STATE.PENDING,
     });
 
     await logAudit({
@@ -383,7 +416,15 @@ export async function createStudentProgress(req: AuthRequest, res: Response) {
       req,
     });
 
-    return sendSuccess(res, newProgress, 'Achievement / progress record added successfully.', 201);
+    // Permissions are attached here too, not only on the read paths: a freshly
+    // created record is PENDING, and the client must be told that it is
+    // read-only rather than re-deriving editability from the status string.
+    return sendSuccess(
+      res,
+      { ...newProgress.toObject(), permissions: deriveRecordPermissions(newProgress.status, req.user?.role) },
+      'Achievement / progress record added successfully.',
+      201
+    );
   } catch (err: any) {
     console.error('createStudentProgress error:', err);
     return sendError(res, err.message || 'Failed to create student progress record.', 500);
@@ -406,8 +447,15 @@ export async function getStudentProgressList(req: AuthRequest, res: Response) {
       categoryCounts[r.category] = (categoryCounts[r.category] || 0) + 1;
     });
 
+    // Ship the server-derived capability set with every record so the student UI
+    // renders exactly what the API permits, rather than re-deriving it.
+    const withPermissions = records.map((r) => ({
+      ...r.toObject(),
+      permissions: deriveRecordPermissions(r.status, req.user?.role),
+    }));
+
     return sendSuccess(res, {
-      records,
+      records: withPermissions,
       categoryCounts,
       totalCount: records.length,
     });
@@ -437,8 +485,19 @@ export async function updateStudentProgress(req: AuthRequest, res: Response) {
 
     // A mentor-confirmed record is an official verified entry and is immutable.
     // Enforced here, not just in the UI, so a crafted request cannot reopen it.
-    if (record.status === CONFIRMED_STATUS) {
+    if (isTerminal(record.status)) {
       return sendError(res, CONFIRMED_LOCK_MESSAGE, 409);
+    }
+
+    // PENDING and SUBMITTED are read-only for the student: a save is refused
+    // with the reason, not silently accepted.
+    if (req.user?.role === ROLES.STUDENT && !canStudentTransition(record.status, RECORD_STATE.APPROVED)) {
+      return sendError(
+        res,
+        deriveRecordPermissions(record.status, req.user.role).reason ??
+          'This record is read-only in its current state.',
+        409
+      );
     }
 
     const {
@@ -475,9 +534,10 @@ export async function updateStudentProgress(req: AuthRequest, res: Response) {
       record.fileType = file.mimetype;
     }
 
-    // Reset status to Pending on edit if student edits
+    // A save is a draft, not a submission: the student stays in an editable
+    // state and re-enters the mentor queue only via the explicit submit route.
     if (req.user?.role === ROLES.STUDENT) {
-      record.status = 'Pending';
+      record.status = RECORD_STATE.APPROVED;
       record.rejectionReason = '';
     }
 
@@ -516,8 +576,20 @@ export async function deleteStudentProgress(req: AuthRequest, res: Response) {
     }
 
     // Confirmed records are permanently locked: deletion is rejected too.
-    if (record.status === CONFIRMED_STATUS) {
+    if (isTerminal(record.status)) {
       return sendError(res, CONFIRMED_LOCK_MESSAGE, 409);
+    }
+
+    // The owner may only delete from an editable state.
+    if (req.user?.role === ROLES.STUDENT) {
+      const perms = deriveRecordPermissions(record.status, req.user.role);
+      if (!perms.canDelete) {
+        return sendError(
+          res,
+          perms.reason ?? 'This record cannot be deleted in its current state.',
+          409
+        );
+      }
     }
 
     // Remove file if exists
@@ -542,6 +614,67 @@ export async function deleteStudentProgress(req: AuthRequest, res: Response) {
   } catch (err: any) {
     console.error('deleteStudentProgress error:', err);
     return sendError(res, 'Failed to delete progress record.', 500);
+  }
+}
+
+/**
+ * Student submits an editable record for mentor review.
+ * APPROVED / EDITING / REJECTED -> SUBMITTED. A save is a draft; only this
+ * explicit action returns the record to the mentor queue.
+ */
+export async function submitStudentProgress(req: AuthRequest, res: Response) {
+  try {
+    const { id } = req.params;
+    const student = await resolveAuthStudent(req);
+
+    const record = await StudentProgress.findById(id);
+    if (!record) {
+      return sendError(res, 'Progress record not found.', 404);
+    }
+
+    // Submitting is the owner's decision. An HOD/admin may view and review the record,
+    // but pushing it into the mentor queue on the student's behalf would skip the
+    // student's own final read of what they are claiming.
+    if (!student || record.studentId.toString() !== student._id.toString()) {
+      return sendError(res, 'Access denied: You can only submit your own progress records.', 403);
+    }
+
+    if (!canStudentTransition(record.status, RECORD_STATE.SUBMITTED)) {
+      if (isTerminal(record.status)) {
+        return sendError(res, CONFIRMED_LOCK_MESSAGE, 409);
+      }
+      return sendError(
+        res,
+        deriveRecordPermissions(record.status, req.user?.role).reason ??
+          'This record cannot be submitted in its current state.',
+        409
+      );
+    }
+
+    const from = record.status;
+    record.status = RECORD_STATE.SUBMITTED;
+    record.rejectionReason = '';
+    await record.save();
+
+    await logAudit({
+      userId: req.user!.id,
+      action: 'SUBMIT_STUDENT_PROGRESS',
+      entity: 'STUDENT_PROGRESS',
+      details: { progressId: String(record._id), from, to: RECORD_STATE.SUBMITTED },
+      req,
+    });
+
+    return sendSuccess(
+      res,
+      {
+        ...record.toObject(),
+        permissions: deriveRecordPermissions(record.status, req.user?.role),
+      },
+      'Submitted for mentor review. The record is now read-only while your mentor reviews it.'
+    );
+  } catch (err: any) {
+    console.error('submitStudentProgress error:', err);
+    return sendError(res, err.message || 'Failed to submit progress record.', 500);
   }
 }
 
@@ -573,8 +706,16 @@ export async function getMenteeProgressForMentor(req: AuthRequest, res: Response
     const records = await buildUnifiedProgressRecords(student._id);
     const summary = summariseProgress(records);
 
+    // Recompute capabilities for the ACTUAL caller. The builder is role-agnostic;
+    // this is where the requesting mentor/HOD/admin's own permission set is
+    // attached, so the review buttons are never a frontend guess.
+    const forCaller = records.map((r) => ({
+      ...r,
+      permissions: deriveRecordPermissions(r.status, req.user?.role),
+    }));
+
     return sendSuccess(res, {
-      records,
+      records: forCaller,
       summary,
       student: {
         id: String(student._id),
@@ -595,11 +736,17 @@ export async function verifyMenteeProgress(req: AuthRequest, res: Response) {
     const id = req.params.id as string;
     const { status, rejectionReason, source } = req.body;
 
-    if (!['Verified', 'Rejected', 'Pending'].includes(status)) {
-      return sendError(res, 'Status must be Verified, Rejected, or Pending.', 400);
+    if (!(RECORD_STATES as readonly string[]).includes(String(status))) {
+      return sendError(
+        res,
+        `Status must be one of: ${RECORD_STATES.join(', ')}.`,
+        400
+      );
     }
 
-    if (status === 'Rejected' && (!rejectionReason || !rejectionReason.trim())) {
+    const targetStatus = status as RecordState;
+
+    if (targetStatus === RECORD_STATE.REJECTED && (!rejectionReason || !rejectionReason.trim())) {
       return sendError(res, 'Rejection reason is required when rejecting a progress record.', 400);
     }
 
@@ -660,20 +807,29 @@ export async function verifyMenteeProgress(req: AuthRequest, res: Response) {
       return sendError(res, 'Progress record not found for this mentee.', 404);
     }
 
-    // A mentor-confirmed record is an official, immutable entry: it may not be
-    // silently demoted back to Pending or Rejected. Enforced server-side, so a
-    // hidden button is never the only protection.
-    if (record.verificationStatus === CONFIRMED_STATUS || record.status === CONFIRMED_STATUS) {
-      if (status !== CONFIRMED_STATUS) {
+    // The single authority on whether this state change is legal. A confirmed
+    // record is frozen in every direction, and only a mentor may act.
+    const currentStatus = (record.verificationStatus ?? record.status) as string;
+    if (!canTransition(currentStatus, targetStatus, req.user?.role)) {
+      if (isTerminal(currentStatus)) {
         return sendError(res, CONFIRMED_LOCK_MESSAGE, 409);
       }
-      return sendSuccess(res, record, `Achievement record marked as ${status}.`);
+      return sendError(
+        res,
+        `A record in state "${currentStatus}" cannot move to "${targetStatus}". Allowed next states from ${currentStatus}: ${
+          RECORD_STATES.filter((s) => canTransition(currentStatus, s, req.user?.role)).join(', ') ||
+          'none'
+        }.`,
+        409
+      );
     }
 
+    const fromStatus = currentStatus;
+
     if (storedIn === 'DOCUMENT') {
-      record.verificationStatus = status;
-      record.rejectionReason = status === 'Rejected' ? rejectionReason.trim() : '';
-      if (status === 'Rejected') {
+      record.verificationStatus = targetStatus;
+      record.rejectionReason = targetStatus === RECORD_STATE.REJECTED ? rejectionReason.trim() : '';
+      if (targetStatus === RECORD_STATE.REJECTED) {
         record.rejectedBy = mongoose.Types.ObjectId.isValid(String(req.user?.id || ''))
           ? new mongoose.Types.ObjectId(String(req.user?.id))
           : undefined;
@@ -683,8 +839,8 @@ export async function verifyMenteeProgress(req: AuthRequest, res: Response) {
         record.rejectedDate = undefined;
       }
     } else {
-      record.status = status;
-      record.rejectionReason = status === 'Rejected' ? rejectionReason.trim() : '';
+      record.status = targetStatus;
+      record.rejectionReason = targetStatus === RECORD_STATE.REJECTED ? rejectionReason.trim() : '';
       record.reviewedBy = reviewerFaculty?._id || undefined;
       record.reviewerName = reviewerFaculty?.user?.fullName || req.user?.username || 'Mentor';
       record.reviewedAt = new Date();
@@ -700,13 +856,25 @@ export async function verifyMenteeProgress(req: AuthRequest, res: Response) {
         progressId: String(record._id),
         storedIn,
         studentId: String(student._id),
-        status,
+        from: fromStatus,
+        to: targetStatus,
         rejectionReason: record.rejectionReason,
       },
       req,
     });
 
-    return sendSuccess(res, record, `Achievement record marked as ${status}.`);
+    return sendSuccess(
+      res,
+      {
+        ...record.toObject(),
+        permissions: deriveRecordPermissions(targetStatus, req.user?.role),
+      },
+      targetStatus === RECORD_STATE.CONFIRMED
+        ? 'Achievement confirmed. It is now a verified record and permanently locked.'
+        : targetStatus === RECORD_STATE.REJECTED
+          ? 'Changes requested. The student may now correct and resubmit this record.'
+          : 'Request approved. The student may now edit and submit this record.'
+    );
   } catch (err: any) {
     console.error('verifyMenteeProgress error:', err);
     return sendError(res, err.message || 'Failed to update verification status.', 500);

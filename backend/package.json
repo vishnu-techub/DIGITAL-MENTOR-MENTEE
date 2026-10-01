@@ -13,7 +13,10 @@
     "test:critical": "tsx src/tests/critical-reassignment.test.ts",
     "test:directory": "tsx src/tests/student-directory-pagination.test.ts",
     "test:export": "tsx src/tests/overall-mentee-export.test.ts",
-    "test:grammar": "tsx src/tests/grammar-test.ts"
+    "test:grammar": "tsx src/tests/grammar-test.ts",
+    "test:grammar-safety": "tsx src/tests/grammar-safety.test.ts",
+    "test:grammar-api": "tsx src/tests/grammar-api.test.ts",
+    "test:state-machine": "tsx src/tests/record-permission-state.test.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

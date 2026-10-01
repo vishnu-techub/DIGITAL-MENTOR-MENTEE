@@ -408,18 +408,42 @@ export async function askMentorAiBotController(req: AuthRequest, res: Response) 
 }
 
 // 5. Mentor Writing Assistant (Spelling & Grammar Correction)
+/**
+ * Upper bound on the text sent for proofreading. Long enough for any remarks,
+ * achievements or meeting-notes field, short enough that a single request cannot
+ * be used to push a large payload through the AI provider.
+ */
+const MAX_GRAMMAR_CHECK_CHARS = 4000;
+
 export async function grammarCheckController(req: AuthRequest, res: Response) {
   const { text } = req.body;
   if (text === undefined || text === null || typeof text !== 'string') {
     return sendError(res, 'Text content is required for grammar check.', 400);
   }
 
+  if (!text.trim()) {
+    return sendSuccess(res, { original: text, corrected: text, hasCorrections: false, source: 'INSTITUTIONAL_GRAMMAR_ENGINE' });
+  }
+
+  if (text.length > MAX_GRAMMAR_CHECK_CHARS) {
+    return sendError(res, `Text is too long to check. Please keep it under ${MAX_GRAMMAR_CHECK_CHARS} characters.`, 400);
+  }
+
   try {
     const result = await correctGrammarAndSpelling(text);
-    return sendSuccess(res, result);
+    // Only the four documented fields are returned. Nothing derived from the
+    // request (key, model, provider error text) is echoed back to the client.
+    return sendSuccess(res, {
+      original: result.original,
+      corrected: result.corrected,
+      hasCorrections: result.hasCorrections,
+      source: result.source,
+    });
   } catch (err: any) {
+    // The provider error is logged server-side only; the client receives a
+    // generic message so no key, endpoint or internal detail can leak.
     console.error('grammarCheck error:', err);
-    return sendError(res, 'Failed to perform grammar check.', 500);
+    return sendError(res, 'We could not check your text just now. Your text has not been changed.', 500);
   }
 }
 

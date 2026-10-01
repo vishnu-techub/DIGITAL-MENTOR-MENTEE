@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../../api/client';
+import { api, type RecordState, type RecordPermissions } from '../../api/client';
 import { useToast } from '../../context/ToastContext';
 import { Modal } from '../common/Modal';
+import { RecordStatusBadge, readPermissions } from '../../lib/recordStatus';
 import {
   Award,
   Trophy,
@@ -20,6 +21,8 @@ import {
   Upload,
   RefreshCw,
   Eye,
+  Send,
+  Lock,
 } from 'lucide-react';
 
 interface StudentProgressRecord {
@@ -34,7 +37,13 @@ interface StudentProgressRecord {
   certificateUrl?: string;
   fileName?: string;
   fileSize?: number;
-  status: 'Pending' | 'Verified' | 'Rejected';
+  /**
+   * The persisted state, sent by the server. Never derived on the client.
+   * `permissions` is the authoritative capability set; when it is absent the
+   * record is treated as read-only rather than assumed editable.
+   */
+  status: RecordState;
+  permissions?: RecordPermissions;
   rejectionReason?: string;
   reviewerName?: string;
   reviewedAt?: string;
@@ -69,6 +78,7 @@ export const StudentProgressView: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [submittingId, setSubmittingId] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     category: 'Hackathon Certificate',
@@ -163,7 +173,9 @@ export const StudentProgressView: React.FC = () => {
 
       if (editingRecord) {
         await api.studentProgress.update(editingRecord._id, formData);
-        toast.success('Achievement updated successfully! Pending mentor review.');
+        toast.success(
+          'Changes saved. Use "Submit for Review" to send this to your mentor.'
+        );
       } else {
         await api.studentProgress.create(formData);
         toast.success('Achievement added successfully! Automatically shared with your mentor.');
@@ -175,6 +187,26 @@ export const StudentProgressView: React.FC = () => {
       toast.error('Failed to save achievement: ' + (err.message || ''));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  /**
+   * Submit an editable record for mentor review. This is a distinct action from
+   * saving: the backend moves the record to SUBMITTED, after which the student
+   * is read-only until the mentor responds.
+   */
+  const handleSubmitForReview = async (id: string) => {
+    setSubmittingId(id);
+    try {
+      const res: any = await api.studentProgress.submit(id);
+      toast.success(
+        res?.message || 'Submitted for mentor review. The record is read-only until they respond.'
+      );
+      await fetchProgress();
+    } catch (err: any) {
+      toast.error('Failed to submit for review: ' + (err.message || ''));
+    } finally {
+      setSubmittingId(null);
     }
   };
 
@@ -216,69 +248,25 @@ export const StudentProgressView: React.FC = () => {
     }
   };
 
-  const getStatusBadge = (status: string, reason?: string) => {
-    switch (status) {
-      case 'Verified':
-        return (
-          <span
-            style={{
-              fontSize: '0.75rem',
-              backgroundColor: '#DCFCE7',
-              color: '#15803D',
-              border: '1px solid #BBF7D0',
-              padding: '0.2rem 0.55rem',
-              borderRadius: '9999px',
-              fontWeight: 700,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '0.25rem',
-            }}
-          >
-            <CheckCircle2 size={12} color="#15803D" /> Verified
-          </span>
-        );
-      case 'Rejected':
-        return (
-          <span
-            title={reason ? `Rejection reason: ${reason}` : 'Rejected'}
-            style={{
-              fontSize: '0.75rem',
-              backgroundColor: '#FEE2E2',
-              color: '#B91C1C',
-              border: '1px solid #FECACA',
-              padding: '0.2rem 0.55rem',
-              borderRadius: '9999px',
-              fontWeight: 700,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '0.25rem',
-              cursor: 'help',
-            }}
-          >
-            <XCircle size={12} color="#B91C1C" /> Rejected
-          </span>
-        );
-      default:
-        return (
-          <span
-            style={{
-              fontSize: '0.75rem',
-              backgroundColor: '#FEF3C7',
-              color: '#B45309',
-              border: '1px solid #FDE68A',
-              padding: '0.2rem 0.55rem',
-              borderRadius: '9999px',
-              fontWeight: 700,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '0.25rem',
-            }}
-          >
-            <Clock size={12} color="#B45309" /> Pending Review
-          </span>
-        );
-    }
+  /**
+   * The badge is rendered from the backend's own state + permission payload via
+   * the shared component, so this screen and the mentor screen can never disagree
+   * about what state a record is in.
+   */
+  const getStatusBadge = (record: StudentProgressRecord) => {
+    const perms = readPermissions(record);
+    const reason = record.rejectionReason
+      ? `Changes requested: ${record.rejectionReason}`
+      : perms?.explanation;
+    return (
+      <span title={reason}>
+        <RecordStatusBadge record={record} />
+      </span>
+    );
   };
+
+  /** The state as sent by the server, for copy that mentions the state by name. */
+  const stateOf = (record: StudentProgressRecord) => readPermissions(record)?.state ?? record.status;
 
   return (
     <div className="student-progress-container" style={{ padding: '0.5rem 0' }}>
@@ -469,6 +457,10 @@ export const StudentProgressView: React.FC = () => {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
           {filteredRecords.map((r) => {
             const styleBadge = getCategoryColor(r.category);
+            // Authoritative capabilities, computed by the backend. A missing
+            // payload means the record is rendered read-only: the client never
+            // assumes editability.
+            const perms = readPermissions(r);
             return (
               <div
                 key={r._id}
@@ -498,7 +490,7 @@ export const StudentProgressView: React.FC = () => {
                       >
                         {r.category}
                       </span>
-                      {getStatusBadge(r.status, r.rejectionReason)}
+                      {getStatusBadge(r)}
                       {r.level && (
                         <span style={{ fontSize: '0.72rem', color: '#64748B', fontWeight: 600 }}>
                           • {r.level} Level
@@ -577,33 +569,76 @@ export const StudentProgressView: React.FC = () => {
                       </span>
                     )}
 
-                    <button
-                      type="button"
-                      onClick={() => handleOpenEdit(r)}
-                      className="btn btn-sm btn-secondary"
-                      style={{ fontSize: '0.78rem', padding: '0.3rem 0.6rem', borderRadius: '6px' }}
-                      title="Edit Achievement"
-                    >
-                      <Edit size={13} /> Edit
-                    </button>
+                    {/* Every action below is gated on the SERVER-derived
+                        capability set. In a read-only state the edit control is
+                        not rendered at all; the reason is shown instead, so the
+                        student is never left guessing why nothing is clickable. */}
+                    {perms?.canEdit ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEdit(r)}
+                          className="btn btn-sm btn-secondary"
+                          style={{ fontSize: '0.78rem', padding: '0.3rem 0.6rem', borderRadius: '6px' }}
+                          title={
+                            stateOf(r) === 'Editing'
+                              ? 'Continue editing this achievement'
+                              : 'Edit this achievement'
+                          }
+                        >
+                          <Edit size={13} />
+                          {stateOf(r) === 'Editing' ? 'Continue Editing' : 'Edit'}
+                        </button>
 
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(r._id)}
-                      disabled={deletingId === r._id}
-                      className="btn btn-sm btn-danger"
-                      style={{
-                        fontSize: '0.78rem',
-                        padding: '0.3rem 0.6rem',
-                        borderRadius: '6px',
-                        backgroundColor: '#FEE2E2',
-                        color: '#DC2626',
-                        borderColor: '#FECACA',
-                      }}
-                      title="Delete Achievement"
-                    >
-                      <Trash2 size={13} /> Delete
-                    </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSubmitForReview(r._id)}
+                          disabled={submittingId === r._id}
+                          className="btn btn-sm btn-primary"
+                          style={{ fontSize: '0.78rem', padding: '0.3rem 0.6rem', borderRadius: '6px' }}
+                          title={
+                            stateOf(r) === 'Rejected'
+                              ? 'Resubmit to your mentor'
+                              : 'Submit to your mentor for review'
+                          }
+                        >
+                          <Send size={13} />
+                          {stateOf(r) === 'Rejected' ? 'Resubmit' : 'Submit for Review'}
+                        </button>
+                      </>
+                    ) : (
+                      perms?.reason && (
+                        <span className="unavailable-action" title={perms.explanation}>
+                          <Lock size={13} aria-hidden="true" />
+                          {perms.reason}
+                        </span>
+                      )
+                    )}
+
+                    {perms?.canDelete ? (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(r._id)}
+                        disabled={deletingId === r._id}
+                        className="btn btn-sm btn-danger"
+                        style={{
+                          fontSize: '0.78rem',
+                          padding: '0.3rem 0.6rem',
+                          borderRadius: '6px',
+                          backgroundColor: '#FEE2E2',
+                          color: '#DC2626',
+                          borderColor: '#FECACA',
+                        }}
+                        title="Delete Achievement"
+                      >
+                        <Trash2 size={13} /> Delete
+                      </button>
+                    ) : perms?.locked ? (
+                      <span className="unavailable-action" title={perms.explanation}>
+                        <Lock size={13} aria-hidden="true" />
+                        Permanently Locked
+                      </span>
+                    ) : null}
                   </div>
                 </div>
               </div>

@@ -8,6 +8,7 @@ import {
   deleteAllStudentDocuments,
   verifyDocument,
   updateDocument,
+  submitDocument,
   documentUploadMiddleware,
 } from './document.controller.js';
 import { authenticate } from '../../middleware/auth.middleware.js';
@@ -49,12 +50,19 @@ router.get('/:documentId/download', downloadDocument);
 // 6. Delete document (owner or admin/assigned mentor/HOD per controller rules)
 router.delete('/:documentId', deleteDocument);
 
-// 7. Edit / re-submit a certificate.
-//    A REJECTED certificate must be correctable; the controller resets it to
-//    Pending and refuses any edit of a mentor-confirmed (Verified) one.
+// 7. Edit / save a certificate.
+//    Only legal from a student-editable state (APPROVED, EDITING, REJECTED).
+//    PENDING, SUBMITTED and CONFIRMED are refused server-side with a reason.
 router.put('/:documentId', updateDocument);
 
-// 8. Verification status review (Mentor of record, Admin, HOD)
+// 8. Submit an editable record for mentor review.
+//    APPROVED / EDITING / REJECTED -> SUBMITTED. A save is a draft and does
+//    not re-enter the mentor queue; this explicit action does.
+router.post('/:documentId/submit', submitDocument);
+
+// 9. Mentor review decision (Mentor of record, Admin, HOD).
+//    PENDING -> APPROVED | REJECTED,  SUBMITTED -> CONFIRMED | REJECTED.
+//    CONFIRMED is terminal; no further transition is permitted.
 router.patch(
   '/:documentId/verify',
   authorize(ROLES.FACULTY, ROLES.ADMIN, ROLES.HOD),

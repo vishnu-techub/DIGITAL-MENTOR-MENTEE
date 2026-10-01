@@ -1460,7 +1460,8 @@ async function main() {
     assert(rec.category === 'Hackathon Certificate', `category mapped to ${rec.category}`);
     assert(rec.organization === 'Alliance University', `organization = ${rec.organization}`);
 
-    // UPLOAD != VERIFIED.
+    // UPLOAD != VERIFIED. An upload always starts PENDING and can never be
+    // verified by the uploader, whatever the client sends.
     assert(rec.status === 'Pending', `freshly uploaded certificate is ${rec.status}, must start Pending`);
     const sum = view.body?.data?.summary;
     assert(sum.pending >= 1, `summary.pending = ${sum?.pending}`);
@@ -1472,7 +1473,55 @@ async function main() {
     assert(other.status === 403 || !(other.body?.data?.records || []).some((r: any) => r._id === String(docId)),
       `record leaked to a different mentee view (${other.status})`);
 
-    // MENTOR CONFIRM -> CONFIRMED (displayed as Verified) and permanently locked.
+    // PENDING is read-only for the student: neither an edit nor a delete is
+    // accepted, and both are refused with an explanatory reason.
+    const earlyEdit = await http('PUT', `/api/documents/${docId}`, { token: tokens.student, body: { title: 'early edit' } });
+    assert(earlyEdit.status === 409, `PENDING edit must be refused, got ${earlyEdit.status}`);
+    const earlySubmit = await http('POST', `/api/documents/${docId}/submit`, { token: tokens.student });
+    assert(earlySubmit.status === 409, `PENDING submit must be refused, got ${earlySubmit.status}`);
+    const earlyDelete = await http('DELETE', `/api/documents/${docId}`, { token: tokens.student });
+    assert(earlyDelete.status === 409, `PENDING delete must be refused, got ${earlyDelete.status}`);
+
+    // A confirmed record cannot be reached from PENDING in one step: the mentor
+    // must APPROVE it first, which is what hands editing to the student.
+    const straightConfirm = await http('PUT', `/api/mentor/mentees/${stuA._id}/progress/${docId}/verify`, {
+      token: tokens.mentor, body: { status: 'Verified', source: 'DOCUMENT' },
+    });
+    assert(straightConfirm.status === 409,
+      `PENDING must not confirm straight to CONFIRMED, got ${straightConfirm.status}`);
+
+    // Stage 1: mentor APPROVES the request.
+    const approve = await http('PUT', `/api/mentor/mentees/${stuA._id}/progress/${docId}/verify`, {
+      token: tokens.mentor, body: { status: 'Approved', source: 'DOCUMENT' },
+    });
+    assert(approve.status === 200, `approve -> ${approve.status}: ${JSON.stringify(approve.body)}`);
+    let current: any = await StudentDocument.findById(docId).lean();
+    assert(current.verificationStatus === 'Approved', `db status = ${current.verificationStatus}`);
+
+    // APPROVED is editable by the student, and the API says so.
+    const approvedList = await http('GET', `/api/documents/student/${stuA._id}`, { token: tokens.student });
+    const approvedDoc = (approvedList.body?.data || []).find((d: any) => d._id === String(docId));
+    assert(approvedDoc?.permissions?.canEdit === true,
+      `APPROVED must be editable, permissions = ${JSON.stringify(approvedDoc?.permissions)}`);
+
+    // The student edits, then explicitly SUBMITS for review. A save alone is a
+    // draft and does not re-enter the mentor queue.
+    const save = await http('PUT', `/api/documents/${docId}`, { token: tokens.student, body: { title: 'Hackathon Certificate (corrected)' } });
+    assert(save.status === 200, `student save -> ${save.status}: ${JSON.stringify(save.body)}`);
+    current = await StudentDocument.findById(docId).lean();
+    assert(current.verificationStatus === 'Approved', `save must keep the record editable, got ${current.verificationStatus}`);
+
+    const submit = await http('POST', `/api/documents/${docId}/submit`, { token: tokens.student });
+    assert(submit.status === 200, `student submit -> ${submit.status}: ${JSON.stringify(submit.body)}`);
+    current = await StudentDocument.findById(docId).lean();
+    assert(current.verificationStatus === 'Submitted', `submit must set Submitted, got ${current.verificationStatus}`);
+
+    // SUBMITTED is read-only for the student again.
+    const submittedEdit = await http('PUT', `/api/documents/${docId}`, { token: tokens.student, body: { title: 'nope' } });
+    assert(submittedEdit.status === 409, `SUBMITTED edit must be refused, got ${submittedEdit.status}`);
+
+    // Stage 2: mentor CONFIRMS the submitted record -> CONFIRMED (displayed
+    // VERIFIED) and permanently locked.
     const conf = await http('PUT', `/api/mentor/mentees/${stuA._id}/progress/${docId}/verify`, {
       token: tokens.mentor, body: { status: 'Verified', source: 'DOCUMENT' },
     });
@@ -1480,6 +1529,7 @@ async function main() {
     const after: any = await StudentDocument.findById(docId).lean();
     assert(after.verificationStatus === 'Verified', `db status = ${after.verificationStatus}`);
 
+    // The confirmed record is immutable for the student in every direction.
     const reopen = await http('PUT', `/api/mentor/mentees/${stuA._id}/progress/${docId}/verify`, {
       token: tokens.mentor, body: { status: 'Rejected', rejectionReason: 'undo', source: 'DOCUMENT' },
     });
@@ -1491,9 +1541,27 @@ async function main() {
     const stuEdit = await http('PUT', `/api/documents/${docId}`, { token: tokens.student, body: { title: 'tampered' } });
     assert(stuEdit.status === 409, `student must not edit a confirmed certificate, got ${stuEdit.status}`);
 
+    const stuResubmit = await http('POST', `/api/documents/${docId}/submit`, { token: tokens.student });
+    assert(stuResubmit.status === 409, `student must not resubmit a confirmed certificate, got ${stuResubmit.status}`);
+
+    // The student's own read view reports the locked state, not a false "editable".
+    const lockedList = await http('GET', `/api/documents/student/${stuA._id}`, { token: tokens.student });
+    const lockedDoc = (lockedList.body?.data || []).find((d: any) => d._id === String(docId));
+    assert(lockedDoc?.permissions?.locked === true, `confirmed record must report locked`);
+    assert(lockedDoc?.permissions?.canEdit === false && lockedDoc?.permissions?.canDelete === false,
+      `confirmed record must report no edit/delete, got ${JSON.stringify(lockedDoc?.permissions)}`);
+    assert(typeof lockedDoc?.permissions?.reason === 'string' && lockedDoc.permissions.reason.length > 0,
+      'a read-only record must carry a reason explaining why');
+
+    // REJECTED is the resubmission path: the student may edit and resubmit.
+    const rej = await http('PATCH', `/api/documents/${docId}/verify`, {
+      token: tokens.mentor, body: { verificationStatus: 'Rejected', rejectionReason: 'scan unreadable' },
+    });
+    assert(rej.status === 409, `a confirmed record cannot be rejected afterwards, got ${rej.status}`);
+
     return { status: 'PASS',
-      evidence: `student uploaded AO2026-1395.pdf (Hackathon Certificate / Alliance University); StudentDocument.studentId=${stored.studentId} == selected mentee ${stuA._id}; mentor GET /mentor/mentees/{id}/progress -> ${view.status} with ${recs.length} record(s), the certificate present as source=${rec.source} category=${rec.category} status=${rec.status}; summary pending=${sum?.pending} hackathons=${sum?.hackathons} verified=${sum?.verified}; mentor confirm -> ${conf.status} (db verificationStatus=Verified); reopening -> ${reopen.status}; student delete -> ${stuDel.status}; student edit -> ${stuEdit.status}`,
-      fix: 'getMenteeProgressForMentor now queries by the SELECTED Student._id via the single canonical StudentDocument.studentId relationship (no duplicate records); upload never auto-verifies; Verified (mentor-confirmed) is enforced immutable server-side' };
+      evidence: `student uploaded AO2026-1395.pdf (Hackathon Certificate / Alliance University); StudentDocument.studentId=${stored.studentId} == selected mentee ${stuA._id}; mentor GET /mentor/mentees/{id}/progress -> ${view.status} with ${recs.length} record(s), the certificate present as source=${rec.source} category=${rec.category} status=${rec.status}; summary pending=${sum?.pending} hackathons=${sum?.hackathons} verified=${sum?.verified}; PENDING edit/submit/delete all refused (${earlyEdit.status}/${earlySubmit.status}/${earlyDelete.status}); PENDING->Verified straight confirm refused (${straightConfirm.status}); APPROVE -> ${approve.status}; student save -> ${save.status} (stays Approved); student SUBMIT -> ${submit.status} (Submitted); SUBMITTED edit refused (${submittedEdit.status}); mentor CONFIRM -> ${conf.status} (db verificationStatus=Verified); reopen -> ${reopen.status}; student delete -> ${stuDel.status}; edit -> ${stuEdit.status}; resubmit -> ${stuResubmit.status}; locked payload canEdit=${lockedDoc?.permissions?.canEdit} canDelete=${lockedDoc?.permissions?.canDelete} reason="${lockedDoc?.permissions?.reason}"`,
+      fix: 'getMenteeProgressForMentor now queries by the SELECTED Student._id via the single canonical StudentDocument.studentId relationship (no duplicate records); upload never auto-verifies; the PENDING -> APPROVED -> EDITING -> SUBMITTED -> CONFIRMED state machine is enforced by a shared server-side transition table (utils/record-permission.util.ts) and every record payload carries the server-derived permissions the UI renders verbatim; CONFIRMED is terminal and immutable at the API level' };
   });
 
   await check('Saturday meeting with the reported values saves and appears in history', async () => {

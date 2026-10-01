@@ -2091,9 +2091,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
               <AlertTriangle size={22} color="#DC2626" style={{ flexShrink: 0, marginTop: 2 }} />
               <div style={{ fontSize: '0.9rem', color: '#7F1D1D', lineHeight: 1.5 }}>
                 <strong style={{ display: 'block', marginBottom: '0.35rem' }}>This action cannot be undone.</strong>
-                This will permanently delete <strong>every student document record</strong> in the system
-                together with the corresponding files stored on the server. Students, staff and all other
-                records are not affected, but no deleted document can be recovered or re-verified.
+                This will permanently delete <strong>every deletable student document record</strong> in
+                the system together with the corresponding files stored on the server. Students, staff
+                and all other records are not affected, but no deleted document can be recovered or
+                re-verified.
+                <br />
+                <br />
+                <strong style={{ display: 'block', marginBottom: '0.35rem' }}>Mentor-confirmed records are protected.</strong>
+                Documents a mentor has confirmed are official verified academic records and are
+                permanently locked, so they are <strong>retained</strong> and cannot be deleted — by an
+                administrator or anyone else. The response reports exactly how many were retained.
               </div>
             </div>
           </Modal>
