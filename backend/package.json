@@ -21,6 +21,7 @@
     "test:faculty-notifications": "tsx src/tests/faculty-notifications.test.ts",
     "test:admin-routes": "tsx src/tests/admin-dashboard-routes.test.ts",
     "test:hod-admin": "tsx src/tests/admin-hod-management.test.ts",
+    "test:hod-delete": "tsx src/tests/hod-deletion.test.ts",
     "test:faculty-dept-reassign": "tsx src/tests/faculty-department-reassign.test.ts",
     "test:bulk-upload": "tsx src/tests/bulk-upload.test.ts",
     "test:admin": "tsx src/tests/admin-overview.test.ts",

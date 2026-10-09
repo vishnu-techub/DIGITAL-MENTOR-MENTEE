@@ -101,13 +101,6 @@ export const LoginPage: React.FC = () => {
             </div>
           )}
 
-          <div className="alert alert-info" style={{ marginBottom: '1.25rem', fontSize: 'var(--text-sm)' }}>
-            <ShieldCheck size={16} />
-            <span style={{ fontWeight: 600 }}>
-              Institutional Portal Access • Role-Based Authentication
-            </span>
-          </div>
-
           <form onSubmit={handleSubmit} noValidate>
             <div className="form-group">
               <label className="form-label" htmlFor="login-username">

@@ -104,7 +104,30 @@ Status legend: `PASS` | `PARTIAL` | `FAIL` | `PENDING`
   brand/logo portal header, regrouped role nav (MAIN / MANAGEMENT / ACADEMIC / MENTORING /
   PERFORMANCE-style), always-reachable expand control in the collapsed rail, 20px icons, and a
   tablet-aware drawer (backdrop, Escape, close-on-navigate). Sidebar-only presentation change —
-  every item key/route/label preserved; `tsc --noEmit` + `vite build` PASS.
+  every item key/route/label preserved; `tsc --noEmit` + `vite build` PASS. A scoped **login
+  banner removal** pass the same day deleted the "Institutional Portal Access • Role-Based
+  Authentication" info banner from `LoginPage.tsx` (icon, background, border and its reserved
+  spacing) so the sign-in form flows straight after the card header; every other login-page
+  element (brand panel, logo, fields, toggle, Sign In, Download/Install, footer) is untouched
+  and the generic `alert-info` style remains available. No auth/API/routing change.
+- **Demo HOD accounts:** PASS (2026-10-09) — the five demo/verification HOD accounts (origin proven by
+  name + audit trail, not by department) are now **permanently deleted** through the new Admin-only
+  delete path (1 via the browser UI E2E, 4 via the API); the live store holds 8 genuine HOD accounts
+  (all active), deleted usernames return 401, nothing reappears after a backend restart
+  (byte-identical files), and genuine accounts (1 ADMIN / 8 HOD / 2 FACULTY / 1 STUDENT) plus the
+  full 166-record audit history (now +5 `DELETE_HOD` entries, no secrets) are preserved.
+- **Admin-only permanent HOD deletion:** PASS (2026-10-09) — new `DELETE /api/admin/hods/:hodId`
+  (ADMIN-only, re-checked in the handler) permanently removes one HOD account and writes a preserved
+  `DELETE_HOD` audit **before** the removal. Hard gates: validates id, refuses non-HOD roles (Admin /
+  Faculty / Student are never touched), refuses active HODs (409 — deactivate first), enforces the
+  one-active-HOD-per-department rule, refuses deletion while any dependent record references the
+  account (full reference scan over every User-id-holding field; `AuditLog` deliberately excluded so
+  history stays intact), and only ever deletes inactive demo HODs on an explicit, reviewed allowlist
+  (`VERIFIED_DEMO_HOD_IDS` — never matched by username/department/name). No broad user-deletion
+  function exists. Frontend: a "Delete HOD" action renders **only** on inactive verified-demo rows
+  (the 8 active genuine HODs keep only View/Edit/Deactivate/Remove), behind a confirm modal that
+  names the account and states the action "cannot be undone"; success/error feedback + list refresh;
+  Add/View/Edit/Activate/Deactivate unchanged. New `test:hod-delete` suite 17/17.
 - **Storage layer:** PASS — Mongoose shim over JSON files; no MongoDB dependency, no external
   service. Records survive a real process restart (verified across two separate processes).
 - **Current deployment status:** PARTIAL — Vercel = PASS. Render = fix implemented and verified
@@ -117,6 +140,78 @@ Status legend: `PASS` | `PARTIAL` | `FAIL` | `PENDING`
 ---
 
 ## Completed
+
+### Admin-only permanent HOD deletion + live demo-account cleanup — PASS (2026-10-09)
+
+**What it was:** the user asked for a supported way to permanently remove the verified demo HOD
+accounts from the app and from the Admin HOD Management list — without touching the architecture (no
+MongoDB), without endangering genuine accounts, and without losing any history.
+
+**Backend — Admin-only delete route:**
+- New `deleteHod` handler in `backend/src/modules/admin/admin-hod.controller.ts` + mounted as
+  `DELETE /api/admin/hods/:hodId` in `admin.routes.ts` (authorized ADMIN at the router **and**
+  re-checked in the handler; HOD/FACULTY/STUDENT → 403, anonymous → 401).
+- **Hard gates (each returned as a clear 4xx, nothing ever partially deleted):** validates the
+  `:hodId`; the target must be a real `role === 'HOD'` user (Admin / Faculty / Student are never
+  touched, 403); an **active** HOD is refused (409 — the existing Deactivate path must be used
+  first); the one-active-HOD-per-department rule is enforced (no slot can be left occupied or
+  double-booked); deletion is refused while **any dependent record references the account** — a full
+  reference scan over every User-id-holding field across notifications, mentor_assignments,
+  system_settings, student_documents (uploaded/rejected), achievements (verified/created/updated),
+  placements, academic/student edit requests, internal-marks surfaces and counselling/meeting
+  `evidence.addedBy`; the `AuditLog` is deliberately **excluded** from the reference scan so
+  historical logs can never block or die with the account.
+- **Audit BEFORE removal:** a preserved `DELETE_HOD` audit record (actor admin id, `entityId` of the
+  deleted user, details limited to `{username, fullName, departmentId, reason}` — no password/token/
+  hash) is written, then the account is removed via the narrow `user.deleteOne()` (deletes only the
+  fetched document; **no cascade**, no broad `deleteMany` anywhere).
+- **Allowlist gate:** deletion is additionally restricted to inactive HOD accounts on an explicit,
+  reviewed `VERIFIED_DEMO_HOD_IDS` allowlist exported from the controller — accounts are never matched
+  by username/department/name, so a genuine account can never be deleted even by mistake. The 5
+  verified demo ids are allowlisted; the 8 new active HODs are not (and are active anyway).
+- **No broad deletion functions introduced:** `User.deleteOne/deleteMany` usage remains narrow and
+  scoped exactly as before take-on.
+
+**Frontend — Delete HOD action (Admin HOD Management):**
+- `client.ts`: `AdminHodManagementRow` gains `is_verified_demo: 0 | 1`; new `api.admin.deleteHod(id)`.
+- `AdminHodManagement.tsx`: a red **Delete HOD** action renders **only** on inactive verified-demo
+  rows (`is_active === 0 && is_verified_demo === 1`) — the 8 active genuine HODs keep only
+  View/Edit/Deactivate/Remove; both desktop table and mobile card views carry the action, behind a
+  permanent-delete confirm modal that names the account/department and states the deletion "cannot be
+  undone"; success/error toasts + list refresh. Add/View/Edit/Activate/Deactivate unchanged.
+
+**Live cleanup (executed against `backend/` data, on a dedicated fresh instance on a spare port so
+the user's `npm run dev` watcher on the stale 5050 server was never disturbed):**
+1. Pre-cleanup snapshot of `backend/data` taken.
+2. Fresh instance booted on 5052 against the live store: 13 HODs = 8 active genuine +
+   5 inactive verified-demo (`is_verified_demo: 1`).
+3. Browser UI E2E (headless Chromium, SPA rebuilt with a temporary `VITE_API_URL` override —
+   the production `frontend/.env` points the built bundle **directly** at `localhost:5050`, the stale
+   dev watcher, which is how the stale UI was being served; the override was needed so the browser
+   exercised the new code, and the canonical dist was rebuilt afterwards): 14 `<tr>` (header+13),
+   exactly **5 Delete HOD buttons, all on inactive verified-demo rows; 0 on the 8 active HODs**;
+   modal shows "(Permanent)" + "cannot be undone" + names `hookrepro.hod`; confirm →
+   `DELETE /api/admin/hods/6ac7411e5803a74d64b59194` → **200**; list refreshes 13 → 12 HODs,
+   Delete buttons 5 → 4, toast shown, removed username gone; deleted-account login → 401; 0 page
+   errors.
+4. Remaining 4 demo HODs deleted via the API (200 each, `DELETE_HOD` audited each).
+5. Final list: **8 HODs, all active, 0 verified-demo**; all 5 deleted usernames login → 401.
+6. Audit: 166 pre-existing records all preserved (cross-check by action+entityId+createdAt,
+   **0 missing**); **5 new `DELETE_HOD` entries**, details contain no secrets.
+7. Restart verification: stopped and re-booted the backend twice — deleted HODs never reappear,
+   HOD list stays 8/8/0, logins stay 401, and across a clean restart `audit_logs.json` is
+   byte-identical while `users.json` differs only by the bootstrap's own admin `updatedAt` touch
+   (a benign pre-existing startup behaviour — no account content changes).
+8. Environment restored: canonical production `dist` rebuilt (bundle reverted to
+   `index-CCHU7sU1.js`, `VITE_API_URL=5050` baked back in), dev 5050 watcher untouched, temporary
+   5052 instance stopped, 4173 serve-dist proxy restored to its 5050 target.
+
+**Verified / not claimed:** the earlier plan of serving the SPA through the 4173 proxy was based on a
+wrong assumption — `frontend/.env` has `VITE_API_URL=http://localhost:5050`, so the built SPA calls
+the backend directly and the proxy was never involved; the E2E was therefore run against dist rebuilt
+with the override, exactly as recorded above. Backend `tsc --noEmit` clean; frontend `tsc` + `vite
+build` clean. All suites green (see Verification table: `test:hod-delete` 17/17 is new;
+`test:hod-admin` 22/22, `test:admin-routes` 8/8, `test:admin-auth` 13/13 re-run). No commit/push made.
 
 ### Admin Bulk Upload — UI redesign + Excel template overhaul — PASS
 
@@ -833,7 +928,38 @@ made.
 
 ## Current Issue
 
-**FIXED and verified — Administrator login rejected with HTTP 401 after a password change / config drift.**
+**FIXED and verified — Admin Mentoring Dashboard stuck on the loading skeleton.**
+
+- **The bug report:** opening Admin → Mentoring Dashboard showed `DashboardSkeleton` indefinitely; the
+  dashboard data never appeared.
+- **Root cause:** the commit `2c2182a "Redesign sidebar and dashboard UI"` accidentally deleted the mount
+  effect that triggers `loadData()`. The closing line of `loadData`'s `useCallback` was joined onto the
+  next declaration (`}, [month]);  const loadReport = useCallback(`), which still compiles as valid
+  TypeScript, so **no typecheck or build could catch it**. `loading` is initialised to `true` and the only
+  code that clears it lives inside `loadData`, which was therefore never called on mount → skeleton
+  forever. (The month `<input type="month">` that also called `loadData` renders only *after* loading
+  resolves, so it could never break the deadlock.)
+- **The `.broken` backup is itself corrupt:** it still has the effect, but its `loadData` declaration is
+  missing its opening `const loadData = useCallback(...)` and `setLoading(true)` lines. It was used only as
+  a reference for the intended effect and was **not** copied.
+- **Fix (`frontend/src/pages/admin/AdminMentoringDashboard.tsx` only):** restored the effect
+  `useEffect(() => { loadData(); }, [loadData]);` after `loadData`, and removed the now-redundant direct
+  `loadData()` call in the Departments month input's `onChange` (the effect already refetches whenever
+  `month` changes; the direct call was a duplicate fetch that used the stale month).
+- **Loop safety:** `loadData` is memoised with `useCallback(..., [month])`, so the `[loadData]` effect runs
+  once on mount and once per month change — never on every render.
+- **Loading/error handling preserved:** `loadData` still sets `loading` true/false around the four
+  `Promise.all` requests and sets `loadError` on failure; the existing `NetworkErrorState` /
+  `ServiceUnavailableState` / `ServerErrorState` retry screens are reached on failure.
+- **Verified (browser E2E, headless Chromium, built bundle):** Admin login → Mentoring Dashboard rendered
+  real content — 0 `.skeleton-pulse` nodes and "College Mentoring Split" / "Department Snapshot" /
+  "How each figure is measured" present — with all four `/api/admin/overview/*` calls 200; changing the
+  reporting month fired exactly 4 requests (one per endpoint, no loop); forcing the four calls to fail
+  showed the "Unable to Connect" error state with a working **Retry** that recovered to real data; 0 page
+  errors. Frontend `tsc --noEmit` clean; `npm run build` clean (1659 modules). Regressions
+  `test:admin-routes` 8/8 and `test:admin` 23/23. Frontend-only change — no backend/API/RBAC change.
+
+**Previously — FIXED and verified — Administrator login rejected with HTTP 401 after a password change / config drift.**
 
 - **The bug report:** `POST /api/auth/login` with the Administrator's credentials returned
   `401 Unauthorized`, while the login endpoint itself was healthy (a valid configured password
@@ -861,6 +987,146 @@ made.
 ---
 
 ## Last Change
+
+### Admin-only permanent HOD deletion — implemented + all 5 demo HODs deleted, verified no reappearance (2026-10-09)
+
+- **Task:** make permanent deletion of the verified demo HOD accounts possible (Admin-only) and clean
+  them out of the app + the Admin HOD Management list, preserving every genuine account and all
+  history; no architecture change (still no MongoDB).
+- **Backend:** new `DELETE /api/admin/hods/:hodId` (`admin-hod.controller.ts` `deleteHod`, mounted in
+  `admin.routes.ts`). ADMIN-only (router + handler); validates id; refuses non-HOD roles, **active**
+  HODs (409, deactivate first), and deletes while dependent records reference the account (409 after
+  a full reference scan over User-id-holding fields; `AuditLog` excluded so history survives). Writes
+  a preserved `DELETE_HOD` audit (no secrets) **before** `user.deleteOne()` — no cascade. Deletion is
+  further gated to inactive HODs on an explicit allowlist (`VERIFIED_DEMO_HOD_IDS` exported from the
+  controller, never matched by username/department/name). No broad user-deletion functions.
+- **Frontend:** `Delete HOD` action only on inactive verified-demo rows (`is_active===0 &&
+  is_verified_demo===1`); permanent-delete confirm modal (names the account, states "cannot be
+  undone"); success/error toasts + refresh; Add/View/Edit/Activate/Deactivate and Remove untouched.
+  `client.ts` gains `is_verified_demo` on the row type and `api.admin.deleteHod`.
+- **Live execution (fresh instance on port 5052 — the user's dev watcher on stale 5050 was never
+  touched):** 5 demo HODs deleted — `hookrepro.hod` (through the browser UI, `DELETE …→200`),
+  `hookrepro.it`, `hod.it`, `vhod.verify.cse001`, `vhod.live883485` (via API, 200 each). Final live
+  list: 8 HODs, all active, zero verified-demo; all 5 deleted usernames → 401.
+- **History:** 166 pre-existing audit records preserved (0 missing); 5 new `DELETE_HOD` entries with
+  `details = {username, fullName, departmentId, reason}` — no password/token/hash.
+- **No reappearance:** backend stopped and re-booted twice on 5052 — HOD list stays 8/8/0, logins
+  stay 401; across a clean no-login restart `audit_logs.json` is byte-identical and `users.json`
+  changes only by the bootstrap's admin `updatedAt` touch (pre-existing benign behaviour).
+- **One finding to report:** the built SPA calls the backend **directly** (`frontend/.env`
+  `VITE_API_URL=http://localhost:5050`) — the 4173 serve-dist proxy is not used by the SPA. The
+  browser was therefore still hitting the stale 5050 dev watcher (old code, no `is_verified_demo`);
+  E2E used a dist rebuild with a temporary `VITE_API_URL=http://localhost:5052` override and the
+  canonical dist was rebuilt afterwards (bundle hash back to `index-CCHU7sU1.js`).
+- **Verification:** new `test:hod-delete` 17/17 (sandbox store, injected sandbox allowlist ids);
+  re-run `test:hod-admin` 22/22, `test:admin-routes` 8/8, `test:admin-auth` 13/13; backend
+  `tsc --noEmit` clean; frontend `tsc` + `vite build` clean; browser UI E2E evidence above.
+  PROJECT_PROGRESS.md updated; no commit/push.
+
+### Demo HOD accounts — identified, verified deactivated + unable to log in, no recreation on restart (2026-10-09)
+
+- **Task:** remove every demo/sample/test HOD account from active listings and block login, preserving all genuine accounts and history.
+- **Identified (5, all demo/test in origin — verified by name + audit trail, not by department alone):**
+  - `vhod.verify.cse001` / "Verify HOD CSE" (CSE) — scripted verification account: audit shows CREATE_HOD → LOGIN → DEACTIVATE_HOD within the same second (2026-10-06T19:30:44Z).
+  - `vhod.live883485` / "Verify HOD Live" (CSE) — same scripted verification pattern (2026-10-06T19:44:43Z).
+  - `hod.it` / "Sample HOD IT" (IT) — literal "Sample" name; repeated demo logins on 2026-10-08.
+  - `hookrepro.hod` / "HODMECH" (MECH) — hook-reproduction QA account (2026-10-08) with repeated ACTIVATE/DEACTIVATE cycles.
+  - `hookrepro.it` / "Hook Repro HOD IT" (IT) — same hook-repro QA origin (2026-10-08).
+- **Dependent-record scan:** only `users.json` (the accounts) and `audit_logs.json` (history — preserved) reference them. Zero references in counselling_records, meetings, monthly_progresses, notifications, academic_records, students, faculties, mentor_assignments, student_progress, student_documents.
+- **Action:** none required — all 5 were **already deactivated**. Verified live: `GET /api/admin/hods` → total=5, active=0, inactive=5; login attempts for all 5 with the default HOD password → HTTP 403 "Your institutional account has been deactivated." (the `isActive` check in `auth.controller.ts` runs before password verification).
+- **No permanent deletion performed (deliberate, compliant):** the codebase has **no** supported delete path for HOD users — `admin-hod.controller.ts` documents deactivation as "the only removal path — nothing here ever deletes a User"; grep confirms `User.deleteOne/deleteMany` is used only for students/faculties/tests/nuclear wipe. `clean-demo-data.ts` deletes every non-admin user and all records, violating the preservation requirements, so it was rejected. With no safe deletion mechanism, the task's rule ("permanent removal is supported → use it") resolves to deactivation — already satisfied.
+- **No auto-recreation:** `bootstrap.ts` creates only departments/batches/settings/admin/schools — never HODs. Killed and restarted the real backend (`tsx src/index.ts` from `backend/`): health 200, HOD list byte-identical, admin login 200, demo logins still 403, user census unchanged (9 users: 1 ADMIN / 5 HOD / 2 FACULTY / 1 STUDENT), `users.json` + `audit_logs.json` hashes unchanged. Genuine accounts untouched; one-active-HOD-per-department preserved (0 active HODs).
+- **Verification:** `test:hod-admin` 22/22, `test:admin-routes` 8/8, `test:admin-auth` 13/13, `test:faculty-notifications` 21/21 (includes the department-with-no-active-HOD → 409 rule); frontend `tsc --noEmit` PASS; `vite build` clean. **No code changed** (already-correct state). PROJECT_PROGRESS.md updated; no commit/push.
+
+### Marks modals — native form submission suppressed with `e.preventDefault()` (2026-10-09, static verification only)
+
+- **Goal:** no implicit/native form submission may ever trigger a page navigation from the two internal-marks modals (`AdminInternalMarks.tsx` decision modal, `InternalMarksMentorPanel.tsx` correction modal).
+- **Changed (2 files, handler opening + signature only):** `submitDecision` and `submitCorrection` now receive `(e: React.FormEvent)` and call `e.preventDefault()` first; all existing validation, API payloads, approve/reject behavior, correction requests and success/error toasts are unchanged. No backend change.
+- **Verified (static only — honest):** frontend `tsc --noEmit` exit 0; `vite build` clean. The planned Playwright in-browser check (Enter in the `type="number"` input must not navigate; Enter in a textarea must insert a newline without submitting) was prepared but **not executed** — the HOD-cleanup task took priority. Flagged as not-yet-run rather than claimed.
+
+### Add/Edit HOD modal nested-form fix — `<form> cannot be a descendant of <form>` (2026-10-09)
+
+- **Goal:** remove the nested-form structure in the Admin HOD Management Add/Edit modal so the
+  browser stops logging `<form> cannot be a descendant of <form>`, keep exactly one valid form per
+  submission, and preserve the Add/Edit HOD behavior: required-field validation, department
+  validation, password handling, the one-active-HOD-per-department rule, the API payload, auth and
+  the success/error messages.
+- **Root cause:** `frontend/src/components/common/Modal.tsx` already renders its `.modal-content`
+  as a `<form>` whenever `onSubmit`/`formId` are passed (`const ContentTag = onSubmit ? 'form' :
+  'div';`), and `AdminHodManagement.tsx` ALSO wrapped its modal children in its own
+  `<form id="hod-form" onSubmit={submit}>` — producing a `<form>` inside a `<form>` **and a
+  duplicate `id="hod-form"`** in the DOM. The same redundant pattern existed in
+  `AdminInternalMarks.tsx` (`mark-decision-form`) and `InternalMarksMentorPanel.tsx`
+  (`mark-correction-form`).
+- **Changed (3 frontend files, markup only):** in each call site the redundant inner
+  `<form id=... onSubmit=...>` wrapper became a plain `<div>`, leaving the single form the shared
+  Modal renders (which still carries the `id` + `onSubmit`). `Modal.tsx` is untouched, so every
+  other Modal consumer (`MenteeProgressDashboard`, `MentorAiBotModal`, `SaturdayEvidenceModal`,
+  `StudentProgressView`, …) is unaffected. The "Create HOD" / "Save Changes" submit button still
+  submits the one modal form; `required` fields still validate; edit still hides the password field
+  and disables the username input.
+- **Verified:** `tsc --noEmit` exit 0; `vite build` clean (1659 modules). Headless-Chromium E2E on
+  the built bundle (admin login → HOD Management): Add modal → exactly **1** `<form>` on the page,
+  `#hod-form` **is** the modal form, 0 nested forms, no duplicate id; empty submit → 3 `:invalid`
+  inputs and the modal stays open (validation preserved); filled submit → modal closes + success
+  toast and `POST /api/admin/hods` fires with the filled payload (request intercepted; no record
+  written); Edit modal → same single-form structure, username disabled, no password field, Cancel
+  closes; **0 page errors and 0 console errors** — the reported `<form> cannot be a descendant of
+  <form>` message no longer appears anywhere. No backend/routes/data changed; PROJECT_PROGRESS.md
+  updated; no commit/push made.
+
+### KSRCE Logo frame + duplicate sidebar branding removed (2026-10-09)
+
+- **Goal:** remove the decorative gold/yellow rounded-square frame (border, ring, radius, shadow) around
+  the KSRCE logo in the top header, and remove the duplicate college branding block from the sidebar,
+  without replacing the logo asset or changing its size/position/aspect ratio, and without disturbing
+  gold accents elsewhere.
+- **Changed:**
+  - `frontend/src/styles/index.css` — `.ksrce-logo-img` now declares only `width/height: 44px`,
+    `object-fit: contain`, `flex-shrink: 0`; removed `background:#fff`, `border:2px solid
+    var(--gold-500)`, `border-radius:8px`, `padding:2px` and the box-shadow. Removed the now-unused
+    `.sidebar-logo`, `.sidebar-portal-name`, `.sidebar-portal-product` rules and their collapsed-rail
+    variants; `.sidebar-portal` is now `justify-content: flex-end` so the collapse/close controls keep
+    their previous right-side placement.
+  - `frontend/src/components/common/Sidebar.tsx` — removed the duplicate branding (logo +
+    "K.S.R. College of Engineering" + "Digital Mentor–Mentee") from `.sidebar-portal`; the
+    collapse/expand and drawer-close controls remain.
+  - `frontend/src/components/common/Navbar.tsx` — unchanged markup; the header logo is still the same
+    `<img class="ksrce-logo-img" src="/ksrce-logo.png">`.
+- **Preserved:** logo asset untouched (`/ksrce-logo.png`, 205×190 RGBA, transparent); header logo box
+  44×44 (38×38 at ≤768px) with `object-fit: contain`; gold accents unchanged (header 2px gold bottom
+  border, gold active-nav fill/border/left marker, gold role chip, gold-call-to-action buttons); routes,
+  auth, APIs and business logic untouched.
+- **Verified (headless Chromium, computed styles on the built bundle):** header `.ksrce-logo-img` →
+  `border: 0px`, `border-radius: 0px`, `box-shadow: none`, transparent background, `padding: 0px`, box
+  44×44, `object-fit: contain`, natural size 205×190; sidebar has 0 `.sidebar-logo` /
+  `.sidebar-portal-text` / `.sidebar-portal-name` nodes and no college name in its text, while the
+  collapse button remains and its toggle works; gold accents intact (header bottom border
+  `2px rgb(197,155,39)`, active nav `rgba(212,175,55,0.14)` background + `rgba(212,175,55,0.38)`
+  border + `rgb(212,175,55)` left marker, role chip gold gradient). 0 page errors. Frontend
+  `tsc --noEmit` exit 0; `vite build` clean (1659 modules; CSS 82.34 kB, down from 83.11 kB). No
+  commit/push made.
+
+### Admin Mentoring Dashboard stuck on loading skeleton — mount effect restored (2026-10-09)
+
+- **Goal:** fix the Admin Mentoring Dashboard rendering `DashboardSkeleton` forever, without touching APIs,
+  auth, Admin authorization, response contracts, calculations or unrelated files.
+- **Root cause:** `frontend/src/pages/admin/AdminMentoringDashboard.tsx` lost its mount effect. The end of
+  `loadData`'s `useCallback` had been merged with the next line (`}, [month]);  const loadReport = useCallback(`),
+  which typechecks, so neither `tsc` nor the build could detect the missing
+  `useEffect(() => { loadData(); }, [loadData]);`. Because `loading` starts `true` and only `loadData`
+  clears it, the skeleton never resolved. The regression came in with commit `2c2182a "Redesign sidebar and
+  dashboard UI"`. The adjacent `.broken` file is itself corrupt (its `loadData` opening lines are missing), so
+  it was only used as a reference and not copied.
+- **Fix:** restored the effect after `loadData` (`useEffect(() => { loadData(); }, [loadData]);`) and removed the
+  now-redundant `loadData()` call from the Departments month `<input type="month">` `onChange`. `loadData` is
+  `useCallback([month])`, so the effect runs once on mount and once per month change — no infinite loop.
+- **Verification:** headless-Chromium E2E against the production bundle (dist served statically, API on the local
+  backend): dashboard loaded real data with 0 skeleton nodes and four `/api/admin/overview/*` responses 200; a
+  month change produced exactly 4 refetches (one per endpoint, no loop); aborting the calls surfaced the
+  "Unable to Connect" state with a Retry that recovered to data; no page errors. Frontend `tsc --noEmit` clean;
+  `npm run build` clean (1659 modules). Regressions `test:admin-routes` 8/8, `test:admin` 23/23. Backend
+  untouched. No commit/push made.
 
 ### Admin Login 401 — bootstrap no longer overwrites the stored password (2026-10-09)
 
@@ -1445,10 +1711,11 @@ made.
 
 ## Verification
 
-Backend and frontend both build clean (`tsc` / `vite build`). All 19 suites, run against the local
+Backend and frontend both build clean (`tsc` / `vite build`). All 20 suites, run against the local
 file store (re-run in full on 2026-10-08 after the Placement / Achievement / Leaderboard pass; the
-new `test:faculty-dept-reassign` suite was added in the Admin features pass that day and
-`test:bulk-upload` was added in the Bulk Upload pass on 2026-10-09):
+new `test:faculty-dept-reassign` suite was added in the Admin features pass that day,
+`test:bulk-upload` was added in the Bulk Upload pass on 2026-10-09 and
+`test:hod-delete` in the Admin-only permanent HOD deletion pass on 2026-10-09):
 
 | Script | Result |
 |---|---|
@@ -1471,6 +1738,7 @@ new `test:faculty-dept-reassign` suite was added in the Admin features pass that
 | `test:leaderboard` | PASS — all green, 0 failed (achievement points + deterministic leaderboard; port 5114) |
 | `test:faculty-dept-reassign` | PASS — 18 passed, 0 failed (Admin faculty department reassignment + Remove-HOD/Documents-viewer frontend contracts; port 5115) |
 | `test:bulk-upload` | PASS — 23 passed, 0 failed (bulk template contract, validation/import, error report, route order, frontend source contracts; port 5116) |
+| `test:hod-delete` | PASS — 17 passed, 0 failed (Admin-only permanent HOD deletion; port 5117) |
 
 `test:faculty-notifications` (`backend/src/tests/faculty-notifications.test.ts`) is the dedicated
 suite for the Faculty → HOD notification work above. It seeds **two** departments (CSE and ECE),
@@ -1607,6 +1875,14 @@ STUDENT 403 and anonymous 401; and frontend source contracts for the whole featu
 drives `setHodStatus` with no `deleteHod` route; `AdminStudentDocuments` viewer wired through
 `documentsStudent`, never `selectedStudentId`, and never coupled to the Student Profile). 18/18 PASS.
 
+- **Admin Mentoring Dashboard browser E2E (2026-10-09):** headless Chromium against the built bundle
+  (`frontend/dist` served statically, API proxied to the local backend): login → Mentoring Dashboard
+  rendered real content with **0** `.skeleton-pulse` nodes and all four `/api/admin/overview/*` calls
+  200; changing the reporting month issued exactly 4 requests (one per endpoint, no loop); aborting the
+  four calls surfaced the "Unable to Connect" error state with a Retry that recovered to real data; 0
+  page errors. This verifies the restored mount effect end-to-end. The fix is frontend-only, so no new
+  backend suite was added.
+
 - **Restart persistence:** verified with two separate processes. Process A created a Student,
   Department, Batch and User and wrote an upload; process B read the same ids back and resolved the
   upload by exact path with matching bytes.
@@ -1688,6 +1964,8 @@ drives `setHodStatus` with no `deleteHod` route; `AdminStudentDocuments` viewer 
 
 | Date | Status | Summary |
 |------|--------|---------|
+| 2026-10-09 | PASS | Login page — authentication info banner removed. Removed **only** the "Institutional Portal Access • Role-Based Authentication" `.alert.alert-info` banner from `frontend/src/pages/auth/LoginPage.tsx` — its `ShieldCheck` icon, blue background/border and inline 1.25rem bottom margin are gone, so the sign-in form follows the card header's own 1.6rem spacing directly (layout adjusts naturally; no leftover reserved space). Every other login-page element unchanged (brand panel + features, crest logo, "Sign in to your portal" head, Username/Password fields + visibility toggle, Sign In button, Download/Install KSRCE Web App, footer). No authentication logic, API request, validation, session handling or routing touched; no dependency added; the generic `.alert-info` CSS variant is retained for other potential alert users. Verified: `tsc --noEmit` PASS, `vite build` PASS (1659 modules), banner text absent from source and emitted bundle; headless-Chromium checks on the built dist — desktop 1440×900 and mobile 390×844 both show 0 `alert-info` nodes and 0 banner text, brand panel `flex` on desktop / hidden on mobile, card fits the viewport with no horizontal overflow (`scrollWidth == innerWidth`), username/password/toggle/Sign In/Download buttons all present, and **0 page errors and 0 console errors**. No commit/push. |
+| 2026-10-09 | PASS | Admin-only permanent HOD deletion + live demo-account cleanup. **Backend:** new `DELETE /api/admin/hods/:hodId` (ADMIN-only, re-checked in handler) — validates id, refuses non-HOD roles (403), active HODs (409 — deactivate first) and deletion while any dependent record references the account (full User-id reference scan; `AuditLog` deliberately excluded); writes a preserved `DELETE_HOD` audit (no secrets, details `{username, fullName, departmentId, reason}`) **before** narrow `user.deleteOne()` (no cascade, no broad deletion functions). Deletion extra-gated to inactive HODs on an explicit allowlist (`VERIFIED_DEMO_HOD_IDS` export — never matched by username/department/name). **Frontend:** `Delete HOD` action only on inactive verified-demo rows (`is_active===0 && is_verified_demo===1`) — the 8 active genuine HODs keep only View/Edit/Deactivate/Remove — with a permanent-delete confirm modal ("cannot be undone"), toasts + list refresh; `client.ts` gains `is_verified_demo` + `api.admin.deleteHod`. **Live cleanup executed on a fresh 5052 instance (user's stale 5050 dev watcher untouched):** all 5 demo HODs deleted — `hookrepro.hod` via the browser UI E2E (`DELETE …→200`, list 13→12 HODs, buttons 5→4, toast), `hookrepro.it`/`hod.it`/`vhod.verify.cse001`/`vhod.live883485` via API; final list 8 HODs all active, 5 deleted usernames → 401; 166 pre-existing audit records preserved (0 missing) + 5 new `DELETE_HOD`. **No reappearance:** restarted twice on 5052 — list stays 8/8/0, logins 401, clean no-login restart leaves `audit_logs.json` byte-identical and `users.json` changed only by the bootstrap's admin `updatedAt` touch. **Finding:** the built SPA ignores the 4173 proxy — `frontend/.env` bakes `VITE_API_URL=http://localhost:5050` into dist, which is why the browser still saw the stale 5050 watcher; E2E ran on a dist rebuilt with a temporary 5052 override and the canonical dist was rebuilt afterwards (back to `index-CCHU7sU1.js`). New `test:hod-delete` 17/17 (port 5117); re-run `test:hod-admin` 22/22, `test:admin-routes` 8/8, `test:admin-auth` 13/13; backend `tsc --noEmit` clean; frontend `tsc` + `vite build` clean; 20 backend suites. PROJECT_PROGRESS.md updated; no commit/push. |
 | — | PASS | UTF-8 mojibake / CSV charset fixes; both builds green. |
 | — | FAIL | Render student dashboard HTTP 500 — root cause open. |
 | — | PASS | Root cause found: import-time `mkdirSync` crash on Render's read-only FS. Express 5 and Sapling ruled out with evidence. Fix implemented; backend/frontend builds and 3 test suites green. Awaiting redeploy verification. |
@@ -1708,3 +1986,8 @@ drives `setHodStatus` with no `deleteHod` route; `AdminStudentDocuments` viewer 
 | 2026-10-09 | PASS | Official KSRCE Departments — Bulk Upload Reference Values Update. **Source:** `backend/src/database/bootstrap.ts` updated to the 15 official KSRCE departments (AUTO, BME, CSE, CIVIL, CSD, CSE_IOT, CSE_CS, ECE, EEE, MECH, IT, SFE, MCA, MBA, AIDS). No Science & Humanities departments. **Bulk Upload impact:** Student/Faculty templates and validators already read live departments via `Department.find({})` — Reference Values sheet and Excel dropdowns now show all 15 automatically; validation rejects invalid names with "Unknown department". **Preservation:** no existing records modified; no duplicate department list; RBAC/HOD scoping/mentor assignments unaffected. **Verification:** backend `tsc --noEmit` clean; frontend `tsc --noEmit` + `vite build` clean; `test:bulk-upload` 23/23 PASS (15 departments in template, dropdowns work, invalid names rejected); regressions `test:admin-routes` 8/8, `test:hod-admin` 22/22; no commit/push made. |
 | 2026-10-09 | PASS | Admin HOD Delete / Remove — Safe Deactivation via Existing Status Endpoint. **Backend:** reuses existing `PATCH /api/admin/hods/:hodId/status` (`setHodStatus`) — no new endpoint. Flips `isActive=false`, creates `DEACTIVATE_HOD` audit, frees department slot, preserves all historical records. **Frontend:** "Remove" button (🗑) in HOD Management table/cards for active HODs, confirmation modal with required message, loading state, success toast, list refresh. ADMIN-only (server-enforced 403 for HOD/FACULTY/STUDENT). **Verification:** `test:hod-admin` 22/22 PASS (deactivation retains records, inactive HOD login refused, department freed, one-active-HOD rule, audit). Backend `tsc --noEmit` clean; frontend `tsc --noEmit` + `vite build` clean; no commit/push made. |
 | 2026-10-09 | PASS | Admin login 401 — root cause: `bootstrap.ts` re-hashed `ADMIN_PASSWORD` over the stored admin `passwordHash` on every startup, silently reverting an in-app password change (so the password the user held got 401). **Fix:** existing admin is preserved (only `role === 'ADMIN'` / `isActive === true` enforced); a missing admin is still created from `ADMIN_PASSWORD`; explicit one-shot `ADMIN_FORCE_PASSWORD_RESET=true` added and documented in `backend/.env.example`. New `test:admin-auth` **13/13**; regressions `test:critical` 12/12, `test:admin-routes` 8/8, `test:runtime` 38/38; live login 200 `ADMIN` (configured / lowercase / `admin` alias) and 401 wrong/unknown; backend `tsc`+build and frontend `tsc`+build clean. Out of scope (still open): `AdminMentoringDashboard.tsx` missing its mount effect. No commit/push made. |
+| 2026-10-09 | PASS | Admin Mentoring Dashboard stuck on the loading skeleton — root cause: commit `2c2182a "Redesign sidebar and dashboard UI"` merged the end of `loadData`'s `useCallback` into the next declaration (`}, [month]);  const loadReport = useCallback(`), deleting the mount `useEffect(() => { loadData(); }, [loadData]);`. It still typechecks, so no build/test caught it; `loading` starts `true` and only `loadData` clears it, so the skeleton never resolved (the month input that also called `loadData` renders only after loading). The `.broken` backup is itself corrupt (its `loadData` opening lines are missing) and was used only as a reference. **Fix (`AdminMentoringDashboard.tsx` only):** restored the effect (safe — `loadData` is `useCallback([month])`, so it runs once on mount and once per month change) and removed the redundant direct `loadData()` from the month `onChange`. **Verified:** headless-Chromium E2E on the built bundle — dashboard loaded real data with 0 `.skeleton-pulse` nodes and all four `/api/admin/overview/*` 200; month change → exactly 4 refetches (no loop); aborted calls → "Unable to Connect" + working Retry recovering to data; 0 page errors. Frontend `tsc --noEmit` + `vite build` clean; regressions `test:admin-routes` 8/8, `test:admin` 23/23; backend untouched; PROJECT_PROGRESS.md updated; no commit/push made. |
+| 2026-10-09 | PASS | KSRCE logo decorative gold frame removed + duplicate sidebar branding removed. **`index.css`:** `.ksrce-logo-img` trimmed to `width/height:44px`, `object-fit:contain`, `flex-shrink:0` (removed white background, 2px gold border, 8px radius, 2px padding, box-shadow); deleted unused `.sidebar-logo` / `.sidebar-portal-name` / `.sidebar-portal-product` (+ collapsed variants) and right-aligned the remaining `.sidebar-portal` controls. **`Sidebar.tsx`:** removed the duplicate logo + college-name + product block from `.sidebar-portal` (collapse/close controls kept). Asset untouched (205×190, transparent); header logo box unchanged (44×44, 38×38 ≤768px, `object-fit:contain`). Gold accents unchanged (header gold bottom border `2px rgb(197,155,39)`, active-nav gold fill/border/left marker, gold role chip, buttons). Verified via headless-Chromium computed styles: logo border 0px / radius 0px / shadow none / transparent / padding 0px / box 44×44 / natural 205×190; 0 `.sidebar-logo` nodes and no college name in the sidebar; nav active gold retained; collapse toggle still works; 0 page errors. Frontend `tsc --noEmit` exit 0; `vite build` clean (1659 modules, CSS 82.34 kB). PROJECT_PROGRESS.md updated; no commit/push. |
+| 2026-10-09 | PASS | Add/Edit HOD modal nested-form bug fixed. Shared `Modal.tsx` renders its `.modal-content` as a `<form>` whenever `onSubmit`/`formId` are passed, and `AdminHodManagement.tsx` wrapped its children in an extra `<form id="hod-form" onSubmit={submit}>` — the browser logged `<form> cannot be a descendant of <form>` and the DOM carried two `id="hod-form"` elements. The redundant inner `<form>` is now a `<div>` in all three call sites that had it (`AdminHodManagement.tsx` — the reported bug, plus the identical pattern in `AdminInternalMarks.tsx` `mark-decision-form` and `InternalMarksMentorPanel.tsx` `mark-correction-form`), leaving one valid form per modal; `Modal.tsx` unchanged so other consumers (MenteeProgressDashboard, MentorAiBotModal, SaturdayEvidenceModal, StudentProgressView, …) are unaffected. Verified: frontend `tsc --noEmit` exit 0; `vite build` clean; headless-Chromium E2E — exactly one `<form>` on the page in both Add and Edit HOD modals, `#hod-form` is the modal form itself, 0 nested forms, 0 duplicate ids, required validation still blocks an empty submit (modal stays open), Create HOD still posts the filled payload and closes with the success toast, edit keeps username disabled + password hidden, 0 page errors and 0 console errors (the reported message is gone). No backend/routes/data changed; PROJECT_PROGRESS.md updated; no commit/push. |
+| 2026-10-09 | PASS | Marks modals — native form submission suppressed. `submitDecision` (`AdminInternalMarks.tsx`) and `submitCorrection` (`InternalMarksMentorPanel.tsx`) now open with `(e: React.FormEvent)` + `e.preventDefault()`, so no implicit/native submission can navigate the page; validation, API payloads, approve/reject flow, correction requests and toasts unchanged. No backend change. **Static verification only (flagged honestly):** frontend `tsc --noEmit` exit 0, `vite build` clean; the Playwright in-browser check (Enter-key navigation) was prepared but not executed before the HOD-cleanup task took priority. No commit/push. |
+| 2026-10-09 | PASS | Demo HOD accounts — identified, verified deactivated + login-blocked, no recreation on restart. Live store holds exactly 5 HOD users, every one demo/test/verification in origin (audit trail: scripted CREATE_HOD→LOGIN→DEACTIVATE_HOD same-second for `vhod.verify.cse001` / `vhod.live883485`, 2026-10-06; literal "Sample" account `hod.it`, 2026-10-08; hook-reproduction QA accounts `hookrepro.hod`/`hookrepro.it`, 2026-10-08). All 5 were **already** `isActive=false`: `GET /api/admin/hods` total=5 active=0 inactive=5; default-password login attempts → HTTP 403 "account has been deactivated" for all 5. Zero dependent records (only `users.json` + preserved `audit_logs.json` reference them); genuine accounts and one-active-HOD-per-department untouched (0 active HODs). Permanent delete deliberately not performed — no supported HOD delete path exists (deactivation is the only removal mechanism) and `clean-demo-data.ts` is a nuclear wipe. Restart check: killed + restarted `tsx src/index.ts` (health 200), HOD list byte-identical, admin login 200, logins still 403, census 9 users (1 ADMIN/5 HOD/2 FACULTY/1 STUDENT); `bootstrap.ts` never seeds HODs. Tests: `test:hod-admin` 22/22, `test:admin-routes` 8/8, `test:admin-auth` 13/13, `test:faculty-notifications` 21/21; frontend `tsc --noEmit` + `vite build` clean. No code changed; PROJECT_PROGRESS.md updated; no commit/push. |

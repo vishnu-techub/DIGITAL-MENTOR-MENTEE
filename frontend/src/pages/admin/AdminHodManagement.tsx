@@ -26,17 +26,22 @@ import {
   KeyRound,
   UserX,
   AlertTriangle,
+  Trash2,
 } from 'lucide-react';
 
 /**
  * Admin HOD Management tab.
  *
  * Backend surface: `GET/POST /api/admin/hods`, `PUT /api/admin/hods/:id`,
- * `PATCH /api/admin/hods/:id/status` — every one ADMIN-only server-side. The
- * one-active-HOD-per-department rule is enforced by the backend too; this UI
- * only previews it by disabling departments that already have an active HOD.
- * Deactivating a HOD flips status only — no account or historical record is
- * ever deleted.
+ * `PATCH /api/admin/hods/:id/status`, `DELETE /api/admin/hods/:id` — every one
+ * ADMIN-only server-side. The one-active-HOD-per-department rule is enforced by
+ * the backend too; this UI only previews it by disabling departments that
+ * already have an active HOD. Deactivating a HOD flips status only — no account
+ * or historical record is ever deleted. The "Delete HOD" action is the ONE
+ * permanent-deletion path, shown ONLY for INACTIVE verified demo/test accounts
+ * (`is_verified_demo === 1`, returned by the backend from its reviewed
+ * allowlist) and re-gated 100% server-side; it is never shown for active,
+ * genuine or unverified HODs.
  */
 
 interface DeptOption {
@@ -80,6 +85,7 @@ export const AdminHodManagement: React.FC = () => {
   const [viewingHod, setViewingHod] = useState<AdminHodManagementRow | null>(null);
   const [statusTarget, setStatusTarget] = useState<AdminHodManagementRow | null>(null);
   const [removeTarget, setRemoveTarget] = useState<AdminHodManagementRow | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AdminHodManagementRow | null>(null);
   const [form, setForm] = useState<HodForm>(EMPTY_FORM);
   const [formError, setFormError] = useState<string>('');
   const [saving, setSaving] = useState(false);
@@ -273,6 +279,39 @@ export const AdminHodManagement: React.FC = () => {
     }
   };
 
+  /** Only INACTIVE accounts the backend flags as verified demo/test HODs are deletable. */
+  const isDeletableDemoHod = (h: AdminHodManagementRow) => h.is_active === 0 && h.is_verified_demo === 1;
+
+  /**
+   * "Delete HOD" is the permanent-deletion safety valve, shown only for
+   * INACTIVE verified demo/test accounts and re-gated entirely on the server
+   * (Admin role, target role = HOD, inactive, reviewed allowlist, dependent-
+   * record scan). A successful delete writes a DELETE_HOD audit event and the
+   * account is gone for good — it can never log in again and never reappears.
+   */
+  const confirmDeleteHod = async () => {
+    if (!deleteTarget) return;
+    if (deleteTarget.is_active !== 0 || deleteTarget.is_verified_demo !== 1) {
+      toast.error('This account is not eligible for permanent deletion.');
+      setDeleteTarget(null);
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.admin.deleteHod(deleteTarget.id);
+      toast.success(
+        `${deleteTarget.full_name} was permanently deleted. The DELETE_HOD action is recorded in the audit trail.`
+      );
+      setDeleteTarget(null);
+      await load();
+    } catch (err: any) {
+      toast.error('Delete failed: ' + (err?.message || 'unknown error'));
+      setDeleteTarget(null);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) return <DashboardSkeleton />;
 
   if (loadError) {
@@ -387,6 +426,23 @@ export const AdminHodManagement: React.FC = () => {
                               <UserX size={13} /> Remove
                             </button>
                           )}
+                          {isDeletableDemoHod(h) && (
+                            <button
+                              className="btn btn-sm"
+                              title={`Permanently delete ${h.full_name} (verified demo/test account)`}
+                              onClick={() => setDeleteTarget(h)}
+                              style={{
+                                background: '#FEE2E2',
+                                color: '#991B1B',
+                                border: '1px solid #FECACA',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.3rem',
+                              }}
+                            >
+                              <Trash2 size={13} /> Delete HOD
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -453,6 +509,23 @@ export const AdminHodManagement: React.FC = () => {
                         <UserX size={13} /> Remove
                       </button>
                     )}
+                    {isDeletableDemoHod(h) && (
+                      <button
+                        className="btn btn-sm"
+                        title="Permanently delete this verified demo/test HOD account"
+                        onClick={() => setDeleteTarget(h)}
+                        style={{
+                          background: '#FEE2E2',
+                          color: '#991B1B',
+                          border: '1px solid #FECACA',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.3rem',
+                        }}
+                      >
+                        <Trash2 size={13} /> Delete HOD
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -501,7 +574,7 @@ export const AdminHodManagement: React.FC = () => {
         onSubmit={submit}
         formId="hod-form"
       >
-        <form id="hod-form" onSubmit={submit}>
+        <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
             <div className="form-group">
               <label className="form-label">
@@ -622,7 +695,7 @@ export const AdminHodManagement: React.FC = () => {
               {saving ? 'Saving…' : modalMode === 'add' ? 'Create HOD' : 'Save Changes'}
             </button>
           </div>
-        </form>
+        </div>
       </Modal>
 
       {/* ==================== MODAL: Confirm deactivate / activate ==================== */}
@@ -732,6 +805,83 @@ export const AdminHodManagement: React.FC = () => {
                 style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
               >
                 <UserX size={15} /> {saving ? 'Removing…' : 'Remove HOD'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ==================== MODAL: Confirm Permanent Delete (verified demo HOD only) ==================== */}
+      <Modal
+        isOpen={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete HOD (Permanent)"
+      >
+        {deleteTarget && (
+          <div>
+            <p style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: '#7F1D1D' }}>
+              Permanently delete this HOD account?
+            </p>
+            <p style={{ margin: '0.6rem 0 0', color: 'var(--color-slate-600)', lineHeight: 1.6 }}>
+              <strong>{deleteTarget.full_name}</strong> is a <strong>verified demo/test account</strong>{' '}
+              and is currently inactive. Permanent deletion removes the account entirely — it cannot be
+              undone and the account can never log in again.
+            </p>
+
+            <div
+              style={{
+                background: 'var(--color-slate-50)',
+                border: '1px solid var(--color-slate-200)',
+                borderRadius: '8px',
+                padding: '0.85rem 1rem',
+                marginTop: '1rem',
+                display: 'grid',
+                gap: '0.4rem',
+                fontSize: '0.9rem',
+                color: 'var(--color-slate-700)',
+              }}
+            >
+              <div>Username: <strong>@{deleteTarget.username || '—'}</strong></div>
+              <div>Email: <strong>{deleteTarget.email || '—'}</strong></div>
+              <div>Department: <strong>{deleteTarget.department_name || '—'}{deleteTarget.department_code ? ` (${deleteTarget.department_code})` : ''}</strong></div>
+              <div>Account type: <strong>Verified demo / test account</strong></div>
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                gap: '0.6rem',
+                alignItems: 'flex-start',
+                background: 'var(--color-gold-50)',
+                border: '1px solid #FDE68A',
+                borderRadius: '8px',
+                padding: '0.85rem 1rem',
+                marginTop: '0.85rem',
+                fontSize: '0.9rem',
+                color: '#78350F',
+                lineHeight: 1.5,
+              }}
+            >
+              <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: 1 }} />
+              <div>
+                <strong>This action is permanent and cannot be undone.</strong> The backend re-verifies
+                that this account is on the reviewed demo-cleanup allowlist and that no historical
+                record references it before deleting. The <strong>DELETE_HOD</strong> action is recorded
+                in the audit trail; all other accounts and records are untouched.
+              </div>
+            </div>
+
+            <div className="modal-footer" style={{ padding: 0, marginTop: '1rem' }}>
+              <button className="btn btn-secondary" onClick={() => setDeleteTarget(null)} disabled={saving}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-danger"
+                onClick={confirmDeleteHod}
+                disabled={saving}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+              >
+                <Trash2 size={15} /> {saving ? 'Deleting…' : 'Delete HOD permanently'}
               </button>
             </div>
           </div>

@@ -332,7 +332,16 @@ export const AdminMentoringDashboard: React.FC<AdminMentoringDashboardProps> = (
     } finally {
       setLoading(false);
     }
-  }, [month]);  const loadReport = useCallback(
+  }, [month]);
+
+  // Load the college-wide mentoring data on mount and whenever the selected
+  // reporting month changes. `loadData` is memoized with useCallback on [month],
+  // so this effect runs once on mount and once per month change — it cannot loop.
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const loadReport = useCallback(
     async (weeks: number) => {
       setReportLoading(true);
       try {
@@ -874,7 +883,7 @@ export const AdminMentoringDashboard: React.FC<AdminMentoringDashboardProps> = (
                 type="month"
                 className="input"
                 value={month}
-                onChange={(e) => { setMonth(e.target.value); loadData(); }}
+                onChange={(e) => setMonth(e.target.value)}
                 style={{ minWidth: '160px' }}
                 aria-label="Select month"
               />

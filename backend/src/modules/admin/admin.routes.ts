@@ -23,6 +23,7 @@ import {
   createHod,
   updateHod,
   setHodStatus,
+  deleteHod,
 } from './admin-hod.controller.js';
 import { authenticate } from '../../middleware/auth.middleware.js';
 import { authorize } from '../../middleware/rbac.middleware.js';
@@ -56,14 +57,18 @@ router.patch('/faculty/:facultyId/toggle-status', authorize(ROLES.ADMIN), toggle
 router.patch('/faculty/:facultyId/department', authorize(ROLES.ADMIN), reassignFacultyDepartment);
 router.delete('/faculty/:facultyId', authorize(ROLES.ADMIN), deleteFaculty);
 
-// HOD Management — strictly ADMIN. A HOD must never be able to mint, edit or
-// deactivate another HOD, and every handler below re-checks the role as well,
-// so these functions stay Admin-only even if re-mounted elsewhere. Deactivate
-// is a status flip only: no route here deletes a User or any historical record.
+// HOD Management — strictly ADMIN. A HOD must never be able to mint, edit,
+// deactivate or delete another HOD, and every handler below re-checks the role
+// as well, so these functions stay Admin-only even if re-mounted elsewhere.
+// Deactivate is a status flip only. `DELETE /hods/:hodId` is the ONE exception
+// to "nothing here deletes a User": permanent deletion of an already-INACTIVE
+// HOD is allowed ONLY for accounts on the reviewed demo-cleanup allowlist and
+// only when no historical record references them (see `deleteHod`).
 router.get('/hods', authorize(ROLES.ADMIN), getHodList);
 router.post('/hods', authorize(ROLES.ADMIN), createHod);
 router.put('/hods/:hodId', authorize(ROLES.ADMIN), updateHod);
 router.patch('/hods/:hodId/status', authorize(ROLES.ADMIN), setHodStatus);
+router.delete('/hods/:hodId', authorize(ROLES.ADMIN), deleteHod);
 
 // Mentor/Mentee Assignment Management
 router.get('/mentors/:mentorId/mentees', authorize(ROLES.ADMIN, ROLES.HOD), getMenteesByMentor);

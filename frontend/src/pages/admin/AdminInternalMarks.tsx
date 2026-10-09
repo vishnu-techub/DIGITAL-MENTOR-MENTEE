@@ -185,7 +185,8 @@ export const AdminInternalMarks: React.FC = () => {
     setDecision({ request, mode });
   };
 
-  const submitDecision = async () => {
+  const submitDecision = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!decision) return;
     if (decision.mode === 'reject' && rejectReason.trim().length === 0) {
       toast.error('A rejection reason is required.');
@@ -523,7 +524,7 @@ export const AdminInternalMarks: React.FC = () => {
         formId="mark-decision-form"
       >
         {decision && (
-          <form id="mark-decision-form" onSubmit={submitDecision}>
+          <div>
             <div
               style={{
                 background: '#F8F9FA',
@@ -578,7 +579,7 @@ export const AdminInternalMarks: React.FC = () => {
                 </div>
               </div>
             )}
-          </form>
+          </div>
         )}
       </Modal>
     </div>

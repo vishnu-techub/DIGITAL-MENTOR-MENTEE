@@ -170,7 +170,8 @@ export const InternalMarksMentorPanel: React.FC<Props> = ({ studentId, registerN
     setCorrection({ row, markType: 'IA1', requestedMark: '', reason: '' });
   };
 
-  const submitCorrection = async () => {
+  const submitCorrection = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!correction) return;
     const max = MARK_MAX[correction.markType];
     const value = Number(correction.requestedMark);
@@ -488,7 +489,7 @@ export const InternalMarksMentorPanel: React.FC<Props> = ({ studentId, registerN
         formId="mark-correction-form"
       >
         {correction && (
-          <form id="mark-correction-form" onSubmit={submitCorrection}>
+          <div>
             <div
               style={{
                 background: '#F8F9FA',
@@ -560,7 +561,7 @@ export const InternalMarksMentorPanel: React.FC<Props> = ({ studentId, registerN
                 The official mark is NOT changed until an administrator approves this request.
               </div>
             </div>
-          </form>
+          </div>
         )}
       </Modal>
     </div>

@@ -128,6 +128,8 @@ export interface AdminHodManagementRow {
   department_name: string;
   department_code: string;
   is_active: 0 | 1;
+  /** 1 only for accounts on the backend's reviewed demo-cleanup allowlist. */
+  is_verified_demo: 0 | 1;
   last_login_at: string | null;
   created_at: string | null;
 }
@@ -1130,6 +1132,16 @@ export const api = {
       request<AdminHodManagementRow>(`/admin/hods/${hodId}/status`, {
         method: 'PATCH',
         body: JSON.stringify({ isActive }),
+      }),
+    /**
+     * PERMANENT deletion — demo-cleanup safety valve only. The server refuses
+     * unless the target is an INACTIVE HOD on the reviewed demo allowlist with
+     * zero dependent records, called by an Admin. This is never used as a
+     * general account-deletion path: genuine HODs only ever get deactivated.
+     */
+    deleteHod: (hodId: string) =>
+      request<{ id: string; username: string; fullName: string }>(`/admin/hods/${hodId}`, {
+        method: 'DELETE',
       }),
   },
 

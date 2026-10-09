@@ -164,10 +164,13 @@
   --z-sticky: 200;
   --z-header: 1000;
   --z-drawer: 1100;
-  --z-backdrop: 1200;
+  --z-backdrop: 1050; /* dim layer behind the drawer, below modals */
   --z-modal: 1300;
   --z-toast: 2000;
   --z-tooltip: 2100;
+
+  /* Top header height; the mobile drawer aligns its top edge to this. */
+  --header-hpx: 66px;
 
   /* Interactive Targets */
   --touch-target: 44px;
@@ -449,11 +452,6 @@ input, select, textarea {
   width: 44px;
   height: 44px;
   object-fit: contain;
-  background: #ffffff;
-  border-radius: 8px;
-  padding: 2px;
-  border: 2px solid var(--gold-500);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
   flex-shrink: 0;
 }
 
@@ -545,13 +543,17 @@ div.desktop-only.table-responsive {
 }
 
 @media (max-width: 960px) {
+  /* The drawer slides out from under the top header (aligned flush to its
+     bottom edge) and sits above the backdrop so every nav item and the
+     close control stay clickable while it is open. */
   .sidebar {
     position: fixed;
-    top: 0;
+    top: var(--header-hpx);
     bottom: 0;
     left: 0;
-    height: 100vh;
+    height: auto;
     transform: translateX(-100%);
+    z-index: var(--z-drawer);
     box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.25);
   }
 
@@ -559,10 +561,15 @@ div.desktop-only.table-responsive {
     transform: translateX(0);
   }
 
+  /* Dim only the content below the top header, so the header (with the
+     hamburger/X toggle) stays visible and interactive while the drawer is open. */
   .sidebar-backdrop {
     display: block;
     position: fixed;
-    inset: 0;
+    top: var(--header-hpx);
+    right: 0;
+    bottom: 0;
+    left: 0;
     background: rgba(15, 23, 42, 0.6);
     backdrop-filter: blur(3px);
     z-index: var(--z-backdrop);
@@ -4058,51 +4065,18 @@ body {
   outline-color: var(--color-gold-400);
 }
 
-/* Portal header inside the drawer */
+/* Compact control strip above the nav — nav controls only. The college
+   branding (logo, name, product subtitle) lives in the top header and is
+   not duplicated here. The rail height matches a nav-item row so the
+   transition from the header into navigation reads as one deliberate column. */
 .sidebar-portal {
-  padding: 1.1rem 1rem 0.9rem;
+  padding: 0.55rem 0.85rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   gap: 0.6rem;
   flex-shrink: 0;
-}
-
-/* Institution identity - logo + name + product line. */
-.sidebar-logo {
-  width: 40px;
-  height: 40px;
-  object-fit: contain;
-  background: #ffffff;
-  border: 2px solid var(--color-gold-500);
-  border-radius: var(--radius-md);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-  padding: 2px;
-  flex-shrink: 0;
-}
-
-.sidebar-portal-name {
-  font-size: 0.78rem;
-  font-weight: 700;
-  color: #ffffff;
-  line-height: 1.2;
-  letter-spacing: 0.02em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar-portal-product {
-  font-size: 0.58rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  color: var(--color-gold-300);
-  margin-top: 3px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .sidebar-close {
@@ -4244,15 +4218,9 @@ body {
     flex-direction: column;
     justify-content: flex-start;
     gap: 0.55rem;
-    padding: 0.85rem 0.4rem;
+    padding: 0.5rem 0.35rem;
   }
 
-  .sidebar.collapsed .sidebar-logo {
-    width: 34px;
-    height: 34px;
-  }
-
-  .sidebar.collapsed .sidebar-portal-text,
   .sidebar.collapsed .sidebar-close {
     display: none;
   }
@@ -4351,6 +4319,7 @@ body {
   background: linear-gradient(120deg, var(--color-navy-950) 0%, var(--color-navy-800) 55%, var(--color-navy-700) 100%);
   border-bottom: 2px solid var(--color-gold-500);
   padding: 0.6rem 1.25rem;
+  height: var(--header-hpx);
   gap: 0.75rem;
 }
 

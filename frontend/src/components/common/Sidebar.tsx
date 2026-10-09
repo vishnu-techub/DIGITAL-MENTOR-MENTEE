@@ -274,21 +274,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, isOpe
         aria-label="Primary navigation"
       >
         <div className="sidebar-portal">
-          <img
-            src="/ksrce-logo.png"
-            alt="K.S.R. College of Engineering emblem"
-            className="sidebar-logo"
-            width={40}
-            height={40}
-          />
-          <div className="sidebar-portal-text" style={{ minWidth: 0 }}>
-            <div className="sidebar-portal-name" title="K.S.R. College of Engineering">
-              K.S.R. College of Engineering
-            </div>
-            <div className="sidebar-portal-product" title="Digital Mentor–Mentee">
-              Digital Mentor–Mentee
-            </div>
-          </div>
           <button
             type="button"
             className="sidebar-collapse"
