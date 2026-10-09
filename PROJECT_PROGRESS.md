@@ -119,6 +119,25 @@ Status legend: `PASS` | `PARTIAL` | `FAIL` | `PENDING`
   legal/footer contrast, restrained gold glows on the navy gradient, plus tablet (961–1180px)
   and mobile (≤640px) refinements and a login-scoped `prefers-reduced-motion` guard.
 - **Admin Mentoring Dashboard — College Mentoring Split + Weekly Progress focused refinement:** PASS (2026-10-09) — a presentation-only second pass over exactly those two cards. **Split card:** refined circular coverage ring with a clear % (server `pie` figures, de-duplicated), two restrained stat rows (green **Mentored**, amber/red **Pending**) each showing count + % in one consistent format, and a subtle footer naming the reporting month + the de-duplicated student total; inline SVG, decorative-but-labelled. **Weekly card:** consistent `DATE RANGE | BAR | COUNT` rows — compact one-line ranges (`Aug 17 – Aug 23`) with a fixed date-label column width, low-attention flexible bars on a subtle track with the theme fill, a clean zero-state with visible dashed stubs, subtle separators + row hover, and every value straight from the API `weeklyProgress`. **Responsive:** desktop shows two equal-height side-by-side panels; tablet and mobile stack cleanly with no horizontal overflow. No API, route, RBAC, calculation, data-fetching or unrelated card changed. Verified end-to-end on an isolated backend (`verify-data2`, seeded 21 counselling records) + rebuilt SPA at 1440×900 / 1024×768 / 390×844 — 0 failures. **Pre-existing issue found (NOT fixed — out of scope):** the 30-Day Report tab never loads its data because the mount effect tests `currentTab === 'reports'` while the parent supplies `'mentoring-reports'`; the tab shows the "Report unavailable" empty state. See the Completed entry + Log for details.
+- **Student Dashboard Overview + Profile Completion card bug:** PASS (2026-10-09) — confirmed and
+  fixed the card reading `profile?.profileCompleted` (a key `GET /api/students/:id` has never
+  returned — it sends `profile_completed: 0|1`), so a completed+saved profile always rendered
+  **Incomplete**. The completion arithmetic moved to one shared helper
+  (`backend/src/utils/profile-completion.util.ts`) used by both `getStudents` and `getStudentById`;
+  the detail response now additionally carries `profile_completion_percentage` +
+  `profile_completion_missing` (additive fields only). The Overview tab was rebuilt in the same
+  navy/gold tokens (scoped `sd-` CSS): banner spacing/typography/alignment with a prominent-but-
+  balanced Record Book button and aligned Internal Assessment / Mentor Documents actions, uniform
+  `sd-stat` cards that cannot overflow, a real progress bar + "Missing: …" hints on Profile
+  Completion (never an invented number), a true two-column Meeting Schedule / Assigned Faculty
+  Mentor pair that collapses ≤900px with readable empty states and only-present mentor contact rows,
+  and a compact Recent Saturday Mentoring Log empty state. Verified end-to-end on an isolated
+  backend + rebuilt SPA: before-fix bundle "Incomplete" vs after-fix "Complete" at desktop/tablet/
+  mobile with no horizontal overflow; 8/8 case checks (missing fields, filled+saved, refresh,
+  sign-out/in, save-failure refuses a false Complete, optional empties, response format +
+  directory/detail agreement, console hygiene). Frontend + backend `tsc --noEmit` PASS; `vite
+  build` PASS (canonical dist rebuilt with the production 5050 base); `test:directory` 16/16,
+  `test:critical` 12/12, `test:runtime` 38/38 re-run green.
 - **Demo HOD accounts:** PASS (2026-10-09) — the five demo/verification HOD accounts (origin proven by
   name + audit trail, not by department) are now **permanently deleted** through the new Admin-only
   delete path (1 via the browser UI E2E, 4 via the API); the live store holds 8 genuine HOD accounts
@@ -149,6 +168,75 @@ Status legend: `PASS` | `PARTIAL` | `FAIL` | `PENDING`
 ---
 
 ## Completed
+
+### Student Dashboard Overview UI + Profile Completion card "always Incomplete" bug — PASS (2026-10-09)
+
+**What it was (confirmed bug):** after a student completes and saves their profile, the Overview's
+Profile Completion stat card still showed **Incomplete**. Live API evidence (before the fix) proved
+the dashboard read a field that does not exist in the payload: the detail endpoint
+`GET /api/students/:id` returns `profile_completed: 0|1` (+ `profile_completed_at`) — it has **no
+`profileCompleted` key** — while `StudentDashboard.tsx` lines 726-727 read
+`profile?.profileCompleted`, so the card was always `undefined`-driven. The dashboard was otherwise
+correct: `/auth/me` and the login JWT carry the camelCase flag (used by the `App.tsx` wizard gate),
+and the directory listing (`getStudents`) already computed a four-bucket percentage.
+
+**Root cause fix (minimal + shared calculation, no data invented):**
+- New `backend/src/utils/profile-completion.util.ts` — `calculateProfileCompletion(student)` is the
+  single source of truth for the four equally-weighted buckets exactly as the directory always used:
+  identity `(fullName && registerNumber)`, contact `(mobileNumber && email && dob)`, family
+  `(parent.fatherName || parent.motherName)`, school `(school.tenthMark || school.twelfthMark)`;
+  `profileCompleted` (the onboarding wizard flag) is authoritative and forces 100%. Returns
+  `{ percentage, missing[] }`.
+- `student.controller.ts` — `getStudents` now calls the helper instead of its inline copy (output
+  unchanged, `profile_completion_percentage` value identical); `getStudentById` additionally emits
+  `profile_completion_percentage` and `profile_completion_missing` (additive fields only — all
+  existing keys/status codes/RBAC unchanged).
+- `StudentDashboard.tsx` — the card now reads the real server fields: `profile_completed === 1 ||
+  profileCompleted === true` (percent forced to 100 when flagged), otherwise the real
+  `profile_completion_percentage`; "Incomplete" shows that percentage on a progress bar plus the
+  server's `Missing: …` bucket labels. No percentage is ever invented — without a numeric field the
+  card falls back to the state alone.
+
+**Part 1 UI overhaul (same navy/gold tokens, scoped `sd-` CSS appended to `index.css`):**
+- Banner: `sd-banner` — identity block (badge, welcome name, register no • department • batch in a
+  wrapping meta row) + balanced action column; prominent-but-balanced **Download My Record Book
+  (PDF)** button with the **Internal Assessment** / **Mentor Documents** actions aligned in one row
+  beneath; mobile ≤640px stacks the actions full-width.
+- Quick metrics: uniform `sd-stat` cards (44px icons, consistent padding, `overflow-wrap` so long
+  values like "Incomplete" can never overflow); Profile Completion card gains the real progress bar
+  (`role="progressbar"`), 100% bar + "Complete", or percent + "Missing: …" list when incomplete; the
+  emoji-only status text is replaced with restrained colour + text.
+- Balanced two-column grid: `sd-grid-2` is `repeat(2, minmax(0,1fr))` and now actually collapses to
+  one column ≤900px (the previous `1fr 1fr` never did), with the Meeting Schedule card (`Friday` /
+  `Saturday` phase badge) and Assigned Faculty Mentor card stretching to equal height. Mentor shows
+  name / designation / cabin / phone / email **only when present** (empty rows hidden, no invented
+  "N/A"), "Active Mentor" badge only when a mentor exists, and a readable empty state otherwise.
+- Recent Saturday Mentoring Log: kept heading + table structure; records badge, moderate-height
+  empty state (icon + one line) that never leaves a large blank area.
+- Responsive: verified desktop 1440 / tablet 900 / mobile 390 — no horizontal overflow, consistent
+  card, no console errors.
+
+**Verification (real pipeline — sandboxed backend on a fresh store seeded via the real API +
+headless Chromium against rebuilt bundles):**
+- **8/8 case checks PASS:** (1) incomplete payload → "Incomplete" + 25% bar + missing labels;
+  (2) all required filled + saved (optional fields left empty) → "Complete", `profile_completed=1`,
+  `profile_completion_percentage=100`, `missing=[]`; (3) page refresh keeps "Complete";
+  (4) sign-out / sign-in (fresh token) keeps "Complete"; (5) save failure (invalid mobile → HTTP 400)
+  never flips the card, stored flag stays 0; (6) optional empty fields never block completion;
+  (7) backend format: detail carries `profile_completed`, `profile_completed_at`,
+  `profile_completion_percentage`, `profile_completion_missing`, and the directory row and detail
+  percentage agree (100 == 100); (8) responsive/console hygiene.
+- **Before/after browser evidence:** with the pre-fix bundle the card read "PROFILE COMPLETION
+  Incomplete" at every viewport even though the API reported `profile_completed:1` / 100%; with the
+  fixed bundle it reads "Complete".
+- **Builds:** frontend `npx tsc --noEmit` exit 0; backend `npx tsc --noEmit` exit 0; `npx vite
+  build` PASS; canonical `frontend/dist` rebuilt with the production `VITE_API_URL=localhost:5050`
+  baked in (bundle contains the fix; no sandbox port leaked).
+- **Suites re-run green:** `test:directory` 16/16, `test:critical` 12/12, `test:runtime` 38/38
+  (only the suites touching profile completion / response contracts were re-run; nothing else was
+  changed). The directory suite still asserts the row keys `profile_completed` /
+  `profile_completion_percentage` — both present.
+- No commit/push made (as with prior passes).
 
 ### Admin Mentoring Dashboard — College Mentoring Split + Weekly Progress — focused refinement PASS (2026-10-09)
 
@@ -2047,6 +2135,7 @@ drives `setHodStatus` with no `deleteHod` route; `AdminStudentDocuments` viewer 
 
 | Date | Status | Summary |
 |------|--------|---------|
+| 2026-10-09 | PASS | Student Dashboard Overview UI + Profile Completion card "always Incomplete" bug fixed. **Root cause (confirmed by live API evidence + browser):** `StudentDashboard.tsx` read `profile?.profileCompleted`, but `GET /api/students/:id` returns only `profile_completed: 0|1` (+ `profile_completed_at`) — no camelCase key — so the card rendered "Incomplete" even after the student completed and saved their profile (`/auth/me` + the login JWT do carry `profileCompleted`, which is why the wizard gate was fine). **Fix:** new `backend/src/utils/profile-completion.util.ts` — `calculateProfileCompletion(student)` is the single source of truth for the exact four buckets the directory always used (identity / contact / family / school, each 25; `profileCompleted` authoritative → 100) and returns `{percentage, missing[]}`; `getStudents` now calls it (same output, inline copy removed) and `getStudentById` additionally returns `profile_completion_percentage` + `profile_completion_missing` (additive only — keys, statuses, RBAC untouched). `StudentDashboard.tsx` reads `profile_completed === 1` (with a tolerant `profileCompleted` fallback) and shows a real progress bar + "Missing: …" on Incomplete — no invented percentages. **Same-pass UI overhaul** (scoped `sd-` CSS in `index.css`, navy/gold tokens): banner identity block + balanced action column (prominent-but-balanced Download Record Book PDF, aligned Internal Assessment / Mentor Documents), uniform `sd-stat` cards that wrap without overflow, two-column Meeting Schedule / Assigned Faculty Mentor grid that truly collapses ≤900px (was stuck `1fr 1fr`), mentor name/designation/cabin/phone/email shown only when present, readable empty states, compact Saturday Mentoring Log empty state, ≤640px banner stacking. **Verified on the real pipeline** (fresh-store sandbox backend on :5095 seeded via the real API + headless Chromium on rebuilt bundles): before-fix bundle "PROFILE COMPLETION Incomplete" vs after-fix "Complete" at 1440/900/390 with no horizontal overflow; **8/8 cases** — incomplete payload → Incomplete + 25% bar + missing labels; filled+saved (optionals empty) → Complete (`profile_completed=1`, 100%, `missing=[]`); refresh keeps Complete; sign-out/in keeps Complete (fresh token `profileCompleted=true`); save failure (invalid mobile → 400) never flips to Complete; optional empties don't block; response format + directory/detail agreement (100 == 100); 0 console errors. Frontend & backend `tsc --noEmit` exit 0; `vite build` PASS; canonical `frontend/dist` rebuilt with production `VITE_API_URL=localhost:5050`. Suites re-run green — `test:directory` 16/16, `test:critical` 12/12, `test:runtime` 38/38. No commit/push made. |
 | 2026-10-09 | PASS | Admin Mentoring Dashboard — "College Mentoring Split" + "Weekly Progress" **focused refinement** (presentation only, second pass over exactly these two cards). **Split (`CoveragePie`):** refined circular coverage ring with a clear centered % + `COVERAGE` label, track + gold fill from the server's de-duplicated `pie`; two restrained stat rows (green Mentored, red/amber Pending) each showing server count + % in one consistent format; subtle footer `Reporting month: 2026-10 · 1 students, each counted once`; no malformed characters. **Weekly (`WeeklyProgressList`):** consistent `DATE RANGE | BAR | COUNT` rows — compact one-line ranges (`Aug 17 – Aug 23` via `formatWeekRange`, fixed date-label width), low-attention flexible bars on a subtle track with theme fill scaled to the busiest week (gold `is-busiest`), clean zero-session dashed stubs, subtle separators + hover, counts straight from the API. **Layout:** shared `.mentoring-split-wide` grid, equal-height cards, single column ≤1024px; scoped CSS block in `index.css`. **No API/route/RBAC/calculation/data-fetch/unrelated card changed.** Verified on the real pipeline with an isolated backend (:5090, seeded `verify-data2`: pie 1/0/1 = 100%, weekly `[2,3,0,5,1,0,4,6]`, 2 zero weeks) + rebuilt SPA across desktop 1440 / tablet 1024 / mobile 390: equal card heights (394.72/394.72), ring %/arc match API, stat rows match, 8 rows, one-line API-derived date labels, stubs/bar-widths/busiest match, hover feedback, no horizontal overflow on any viewport, no mojibake (overview + Comparison + 30-Day tabs, bundle `·` scan), 0 page/console errors; dept drill-down re-verifies the same components (ring 100%, 8 rows, counts match dept API); empty dept shows the intended EmptyState. **Found (pre-existing, NOT fixed — out of scope):** the 30-Day Report tab never loads data — `loadReport` tests `currentTab === 'reports'` while the parent supplies `mentoring-reports`, so the tab always shows "Report unavailable"; the API itself returns 200 with a full payload. `tsc --noEmit` + `npm run build` PASS. `git add -A` only; no commit/push. |
 | 2026-10-09 | PASS | Admin Mentoring Dashboard — "College Mentoring Split" + "Weekly Progress" polish (presentation only). **Split:** `CoveragePie` in `frontend/src/pages/admin/AdminMentoringDashboard.tsx` no longer draws a two-slice pie — it renders a 108px coverage **ring** (inline SVG, `stroke-dasharray`/`stroke-dashoffset` on a track + fill, `role="img"` with an aria-label carrying coverage %, mentored and pending) and two stat rows (Mentored / Pending) whose counts and percentages come straight from the server payload (`pie.mentored`, `pie.pending`; the server de-duplicates, so they always sum to the total), with a `Reporting month: … · N students, each counted once` foot. **Weekly progress:** new `WeeklyProgressList` renders a token-styled list — relative bars scaled to the busiest week (gold `is-busiest` highlight), dashed placeholder for zero-session weeks, and compact `Aug 17 – Aug 23` date labels from `weekStart`/`weekEnd` with the API's `weekLabel` as fallback. **Layout:** the two inline `gridTemplateColumns: 'minmax(280px, 1fr) 2fr'` split blocks (dept drill-down + college overview) now use one `.mentoring-split-wide` class; the dept panel's `.card`s stretch to equal height. **CSS:** new scoped block in `frontend/src/styles/index.css` (`.mentoring-split-wide`, `.mentoring-panel`, `.ring-*`, `.split-*`, `.weekly-*`) with responsive rules at ≤1024px (single column) and ≤480px. **Encoding:** replaced the last mojibake (`â€"`, `Â·`) in this file's comments/labels with the real `—` / `·`. No API, data, route, RBAC, calculation or workflow change; no dependency added. **Verified:** `npx tsc --noEmit` PASS; `npx vite build` PASS (1659 modules, CSS 89.20 kB); all new selectors confirmed present in the emitted CSS bundle. No commit/push. |
 | 2026-10-09 | PASS | Login page — premium UI polish (presentation only). **Typography:** college name (`.login-crest-name`) and hero heading (`.login-hero-title`, `clamp(1.55rem,2.6vw,2.25rem)`, `text-wrap: balance`) stay in the already-loaded Cinzel serif with the gold `Mentor–Mentee` span highlighted; every form label, input, button, description and helper uses Inter (`--font-sans`), consistent weights/sizes/leading/spacing. **Card:** gold 3px top accent, `--radius-2xl` (24px), deeper `0 20px 50px -12px` shadow, `2.5rem 2.25rem` padding, `font-family` pinned to sans. **Fields:** login-scoped `.login-card .form-control` = 46px min-height, slate-300 border, slate-400 placeholder, `:hover` slate-400 border, `:focus` navy-700 border + 3px gold `rgba(197,155,39,.18)` ring (120ms transitions); labels stay 0.8rem/600/clear; password toggle, `autocomplete="username"` / `"current-password"` and required attributes untouched. **Buttons:** Sign In keeps its classes but its inline style moved to `.login-card .btn-primary` (46px, weight 700, navy-800 bg, hover navy-700 + lift -1px + shadow; `btn-loading` spinner + `disabled` duplicate-submission guard unchanged); the PWA button was de-inlined into `.login-pwa-btn` — gold-500 outline secondary (white bg, navy text, gold icon), hover gold-50 with lift. **Other:** `.login-legal`/`.login-foot` contrast raised, restrained gold glows (`login-page::before` top-right + faint bottom-right navy depth over the existing radial), tablet `961–1180px` padding/type reduction, `≤640px` card/panel/logo/button polish, and a scoped `prefers-reduced-motion` block disabling the hover/press transforms (the global reduce rule already collapses animations to 0.01ms). **Banner:** the "Institutional Portal Access • Role-Based Authentication" `.alert.alert-info` banner remains fully removed (0 nodes, 0 text in bundle) and no new banner was added. No auth/API/routes/validation/PWA logic changed; no dependencies added. **Verified:** `tsc --noEmit` PASS; `vite build` PASS (1659 modules). Headless-Chromium on the built dist at 1440×900, 1024×768 and 390×844: 0 banner nodes/text, all content present, brand panel flex ≥961px / none on mobile, card fits with no horizontal overflow (`scrollWidth == innerWidth`), Cinzel computed on hero+crest and Inter on card/labels/inputs, inputs 46px with navy+gold `:focus` ring (and no ring on blur), Sign In navy 46px, PWA button gold-outline navy-text, gold `:focus-visible` outlines on Sign In + PWA (blue on the toggle, matching the app-wide focus style), hover = navy-700/gold-50 + lift, reduced-motion context = card animation 1e-05s and hover transforms none, autocomplete/toggle/required all intact, **0 page errors and 0 console errors** on every viewport. No commit/push. |
