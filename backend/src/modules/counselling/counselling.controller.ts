@@ -26,14 +26,19 @@ import {
   buildEvidenceViews,
   deleteUnreferencedEvidence,
   normaliseEvidenceRefs,
+  parseEvidenceCaptureTimes,
+  parseEvidenceLocation,
   removeEvidenceRefs,
   resolveEvidenceFile,
   resolveUploaderFaculty,
   storeEvidenceUploads,
   toEvidenceView,
   assertEvidenceAccess,
+  type EvidenceLocationInput,
   type StoredEvidence,
 } from './evidence.service.js';
+import { EVIDENCE_LOCATION_STATUS, EVIDENCE_PLACE_STATUS } from '../../models/index.js';
+import { reverseGeocode } from '../../services/geocoding.service.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -251,6 +256,34 @@ async function ingestEvidence(
   const files = uploadedFiles(req);
   if (files.length === 0) return [];
 
+  // Device-reported location for this submission. Coordinates that are present
+  // but out of range are rejected here (400); a denied / unavailable location is
+  // accepted and recorded honestly so the photo upload is never blocked.
+  const parsedLocation = parseEvidenceLocation(
+    req.body?.evidenceLocation ?? req.body?.evidence_location
+  );
+  const captureTimes = parseEvidenceCaptureTimes(
+    req.body?.evidenceCaptureTimes ?? req.body?.evidence_capture_times
+  );
+
+  // Best-effort reverse geocoding. A provider failure NEVER blocks the upload:
+  // the coordinates are kept and the place-name status records the truth.
+  let location: EvidenceLocationInput = parsedLocation;
+  if (
+    parsedLocation.status === EVIDENCE_LOCATION_STATUS.CAPTURED &&
+    parsedLocation.latitude !== null &&
+    parsedLocation.longitude !== null
+  ) {
+    const place = await reverseGeocode(parsedLocation.latitude, parsedLocation.longitude);
+    location = {
+      ...parsedLocation,
+      placeName: place.placeName,
+      placeNameStatus: place.status as any,
+      placeDetails: place.details ?? null,
+      placeResolvedAt: place.placeName ? new Date() : null,
+    };
+  }
+
   const uploader = await resolveUploaderFaculty({ ...req.user, facultyId: mentorId } as any);
 
   return storeEvidenceUploads({
@@ -261,6 +294,8 @@ async function ingestEvidence(
     studentIds,
     evidenceGroupId: extra.evidenceGroupId ?? null,
     meetingId: extra.meetingId ?? null,
+    location,
+    captureTimes,
   });
 }
 

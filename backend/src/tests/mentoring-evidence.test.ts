@@ -11,7 +11,7 @@
  *
  * Covers:
  *   A. discussionWith is required; Student / Parent / Both all work
-  *   B. evidence works WITHOUT location permission/GPS (no geotag required)
+  *   B. evidence still works when location is denied or absent (never required)
   *   D. a large photo is really compressed to <= 200 KB and stays readable
   *   F. editing preserves existing evidence and appends new photos
   *   G. explicit removal detaches the photo and deletes the file
@@ -160,7 +160,8 @@ async function makeLargeJpeg(width: number, height: number, quality = 100): Prom
   return sharp(buf, { raw: { width, height, channels } }).jpeg({ quality }).toBuffer();
 }
 
-// Location data no longer collected
+// Location is optional. A denied/absent fix is recorded honestly and never
+// blocks an upload (this suite exercises exactly that path).
 
 function uploadsRoot(): string {
   const candidates = [
@@ -248,7 +249,7 @@ async function main() {
     });
   }
 
-  console.log('\n=== Mentoring Evidence: full-stack runtime (no location tracking) ===\n');
+  console.log('\n=== Mentoring Evidence: full-stack runtime (location optional, never required) ===\n');
   console.log('  booting src/index.ts ...');
   await import('../index.js');
   await waitForHealth();
@@ -373,7 +374,7 @@ async function main() {
   }
 
   // ---------------------------------------------------------------------------
-  console.log('\nB. Evidence works WITHOUT any location data (no permission required)');
+  console.log('\nB. Evidence works WITHOUT any location data (location is optional, never required)');
   // ---------------------------------------------------------------------------
   {
     const filesBefore = countImageFiles(counsellingRoot);

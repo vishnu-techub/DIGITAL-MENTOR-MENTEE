@@ -20,7 +20,11 @@ import { DiscussionWithSelect } from '../../components/mentor/DiscussionWithSele
 import { EvidenceUploader, type StoredEvidenceView } from '../../components/mentor/EvidenceUploader';
 import { EvidenceGallery } from '../../components/mentor/EvidenceGallery';
 import { SaturdayEvidenceModal } from '../../components/mentor/SaturdayEvidenceModal';
-import type { PreparedEvidencePhoto } from '../../utils/evidence';
+import {
+  NOT_REQUESTED_LOCATION,
+  type EvidenceLocationState,
+  type PreparedEvidencePhoto,
+} from '../../utils/evidence';
 import {
   ArrowLeft,
   GraduationCap,
@@ -150,6 +154,9 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
   const [evidencePhotos, setEvidencePhotos] = useState<PreparedEvidencePhoto[]>([]);
   const [removedEvidenceIds, setRemovedEvidenceIds] = useState<string[]>([]);
   const [editingCounsellingEvidence, setEditingCounsellingEvidence] = useState<StoredEvidenceView[]>([]);
+  // Device-reported location for the CURRENT evidence submission. Reset whenever
+  // the editing context changes so an old fix is never attached to a new record.
+  const [evidenceLocation, setEvidenceLocation] = useState<EvidenceLocationState>(NOT_REQUESTED_LOCATION);
 
   // Saturday COMMON meeting: one shared upload linked to every participant.
   const [showSaturdayModal, setShowSaturdayModal] = useState(false);
@@ -402,6 +409,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
     setEvidencePhotos([]);
     setRemovedEvidenceIds([]);
     setEditingCounsellingEvidence([]);
+    setEvidenceLocation(NOT_REQUESTED_LOCATION);
     setCounsellingForm({
       counsellingDate: new Date().toISOString().split('T')[0],
       categories: ['Academic Development'],
@@ -426,6 +434,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
     setRemovedEvidenceIds([]);
     // Photos already on the record are shown so an edit never silently drops one.
     setEditingCounsellingEvidence(Array.isArray(c.evidence) ? c.evidence : []);
+    setEvidenceLocation(NOT_REQUESTED_LOCATION);
     const existingCats = Array.isArray(c.categories) && c.categories.length > 0
       ? c.categories
       : (c.category ? c.category.split(',').map((s: string) => s.trim()).filter(Boolean) : ['Academic Development']);
@@ -501,6 +510,9 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
         followUpDate: counsellingForm.followUpDate,
         status: counsellingForm.status,
         aiGenerated: false,
+        // Location is sent only when this submission actually includes photos,
+        // and only for the evidence record tied to THIS user action.
+        ...(evidencePhotos.length > 0 ? { evidenceLocation } : {}),
       };
 
       // Sent as multipart when photos are attached. A plain text edit stays JSON and preserves existing evidence.
@@ -541,6 +553,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
       setEvidencePhotos([]);
       setRemovedEvidenceIds([]);
       setEditingCounsellingEvidence([]);
+      setEvidenceLocation(NOT_REQUESTED_LOCATION);
       setCounsellingForm({
         counsellingDate: new Date().toISOString().split('T')[0],
         categories: ['Academic Development'],
@@ -2644,6 +2657,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             setEvidencePhotos([]);
             setRemovedEvidenceIds([]);
             setEditingCounsellingEvidence([]);
+            setEvidenceLocation(NOT_REQUESTED_LOCATION);
           }}
           onSubmit={handleCounsellingSubmit}
           footer={
@@ -2845,6 +2859,8 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               existing={editingCounsellingEvidence}
               photos={evidencePhotos}
               onPhotosChange={setEvidencePhotos}
+              location={evidenceLocation}
+              onLocationChange={setEvidenceLocation}
               removedExistingIds={removedEvidenceIds}
               onRemovedExistingIdsChange={setRemovedEvidenceIds}
               onRemoveExisting={(evidenceId) =>

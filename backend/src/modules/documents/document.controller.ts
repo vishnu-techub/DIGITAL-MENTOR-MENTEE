@@ -20,6 +20,7 @@ import {
 } from '../../utils/record-permission.util.js';
 import { syncStudentDetailsPdf } from './student-details-pdf.service.js';
 import { resolveWritableUploadsDir, locateStoredUpload } from '../../config/storage.js';
+import { watermarkDocumentBuffer, WATERMARK_TEXT } from '../../services/document-watermark.service.js';
 import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
 
 // Ensure a writable upload directory exists (safe on read-only hosts such as Render)
@@ -110,7 +111,117 @@ function resolveStoredPath(
   return locateStoredUpload(fileUrl, meta)?.path ?? null;
 }
 
+/**
+ * Generate (and write) a separate watermarked copy of an uploaded document,
+ * leaving the ORIGINAL bytes on disk untouched.
+ *
+ * Returns the fields to persist on the StudentDocument record. The watermark
+ * service never throws and never mutates the input, so a failure here is
+ * recorded as a status and the original remains the fallback.
+ */
+async function createWatermarkedCopy(
+  originalPath: string,
+  actualType: string,
+  storedFilename: string,
+  logContext: string
+): Promise<{
+  watermarkedFileUrl: string;
+  watermarkStatus: 'applied' | 'unsupported' | 'failed';
+  watermarkText: string;
+  watermarkAppliedAt?: Date;
+  reason?: string;
+}> {
+  try {
+    const original = fs.readFileSync(originalPath);
+    const result = await watermarkDocumentBuffer(original, actualType);
+    if (result.status !== 'applied' || !result.buffer) {
+      return {
+        watermarkedFileUrl: '',
+        watermarkStatus: result.status,
+        watermarkText: '',
+        reason: result.reason,
+      };
+    }
+
+    const ext = path.extname(storedFilename);
+    const stem = ext ? storedFilename.slice(0, -ext.length) : storedFilename;
+    const watermarkedName = `${stem}-watermarked${ext || ''}`;
+    const watermarkedPath = path.join(UPLOADS_DIR, watermarkedName);
+    fs.writeFileSync(watermarkedPath, result.buffer);
+
+    return {
+      watermarkedFileUrl: `/uploads/documents/${watermarkedName}`,
+      watermarkStatus: 'applied',
+      watermarkText: WATERMARK_TEXT,
+      watermarkAppliedAt: new Date(),
+    };
+  } catch (err: any) {
+    console.error(`createWatermarkedCopy(${logContext}) failed:`, err?.message);
+    return {
+      watermarkedFileUrl: '',
+      watermarkStatus: 'failed',
+      watermarkText: '',
+      reason: err?.message,
+    };
+  }
+}
+
 /** Locate a Student by ObjectId or register number. */
+/**
+ * Resolve the file that should actually be SHOWN for a document.
+ *
+ * When a watermarked copy exists on disk it is preferred for preview and
+ * download, so the intended workflow always displays the KSRCE-watermarked
+ * version. The original stays on disk untouched as the permanent source of
+ * truth, and every file endpoint still passes the same ownership check first.
+ */
+function resolveServedDocumentPath(doc: any): string | null {
+  if (doc?.watermarkedFileUrl) {
+    const watermarked = resolveStoredPath(doc.watermarkedFileUrl, {
+      fileName: path.basename(doc.watermarkedFileUrl),
+      fileType: doc.fileType,
+    });
+    if (watermarked && fs.existsSync(watermarked)) return watermarked;
+  }
+  return resolveStoredPath(doc.fileUrl, {
+    fileName: doc.fileName,
+    fileSize: doc.fileSize,
+    fileType: doc.fileType,
+  });
+}
+
+/** Remove both the original and the watermarked copy, reporting any failure. */
+function unlinkDocumentCopies(doc: any): { removed: boolean; failed: string[] } {
+  const failed: string[] = [];
+  const candidates = new Set<string>();
+
+  const original = resolveStoredPath(doc.fileUrl, {
+    fileName: doc.fileName,
+    fileSize: doc.fileSize,
+    fileType: doc.fileType,
+  });
+  if (original) candidates.add(original);
+
+  if (doc.watermarkedFileUrl) {
+    const watermarked = resolveStoredPath(doc.watermarkedFileUrl, {
+      fileName: path.basename(doc.watermarkedFileUrl),
+      fileType: doc.fileType,
+    });
+    if (watermarked) candidates.add(watermarked);
+  }
+
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) continue;
+    try {
+      fs.unlinkSync(candidate);
+    } catch (e: any) {
+      failed.push(candidate);
+      console.error('Failed to unlink stored document file:', candidate, e?.message);
+    }
+  }
+  return { removed: failed.length === 0, failed };
+}
+
 async function findStudent(idOrReg: string) {
   if (isValidId(idOrReg)) {
     const byId = await Student.findById(idOrReg);
@@ -196,6 +307,11 @@ export async function uploadDocument(req: AuthRequest, res: Response) {
     const fileUrl = `/uploads/documents/${file.filename}`;
     const docType = reqDocType === 'other' ? 'other' : 'certificate';
 
+    // A watermarked COPY is generated alongside the untouched original. A
+    // failure here never fails the upload: the status is recorded and the
+    // original remains usable.
+    const watermark = await createWatermarkedCopy(file.path, actualType, file.filename, 'uploadDocument');
+
     const newDoc = await StudentDocument.create({
       studentId: student._id,
       documentType: docType,
@@ -204,6 +320,10 @@ export async function uploadDocument(req: AuthRequest, res: Response) {
       fileUrl,
       fileType: actualType,
       fileSize: file.size,
+      watermarkedFileUrl: watermark.watermarkedFileUrl,
+      watermarkStatus: watermark.watermarkStatus,
+      watermarkText: watermark.watermarkText,
+      watermarkAppliedAt: watermark.watermarkAppliedAt,
       title: effectiveTitle,
       category: effectiveCategory,
       eventName: eventName?.trim() || '',
@@ -253,6 +373,8 @@ export async function uploadDocument(req: AuthRequest, res: Response) {
         fileName: newDoc.fileName,
         fileType: newDoc.fileType,
         fileSize: newDoc.fileSize,
+        watermarkStatus: newDoc.watermarkStatus,
+        watermarkText: newDoc.watermarkText,
         verificationStatus: newDoc.verificationStatus,
         // Capabilities are computed on the server and sent to the client, so
         // the UI never has to decide what is editable.
@@ -311,6 +433,8 @@ export async function getStudentDocuments(req: AuthRequest, res: Response) {
       fileUrlView: `/api/documents/${d._id.toString()}/file`,
       fileType: d.fileType || 'application/pdf',
       fileSize: d.fileSize || 0,
+      watermarkStatus: d.watermarkStatus || 'unsupported',
+      watermarkText: d.watermarkText || '',
       title: d.title || d.fileName,
       category: d.category || 'Other',
       eventName: d.eventName || '',
@@ -362,11 +486,7 @@ async function streamDocumentFile(req: AuthRequest, res: Response, disposition: 
     return sendError(res, access.message, access.status);
   }
 
-  const filePath = resolveStoredPath(doc.fileUrl, {
-    fileName: doc.fileName,
-    fileSize: doc.fileSize,
-    fileType: doc.fileType,
-  });
+  const filePath = resolveServedDocumentPath(doc);
   if (!filePath || !fs.existsSync(filePath)) {
     return sendError(res, 'Physical file not found on server.', 404);
   }
@@ -425,11 +545,7 @@ export async function serveLegacyUpload(req: AuthRequest, res: Response) {
       return sendError(res, access.message, access.status);
     }
 
-    const filePath = resolveStoredPath(doc.fileUrl, {
-      fileName: doc.fileName,
-      fileSize: doc.fileSize,
-      fileType: doc.fileType,
-    });
+    const filePath = resolveServedDocumentPath(doc);
     if (!filePath || !fs.existsSync(filePath)) {
       return sendError(res, 'Physical file not found on server.', 404);
     }
@@ -507,20 +623,9 @@ export async function deleteDocument(req: AuthRequest, res: Response) {
     // Metadata first: if the unlink fails we must not leave a dangling record.
     await StudentDocument.findByIdAndDelete(documentId);
 
-    const filePath = resolveStoredPath(doc.fileUrl, {
-      fileName: doc.fileName,
-      fileSize: doc.fileSize,
-      fileType: doc.fileType,
-    });
-    let fileRemoved = true;
-    if (filePath && fs.existsSync(filePath)) {
-      try {
-        fs.unlinkSync(filePath);
-      } catch (e: any) {
-        fileRemoved = false;
-        console.error('Failed to unlink stored document file:', filePath, e.message);
-      }
-    }
+    // Remove BOTH the original and its watermarked copy.
+    const unlinkResult = unlinkDocumentCopies(doc);
+    const fileRemoved = unlinkResult.removed;
 
     await logAudit({
       userId: req.user!.id,
@@ -913,18 +1018,8 @@ export async function deleteAllStudentDocuments(req: AuthRequest, res: Response)
       await StudentDocument.findByIdAndDelete(doc._id);
       deletedCount++;
 
-      const filePath = resolveStoredPath(doc.fileUrl, {
-        fileName: doc.fileName,
-        fileSize: doc.fileSize,
-        fileType: doc.fileType,
-      });
-      if (filePath && fs.existsSync(filePath)) {
-        try {
-          fs.unlinkSync(filePath);
-        } catch {
-          failedFiles.push(doc.fileName);
-        }
-      }
+      const unlinkResult = unlinkDocumentCopies(doc);
+      if (!unlinkResult.removed) failedFiles.push(doc.fileName);
     }
 
     await logAudit({

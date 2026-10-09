@@ -2123,7 +2123,11 @@ div.desktop-only.table-responsive {
    ============================================================ */
 html, body {
   max-width: 100%;
-  overflow-x: hidden;
+  /* `clip` (not `hidden`) prevents horizontal scroll WITHOUT turning
+     html/body into a scroll container. `overflow-x: hidden` here silently
+     broke `position: sticky` on the top header and the sidebar, which is
+     why the whole page (not just the nav list) moved on scroll. */
+  overflow-x: clip;
 }
 
 /* Ensure cards never cause horizontal scroll */
@@ -6016,4 +6020,50 @@ textarea.form-control {
   line-height: 1.5;
 }
 .sd-empty svg { color: var(--color-slate-300); }
+
+/* ============================================================
+   Sidebar independent scrolling (scoped: shell/layout only)
+   ------------------------------------------------------------
+   Root cause: the sidebar was a full-height flex column inside a
+   row that grew with the page content, so .sidebar-nav's own
+   overflow-y:auto never hit a constrained height. Wheel events over
+   the nav bubbled to the page and the whole layout scrolled.
+
+   Fix (desktop only, >= 961px): pin the rail right below the sticky
+   header and constrain it to the visible viewport height. The nav
+   list then scrolls inside the rail while the header stays put and
+   the main column keeps scrolling on the page. No new scroll
+   container is introduced around .main-content/.page-body, so the
+   fixed-position modal overlay, dropdowns and toasts are never
+   clipped by an ancestor overflow (modals are NOT portaled).
+   ============================================================ */
+
+/* The nav list may always shrink below its content and scroll
+   internally — required both for the constrained desktop rail and for
+   the already-viewport-constrained <=960px drawer (fixed top/bottom). */
+.sidebar-nav {
+  min-height: 0;
+  overflow-x: hidden;
+}
+
+/* Nav rows must keep their own height: as column-flex children they would
+   otherwise be compressed to fit the rail (visible mainly in the collapsed
+   rail), so the list would never overflow and scroll. */
+.sidebar-nav > .nav-item,
+.sidebar-nav > .nav-section-label {
+  flex-shrink: 0;
+}
+
+@media (min-width: 961px) {
+  .sidebar {
+    position: sticky;
+    top: var(--header-hpx); /* sit flush under the sticky header */
+    height: calc(100vh - var(--header-hpx));
+    max-height: calc(100vh - var(--header-hpx));
+    /* The rail itself never exceeds the viewport; only the nav list
+       scrolls inside it. */
+    overflow: hidden;
+    align-self: flex-start;
+  }
+}
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Download, Loader2, X, Users } from 'lucide-react';
+import { Download, Loader2, X, Users, MapPin, Clock, Upload } from 'lucide-react';
 import { api } from '../../api/client';
+import { describeLocationStatus, describePlaceNameStatus } from '../../utils/evidence';
 import type { StoredEvidenceView } from './EvidenceUploader';
 
 /**
@@ -194,20 +195,81 @@ export const EvidenceGallery: React.FC<EvidenceGalleryProps> = ({ evidence = [],
             <div
               style={{
                 marginTop: '0.75rem',
-                fontSize: '0.78rem',
-                color: '#334155',
                 display: 'flex',
                 flexDirection: 'column',
-                gap: '0.3rem',
+                gap: '0.35rem',
               }}
             >
-              {viewing.item.uploadedAt && (
-                <div style={{ fontSize: '0.74rem', color: '#64748B' }}>
-                  Uploaded {new Date(viewing.item.uploadedAt).toLocaleString()}
-                  {viewing.item.fileSize ? ` · ${Math.round(viewing.item.fileSize / 1024)} KB` : ''}
-                  {viewing.item.capturedBy ? ` · by ${viewing.item.capturedBy}` : ''}
-                </div>
-              )}
+              <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem' }}>
+                <span style={{ minWidth: '118px', color: '#64748B', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <Upload size={12} /> Uploaded
+                </span>
+                <span style={{ color: '#334155' }}>
+                  {viewing.item.serverUploadedAt || viewing.item.uploadedAt
+                    ? new Date((viewing.item.serverUploadedAt || viewing.item.uploadedAt) as string).toLocaleString()
+                    : 'Unknown'}
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem' }}>
+                <span style={{ minWidth: '118px', color: '#64748B', fontWeight: 600 }}>Uploaded by</span>
+                <span style={{ color: '#334155' }}>{viewing.item.capturedBy || 'Unknown'}</span>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem' }}>
+                <span style={{ minWidth: '118px', color: '#64748B', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <Clock size={12} /> Photo capture time
+                </span>
+                <span style={{ color: viewing.item.captureTime ? '#334155' : '#94A3B8' }}>
+                  {viewing.item.captureTime
+                    ? `${new Date(viewing.item.captureTime).toLocaleString()} (EXIF metadata)`
+                    : 'Capture time unavailable'}
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem' }}>
+                <span style={{ minWidth: '118px', color: '#64748B', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <MapPin size={12} /> Location
+                </span>
+                <span style={{ color: viewing.item.locationStatus === 'CAPTURED' ? '#334155' : '#94A3B8' }}>
+                  {describeLocationStatus(viewing.item.locationStatus)}
+                  {viewing.item.locationStatus === 'CAPTURED' &&
+                  viewing.item.latitude != null &&
+                  viewing.item.longitude != null
+                    ? ` · ${viewing.item.latitude.toFixed(6)}, ${viewing.item.longitude.toFixed(6)}${
+                        viewing.item.accuracyMeters != null ? ` · ±${Math.round(viewing.item.accuracyMeters)} m` : ''
+                      }`
+                    : ''}
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem' }}>
+                <span style={{ minWidth: '118px', color: '#64748B', fontWeight: 600 }}>Place name</span>
+                <span style={{ color: viewing.item.placeName ? '#334155' : '#94A3B8' }}>
+                  {viewing.item.placeName
+                    ? viewing.item.placeName
+                    : viewing.item.locationStatus && viewing.item.locationStatus !== 'CAPTURED'
+                      ? 'Location not captured'
+                      : describePlaceNameStatus(viewing.item.placeNameStatus)}
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem' }}>
+                <span style={{ minWidth: '118px', color: '#64748B', fontWeight: 600 }}>Location captured</span>
+                <span style={{ color: '#334155' }}>
+                  {viewing.item.locationCapturedAt
+                    ? new Date(viewing.item.locationCapturedAt).toLocaleString()
+                    : '—'}
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem' }}>
+                <span style={{ minWidth: '118px', color: '#64748B', fontWeight: 600 }}>File</span>
+                <span style={{ color: '#334155' }}>
+                  {viewing.item.fileSize ? `${Math.round(viewing.item.fileSize / 1024)} KB` : '—'}
+                  {viewing.item.context === 'SATURDAY_MEETING' ? ' · Saturday common meeting' : ''}
+                </span>
+              </div>
             </div>
 
             <button

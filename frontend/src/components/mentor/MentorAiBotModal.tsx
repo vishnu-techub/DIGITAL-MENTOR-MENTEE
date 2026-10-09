@@ -64,11 +64,14 @@ Important: answers are for your reference only and are never written to a studen
       if (event.key === 'Escape') onClose();
     };
     document.addEventListener('keydown', handleKeyDown);
+    // Lock background scroll while open, then restore the previous value so
+    // closing never leaves a stale inline overflow on <body>.
+    const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     inputRef.current?.focus();
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = 'auto';
+      document.body.style.overflow = previousOverflow;
     };
   }, [isOpen, onClose]);
 

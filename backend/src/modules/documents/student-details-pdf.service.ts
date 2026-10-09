@@ -3,7 +3,52 @@ import path from 'path';
 import { Student, StudentDocument } from '../../models/index.js';
 import { generateStudentPdf } from '../pdf/pdf.service.js';
 import { resolveWritableUploadsDir } from '../../config/storage.js';
+import { watermarkDocumentBuffer, WATERMARK_TEXT } from '../../services/document-watermark.service.js';
 import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
+
+interface WatermarkedFormCopy {
+  watermarkedFileUrl: string;
+  watermarkStatus: 'applied' | 'unsupported' | 'failed';
+  watermarkText: string;
+  watermarkAppliedAt?: Date;
+}
+
+/**
+ * Build a separate watermarked copy of the generated Student Details Form.
+ *
+ * The form is system-generated, so the "original" here is the unwatermarked
+ * PDF generated above; it is kept on disk unchanged and the watermarked copy is
+ * what preview/download serve. A watermark failure never fails the sync.
+ */
+async function buildWatermarkedFormCopy(
+  pdfBuffer: Buffer,
+  diskFileName: string,
+  uploadsDir: string
+): Promise<WatermarkedFormCopy> {
+  try {
+    const result = await watermarkDocumentBuffer(pdfBuffer, 'application/pdf');
+    if (result.status !== 'applied' || !result.buffer) {
+      return {
+        watermarkedFileUrl: '',
+        watermarkStatus: result.status,
+        watermarkText: '',
+      };
+    }
+    const ext = path.extname(diskFileName);
+    const stem = ext ? diskFileName.slice(0, -ext.length) : diskFileName;
+    const watermarkedName = `${stem}-watermarked${ext || ''}`;
+    fs.writeFileSync(path.join(uploadsDir, watermarkedName), result.buffer);
+    return {
+      watermarkedFileUrl: `/uploads/documents/${watermarkedName}`,
+      watermarkStatus: 'applied',
+      watermarkText: WATERMARK_TEXT,
+      watermarkAppliedAt: new Date(),
+    };
+  } catch (err: any) {
+    console.error('buildWatermarkedFormCopy error:', err?.message);
+    return { watermarkedFileUrl: '', watermarkStatus: 'failed', watermarkText: '' };
+  }
+}
 
 /**
  * Synchronizes the Student Details Form PDF for a given student.
@@ -49,6 +94,8 @@ export async function syncStudentDetailsPdf(
     const fileUrl = `/uploads/documents/${diskFileName}`;
     const fileName = 'Student Details Form.pdf';
 
+    const watermark = await buildWatermarkedFormCopy(Buffer.from(pdfBytes), diskFileName, UPLOADS_DIR);
+
     // Find if primary Student Details Form already exists
     let primaryDoc = await StudentDocument.findOne({
       studentId: student._id,
@@ -64,6 +111,10 @@ export async function syncStudentDetailsPdf(
       primaryDoc.fileUrl = fileUrl;
       primaryDoc.fileType = 'application/pdf';
       primaryDoc.fileSize = pdfBytes.byteLength;
+      primaryDoc.watermarkedFileUrl = watermark.watermarkedFileUrl;
+      primaryDoc.watermarkStatus = watermark.watermarkStatus;
+      primaryDoc.watermarkText = watermark.watermarkText;
+      primaryDoc.watermarkAppliedAt = watermark.watermarkAppliedAt;
       primaryDoc.verificationStatus = 'Verified';
       primaryDoc.uploadedAt = new Date();
       if (uploadedByUserId && isValidId(uploadedByUserId)) {
@@ -83,6 +134,10 @@ export async function syncStudentDetailsPdf(
         fileUrl,
         fileType: 'application/pdf',
         fileSize: pdfBytes.byteLength,
+        watermarkedFileUrl: watermark.watermarkedFileUrl,
+        watermarkStatus: watermark.watermarkStatus,
+        watermarkText: watermark.watermarkText,
+        watermarkAppliedAt: watermark.watermarkAppliedAt,
         uploadedBy:
           uploadedByUserId && isValidId(uploadedByUserId)
             ? toLocalId(uploadedByUserId)

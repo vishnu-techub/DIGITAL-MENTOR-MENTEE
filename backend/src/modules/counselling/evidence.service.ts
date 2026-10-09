@@ -28,6 +28,10 @@ import {
   Meeting,
   Student,
   Faculty,
+  EVIDENCE_LOCATION_STATUS,
+  EVIDENCE_PLACE_STATUS,
+  type EvidenceLocationStatus,
+  type EvidencePlaceStatus,
   type IMentoringEvidence,
   type MentoringEvidenceRef,
 } from '../../models/index.js';
@@ -95,6 +99,36 @@ export interface StoreEvidenceOptions {
   evidenceGroupId?: string | null;
   meetingId?: string | null;
   studentIds: string[];
+  /** Device-reported location metadata, already validated. */
+  location?: EvidenceLocationInput | null;
+  /** Per-file capture times, aligned with `files`; missing entries are unknown. */
+  captureTimes?: Array<EvidenceCaptureTimeInput | null>;
+}
+
+/** Validated location metadata ready to persist on every record in the batch. */
+export interface EvidenceLocationInput {
+  status: EvidenceLocationStatus;
+  latitude: number | null;
+  longitude: number | null;
+  accuracyMeters: number | null;
+  capturedAt: Date | null;
+  placeName: string | null;
+  placeNameStatus: EvidencePlaceStatus;
+  placeDetails?: {
+    locality?: string;
+    city?: string;
+    district?: string;
+    state?: string;
+    country?: string;
+  } | null;
+  placeResolvedAt: Date | null;
+}
+
+/** Capture time for one photo, extracted from EXIF when present. */
+export interface EvidenceCaptureTimeInput {
+  captureTime: string | null;
+  captureTimeSource: string;
+  captureTimeStatus: string;
 }
 
 export interface StoredEvidence {
@@ -114,6 +148,173 @@ export class EvidenceValidationError extends Error {
     this.status = status;
     this.code = code;
   }
+}
+
+const ALLOWED_LOCATION_STATUSES = new Set<string>(Object.values(EVIDENCE_LOCATION_STATUS));
+
+/** A location object that records "location was not requested". */
+export function emptyEvidenceLocation(): EvidenceLocationInput {
+  return {
+    status: EVIDENCE_LOCATION_STATUS.NOT_REQUESTED as EvidenceLocationStatus,
+    latitude: null,
+    longitude: null,
+    accuracyMeters: null,
+    capturedAt: null,
+    placeName: null,
+    placeNameStatus: EVIDENCE_PLACE_STATUS.NOT_ATTEMPTED as EvidencePlaceStatus,
+    placeDetails: null,
+    placeResolvedAt: null,
+  };
+}
+
+function coerceJsonObject(raw: any): any {
+  if (typeof raw === 'string') {
+    const text = raw.trim();
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+  return raw && typeof raw === 'object' ? raw : null;
+}
+
+/**
+ * Validate the device-reported location for an evidence upload.
+ *
+ * A missing / denied / unavailable location is accepted and recorded honestly.
+ * Coordinates that ARE present are validated on the server: an out-of-range or
+ * non-numeric latitude/longitude is REJECTED (400) rather than stored, because
+ * silently keeping impossible coordinates would be a false claim.
+ */
+export function parseEvidenceLocation(raw: any): EvidenceLocationInput {
+  const value = coerceJsonObject(raw);
+  if (!value || typeof value !== 'object') return emptyEvidenceLocation();
+
+  const rawStatus = String(value.status ?? '').trim().toUpperCase();
+  if (!rawStatus || rawStatus === EVIDENCE_LOCATION_STATUS.NOT_REQUESTED) {
+    return emptyEvidenceLocation();
+  }
+
+  if (rawStatus !== EVIDENCE_LOCATION_STATUS.CAPTURED) {
+    const status = ALLOWED_LOCATION_STATUSES.has(rawStatus)
+      ? (rawStatus as EvidenceLocationStatus)
+      : (EVIDENCE_LOCATION_STATUS.UNAVAILABLE as EvidenceLocationStatus);
+    return { ...emptyEvidenceLocation(), status };
+  }
+
+  const latitude = Number(value.latitude);
+  const longitude = Number(value.longitude);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    throw new EvidenceValidationError(
+      'Captured location is missing a valid latitude/longitude pair.',
+      'INVALID_LOCATION',
+      400
+    );
+  }
+  if (latitude < -90 || latitude > 90) {
+    throw new EvidenceValidationError(
+      'Latitude must be between -90 and +90 degrees.',
+      'INVALID_LATITUDE',
+      400
+    );
+  }
+  if (longitude < -180 || longitude > 180) {
+    throw new EvidenceValidationError(
+      'Longitude must be between -180 and +180 degrees.',
+      'INVALID_LONGITUDE',
+      400
+    );
+  }
+
+  let accuracyMeters: number | null = null;
+  if (value.accuracy !== undefined && value.accuracy !== null && value.accuracy !== '') {
+    const parsedAccuracy = Number(value.accuracy);
+    if (!Number.isFinite(parsedAccuracy) || parsedAccuracy < 0) {
+      throw new EvidenceValidationError(
+        'Location accuracy must be a non-negative number of metres.',
+        'INVALID_LOCATION_ACCURACY',
+        400
+      );
+    }
+    accuracyMeters = parsedAccuracy;
+  }
+
+  const capturedAt = parseOptionalDate(value.capturedAt);
+
+  return {
+    status: EVIDENCE_LOCATION_STATUS.CAPTURED as EvidenceLocationStatus,
+    latitude,
+    longitude,
+    accuracyMeters,
+    capturedAt: capturedAt ?? new Date(),
+    placeName: null,
+    placeNameStatus: EVIDENCE_PLACE_STATUS.NOT_ATTEMPTED as EvidencePlaceStatus,
+    placeDetails: null,
+    placeResolvedAt: null,
+  };
+}
+
+function parseOptionalDate(value: any): Date | null {
+  if (value === undefined || value === null || value === '') return null;
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+/**
+ * Normalise an EXIF-style capture time to `YYYY-MM-DDTHH:mm:ss` (a wall-clock
+ * string with no timezone, which is exactly what EXIF stores). Returns null when
+ * the value is absent or unparseable — the caller then records "unavailable"
+ * rather than inventing a time.
+ */
+export function normaliseCaptureTime(value: any): string | null {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+
+  // "2026:09:10 14:23:11" (EXIF) or "2026-09-10 14:23:11" or ISO.
+  const match = text.match(
+    /^(\d{4})[:-](\d{2})[:-](\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/
+  );
+  if (match) {
+    const [, y, mo, d, h, mi, s = '00'] = match;
+    return `${y}-${mo}-${d}T${h}:${mi}:${s}`;
+  }
+  // Date-only fallback: keep the date, no time.
+  const dateOnly = text.match(/^(\d{4})[:-](\d{2})[:-](\d{2})$/);
+  if (dateOnly) {
+    const [, y, mo, d] = dateOnly;
+    return `${y}-${mo}-${d}T00:00:00`;
+  }
+  return null;
+}
+
+/** Parse the per-photo capture-time array, aligned with the uploaded files. */
+export function parseEvidenceCaptureTimes(raw: any): Array<EvidenceCaptureTimeInput> {
+  let value = raw;
+  if (typeof raw === 'string') {
+    const text = raw.trim();
+    if (!text) return [];
+    try {
+      value = JSON.parse(text);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(value)) return [];
+
+  return value.map((entry: any): EvidenceCaptureTimeInput => {
+    const rawTime =
+      typeof entry === 'string' ? entry : entry && typeof entry === 'object' ? entry.time ?? entry.captureTime : null;
+    const source =
+      entry && typeof entry === 'object' && entry.source ? String(entry.source) : 'EXIF';
+    const captureTime = normaliseCaptureTime(rawTime);
+    return captureTime
+      ? { captureTime, captureTimeSource: source, captureTimeStatus: 'CAPTURED' }
+      : { captureTime: null, captureTimeSource: '', captureTimeStatus: 'UNAVAILABLE' };
+  });
 }
 
 /**
@@ -157,6 +358,8 @@ function evidenceFileName(evidenceId: string): string {
  */
 export async function storeEvidenceUploads(options: StoreEvidenceOptions): Promise<StoredEvidence[]> {
   const { files, mentorId, mentorName, context, evidenceGroupId, meetingId, studentIds } = options;
+  const location = options.location ?? emptyEvidenceLocation();
+  const captureTimes = options.captureTimes ?? [];
 
   if (!Array.isArray(files) || files.length === 0) {
     throw new EvidenceValidationError('No evidence photo was received. Please attach at least one photo.');
@@ -223,6 +426,7 @@ export async function storeEvidenceUploads(options: StoreEvidenceOptions): Promi
   const createdDocs: IMentoringEvidence[] = [];
   try {
     for (let i = 0; i < written.length; i += 1) {
+      const capture = captureTimes[i] ?? null;
       const doc = await MentoringEvidence.create({
         evidenceId: written[i].evidenceId,
         fileUrl: written[i].fileUrl,
@@ -243,6 +447,22 @@ export async function storeEvidenceUploads(options: StoreEvidenceOptions): Promi
           resized: compressed[i].resized,
           maxBytes: MAX_EVIDENCE_BYTES,
         },
+        // Location is shared by every photo in the submission; the per-photo
+        // capture time is aligned by index.
+        locationStatus: location.status,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        accuracyMeters: location.accuracyMeters,
+        locationCapturedAt: location.capturedAt,
+        placeName: location.placeName,
+        placeNameStatus: location.placeNameStatus,
+        placeDetails: location.placeDetails ?? null,
+        placeResolvedAt: location.placeResolvedAt,
+        captureTime: capture?.captureTime ?? null,
+        captureTimeSource: capture?.captureTimeSource ?? '',
+        captureTimeStatus: capture?.captureTimeStatus ?? 'UNAVAILABLE',
+        // Server-authoritative upload time. Never taken from the client.
+        uploadedAt: new Date(),
       });
       createdDocs.push(doc);
       stored.push({
@@ -412,6 +632,14 @@ export async function deleteUnreferencedEvidence(
 
 /** API shape for one evidence photo. */
 export function toEvidenceView(evidence: any) {
+  const locationStatus = String(evidence.locationStatus || EVIDENCE_LOCATION_STATUS.NOT_REQUESTED);
+  const hasCoords =
+    locationStatus === EVIDENCE_LOCATION_STATUS.CAPTURED &&
+    evidence.latitude !== null &&
+    evidence.latitude !== undefined &&
+    evidence.longitude !== null &&
+    evidence.longitude !== undefined;
+
   return {
     evidenceId: String(evidence.evidenceId),
     fileName: evidence.fileName || '',
@@ -422,13 +650,31 @@ export function toEvidenceView(evidence: any) {
     fileUrl: `/api/counselling/evidence/${encodeURIComponent(String(evidence.evidenceId))}/file`,
     downloadUrl: `/api/counselling/evidence/${encodeURIComponent(String(evidence.evidenceId))}/download`,
     storedPath: evidence.fileUrl,
-    uploadedAt: evidence.updatedAt || evidence.createdAt || null,
+    uploadedAt: evidence.uploadedAt || evidence.createdAt || null,
     context: evidence.context || 'INDIVIDUAL',
     evidenceGroupId: evidence.evidenceGroupId || null,
     meetingId: evidence.meetingId ? String((evidence.meetingId as any)._id ?? evidence.meetingId) : null,
     capturedBy: evidence.uploadedByName || '',
     linkedStudents: Array.isArray(evidence.students) ? evidence.students.length : 0,
     compression: evidence.compression || null,
+    // ---- Location (device-reported; honest status, never invented) -----------
+    locationStatus,
+    latitude: hasCoords ? Number(evidence.latitude) : null,
+    longitude: hasCoords ? Number(evidence.longitude) : null,
+    accuracyMeters:
+      hasCoords && evidence.accuracyMeters !== null && evidence.accuracyMeters !== undefined
+        ? Number(evidence.accuracyMeters)
+        : null,
+    locationCapturedAt: evidence.locationCapturedAt || null,
+    placeName: evidence.placeName || null,
+    placeNameStatus: String(evidence.placeNameStatus || EVIDENCE_PLACE_STATUS.NOT_ATTEMPTED),
+    placeDetails: evidence.placeDetails || null,
+    placeResolvedAt: evidence.placeResolvedAt || null,
+    // ---- Timestamps ----------------------------------------------------------
+    captureTime: evidence.captureTime || null,
+    captureTimeSource: evidence.captureTimeSource || '',
+    captureTimeStatus: String(evidence.captureTimeStatus || 'UNAVAILABLE'),
+    serverUploadedAt: evidence.uploadedAt || evidence.createdAt || null,
   };
 }
 

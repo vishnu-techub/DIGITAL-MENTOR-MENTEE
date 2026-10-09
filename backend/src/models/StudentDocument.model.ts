@@ -30,6 +30,9 @@ export type VerificationStatus =
 
 export type DocumentType = 'student_details_form' | 'certificate' | 'other';
 
+/** Outcome of applying the KSRCE watermark to an uploaded document. */
+export type WatermarkStatus = 'applied' | 'unsupported' | 'failed';
+
 export interface IStudentDocument extends LocalDocument {
   studentId: LocalId;
   documentType: DocumentType | string;
@@ -45,6 +48,19 @@ export interface IStudentDocument extends LocalDocument {
   description?: string;
   fileType: string;
   fileSize: number;
+  /**
+   * Separate watermarked copy of the document. `fileUrl` always points at the
+   * ORIGINAL untouched upload; this points at the generated watermarked copy.
+   * Absent for records created before watermarking, and for formats that cannot
+   * be watermarked safely.
+   */
+  watermarkedFileUrl?: string;
+  /** Outcome of watermarking the document. */
+  watermarkStatus?: WatermarkStatus;
+  /** The exact watermark text applied (currently always `K S R C E`). */
+  watermarkText?: string;
+  /** When the watermarked copy was generated. */
+  watermarkAppliedAt?: Date;
   verificationStatus: VerificationStatus;
   rejectionReason?: string;
   rejectedBy?: LocalId;
@@ -127,6 +143,25 @@ const StudentDocumentSchema = new Schema<IStudentDocument>(
     fileSize: {
       type: Number,
       default: 0,
+    },
+    // ---- Watermark -----------------------------------------------------------------
+    watermarkedFileUrl: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    watermarkStatus: {
+      type: String,
+      enum: ['applied', 'unsupported', 'failed'],
+      default: 'unsupported',
+    },
+    watermarkText: {
+      type: String,
+      default: '',
+    },
+    watermarkAppliedAt: {
+      type: Date,
+      default: null,
     },
     verificationStatus: {
       type: String,

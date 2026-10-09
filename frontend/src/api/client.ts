@@ -598,22 +598,40 @@ function extractFilename(disposition: string | null): string | null {
  * `file` is ALREADY client-side compressed to <= 200 KB by
  * `compressEvidenceImage` (see utils/evidence.ts).
  *
- * GPS/geolocation has been intentionally REMOVED. No location data is sent.
+ * `captureTime` is the original EXIF capture time (`YYYY-MM-DDTHH:mm:ss`) when
+ * the photo carried one, otherwise null. GPS is sent separately as a single
+ * `evidenceLocation` field on the submission (see utils/evidence.ts).
  */
 export interface EvidencePhotoInput {
   file: File;
+  captureTime?: string | null;
+}
+
+/** Device-reported location attached to an evidence submission. */
+export interface EvidenceLocationInput {
+  status: 'CAPTURED' | 'DENIED' | 'UNAVAILABLE' | 'TIMEOUT' | 'ERROR' | 'NOT_REQUESTED';
+  latitude: number | null;
+  longitude: number | null;
+  accuracy: number | null;
+  capturedAt: string | null;
 }
 
 /**
- * Append photos to a multipart form.
+ * Append photos (and their per-file capture times) to a multipart form.
  *
- * GPS/geolocation is NOT sent with uploads.
+ * The capture-time array is aligned by index with the appended files. GPS is
+ * not sent here because one location applies to the whole submission; the caller
+ * adds it to the request body as `evidenceLocation`.
  */
 function appendEvidenceToForm(form: FormData, photos: EvidencePhotoInput[]): void {
   if (photos.length === 0) return;
+  const captureTimes = photos.map((photo) =>
+    photo.captureTime ? { time: photo.captureTime, source: 'EXIF' } : null
+  );
   for (const photo of photos) {
     form.append('evidence', photo.file, photo.file.name);
   }
+  form.append('evidenceCaptureTimes', JSON.stringify(captureTimes));
 }
 
 async function request<T = any>(

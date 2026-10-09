@@ -26,8 +26,11 @@ Status legend: `PASS` | `PARTIAL` | `FAIL` | `PENDING`
   suites green (see Verification). Full 6-state permission machine implemented and enforced
   server-side. Grammar & Spelling Assistant implemented and runtime-verified. Persistence layer is
   now local files. Mentoring Records now carry a required Discussion With (student / parent / both)
-  and size-capped evidence photos (location/GPS tracking removed), including Saturday photos stored once and shared
-  across participants. HOD department dashboard, mentoring analytics, student/faculty CRUD, mentor
+  and size-capped evidence photos, including Saturday photos stored once and shared
+  across participants. Each evidence submission records an optional, device-reported location fix
+  (lat/long/accuracy) and honest capture/upload timestamps; a denied or unavailable location never
+  blocks the upload. Uploaded documents and the generated Student Details Form get a separate
+  `K S R C E` watermarked copy while the original is preserved. HOD department dashboard, mentoring analytics, student/faculty CRUD, mentor
   assignment and faculty notifications are implemented and verified against two seeded departments.
   The **HOD Dashboard analytics pass** (2026-10-07) re-verified every figure against stored,
   department-scoped rows: a reporting-month selector (`?month=YYYY-MM`, server-validated) drives the
@@ -138,6 +141,21 @@ Status legend: `PASS` | `PARTIAL` | `FAIL` | `PENDING`
   directory/detail agreement, console hygiene). Frontend + backend `tsc --noEmit` PASS; `vite
   build` PASS (canonical dist rebuilt with the production 5050 base); `test:directory` 16/16,
   `test:critical` 12/12, `test:runtime` 38/38 re-run green.
+- **Sidebar independent scrolling + fixed header:** PASS (2026-10-09) — the reported "the whole page
+  moves when I scroll the sidebar" symptom had two causes: (1) the global `html, body { overflow-x:
+  hidden }` safeguard silently turned `html`/`body` into a scroll container and disabled
+  `position: sticky` on the header **and** the sidebar (they computed `sticky` but scrolled away —
+  header `top` = -600 after scrolling 600px), and (2) the sidebar was never height-constrained inside
+  the content-growing flex row, so `.sidebar-nav` never scrolled internally. Fixed by switching the
+  safeguard to `overflow-x: clip` (no scroll container), pinning the desktop rail with `position:
+  sticky; top: var(--header-hpx); height: calc(100vh - var(--header-hpx))`, and adding
+  `min-height:0; overflow-x:hidden` + `flex-shrink:0` to the nav rows. Also fixed a stale
+  `document.body.style.overflow='auto'` left by `Modal.tsx` / `MentorAiBotModal.tsx` after close
+  (now restores the previous value). Verified 53/53 headless-Chromium checks across desktop 1440 /
+  tablet 900 / mobile 390 (nav scrolls internally, header + rail stay pinned, main still scrolls,
+  collapsed rail + drawer + modal all correct, no horizontal overflow, 0 console errors) plus
+  before/after root-cause probes; `tsc --noEmit` clean; `vite build` PASS; canonical dist rebuilt.
+
 - **Demo HOD accounts:** PASS (2026-10-09) — the five demo/verification HOD accounts (origin proven by
   name + audit trail, not by department) are now **permanently deleted** through the new Admin-only
   delete path (1 via the browser UI E2E, 4 via the API); the live store holds 8 genuine HOD accounts
@@ -163,11 +181,76 @@ Status legend: `PASS` | `PARTIAL` | `FAIL` | `PENDING`
   the free plan's filesystem is ephemeral, so a redeploy discards all records and uploads.
 - **Blocking issue:** None. The earlier Render `EPERM` crash remains fixed; the local-file store
   also removed the cause rather than papering over it.
-- **Mentoring Evidence GPS/geotagging:** COMPLETELY REMOVED. Old GPS/geotag implementation is SUPERSEDED AND OBSOLETE. No location tracking of any kind remains in the mentoring evidence flow.
+- **Mentoring Evidence location:** OPTIONAL, device-reported only. The earlier mandatory GPS/geotag flow was removed; a lighter, privacy-respecting location capture was reintroduced (2026-10-09) as part of the evidence-location feature: a single browser geolocation request fires only when the mentor attaches photos, coordinates are validated server-side and labelled "device-reported, not independently verified", and denial/timeout/unavailability never blocks the upload. No location history is collected and coordinates are never exposed unauthenticated.
 
 ---
 
 ## Completed
+
+### Sidebar / navigation independent scrolling + truly-fixed header — whole-page-scroll root cause fixed — PASS (2026-10-09)
+
+**Reported symptom:** scrolling with the wheel anywhere (including over the sidebar nav) moved the
+**whole page** — the header, the sidebar and the main content all slid together — instead of only the
+sidebar navigation list scrolling inside a stationary shell.
+
+**Root cause (two independent defects, both confirmed by live `getBoundingClientRect()` probes on a
+rebuilt bundle in headless Chromium):**
+1. **`html, body { overflow-x: hidden }` silently disabled `position: sticky`.** The global mobile
+   safeguard (`frontend/src/styles/index.css`, "GLOBAL MOBILE SAFE-GUARDS") turned `html`/`body` into a
+   scroll container, so the top header and the sidebar stopped sticking to the viewport. They still
+   *computed* `position: sticky`, which is why this was never caught. Evidence: after `scrollTo(0,600)`
+   the header's `getBoundingClientRect().top` was **-600** (it scrolled away); injecting
+   `html,body{overflow-x:visible}` or `{overflow-x:clip}` restored `top: 0`, and re-injecting
+   `{overflow-x:hidden}` broke it again (**-600**).
+2. **The sidebar was never height-constrained.** `.app-container` is `min-height: 100vh` and the
+   sidebar sits in a `display:flex` row that grows with the page content, so the rail was always as
+   tall as the content. `.sidebar-nav` already had `flex: 1; overflow-y: auto` but never received a
+   bounded height, so it never scrolled internally and wheel events over it bubbled to the page.
+   A third, related defect surfaced while verifying: `.sidebar-nav` children are column-flex items, so
+   in the collapsed 76px rail they were compressed to fit instead of overflowing (scrollHeight ==
+   clientHeight), which also prevented the nav from scrolling.
+
+**Fix (smallest safe layout/CSS change; no new dependency, no new scroll container):**
+- `index.css` global safeguard: `overflow-x: hidden` → **`overflow-x: clip`** (clips horizontal
+  overflow the same way but does **not** create a scroll container, so sticky works again).
+- `index.css` appended, scoped block:
+  - `.sidebar-nav { min-height: 0; overflow-x: hidden; }` — lets the nav shrink below content and
+    scroll in every layout (desktop rail and the already-constrained ≤960px drawer).
+  - `.sidebar-nav > .nav-item, .sidebar-nav > .nav-section-label { flex-shrink: 0; }` — nav rows keep
+    their own height so the list overflows and scrolls instead of being squashed.
+  - `@media (min-width: 961px) { .sidebar { position: sticky; top: var(--header-hpx);
+    height/max-height: calc(100vh - var(--header-hpx)); overflow: hidden; align-self: flex-start; } }`
+    — pins the rail flush under the sticky header for exactly the visible viewport height; only the
+    nav list scrolls inside it. The main column still scrolls the page normally, and **no** overflow
+    is added around `.main-content`/`.page-body`, so the non-portaled `position: fixed` modal
+    overlay, dropdowns and toasts are never clipped.
+- **Modal overflow leak (found by the verification):** `Modal.tsx` and `MentorAiBotModal.tsx` cleanup
+  did `document.body.style.overflow = 'auto'` (hardcoded) instead of restoring the previous value, so
+  closing *any* modal left a stale inline `overflow: auto` on `<body>` (turning it back into a scroll
+  container). Both now capture `previousOverflow` on open and restore it on close. Async
+  `SearchableSchoolDropdown.tsx` already restored `''` and was left untouched.
+
+**Verification (real pipeline — sandboxed backend on a fresh store + headless Chromium against rebuilt
+bundles; 53/53 checks, 0 failures, 0 page/console errors):**
+- Desktop 1440×900 (Admin, 21 nav items): rail is `sticky`, sits at y=66, height 834 (= 100vh − 66),
+  bottom exactly 900; nav overflows (scrollH 1211 / clientH 700) and scrolls internally
+  (`scrollTop 0→400`) while the page stays put (`scrollY` unchanged); with the page at 600 scrolling
+  over the nav leaves `scrollY` at 600; wheel over main scrolls the page (600→900); header stays at
+  `top:0` and rail at `top:66` while the page scrolls; last nav item scrolls fully into view (no
+  clipping); collapse → 76px rail still overflows (scrollH 1044 / clientH 717) and scrolls; expand
+  restores 264px.
+- Modal regression: the fixed overlay still spans the full viewport (0,0,1440,900) — not clipped by
+  any ancestor overflow.
+- Tablet 900×700 and mobile 390×844: drawer `fixed` below the header, backdrop + header layering,
+  drawer nav overflows and scrolls independently (page stays put), Escape / X / backdrop all close,
+  no horizontal overflow.
+- **Before/after root-cause probes:** with the sidebar fix disabled, `.sidebar-nav` stops overflowing
+  (scrollH == clientH == 1211) and the wheel cannot scroll it (the page is what moved); with the old
+  `html,body{overflow-x:hidden}` re-injected, the header's top becomes -600 (bug reproduced); the
+  shipped value computes `overflow-x: clip` on both `html` and `body`.
+- `npx tsc --noEmit` exit 0; `npm run build` (tsc + vite) PASS, 1659 modules; canonical `frontend/dist`
+  rebuilt (`index-JcWmmNV8.css`) and all new selectors confirmed present in the emitted CSS. No
+  sandbox ports left listening. No commit/push made.
 
 ### Student Dashboard Overview UI + Profile Completion card "always Incomplete" bug — PASS (2026-10-09)
 
@@ -762,7 +845,7 @@ set can therefore be referenced by many records without being copied.
 The server refuses to guess (`400` if empty). A record that predates the field reads
 "Not recorded" in the UI instead of being back-filled.
 
-**Geo-tagging** — `utils/geotag.util.ts` validates every upload server-side. Coordinates are never
+**Geo-tagging (SUPERSEDED 2026-10-09 — location is now optional and never blocks the upload; see the evidence-location entry below)** — `utils/geotag.util.ts` validates every upload server-side. Coordinates are never
 defaulted, rounded or approximated; the whole batch is rejected if a photo has no fix or an
 implausible one. The browser requests the device position at *capture* time (`captureDeviceGeotag`).
 
@@ -796,8 +879,9 @@ Saturday records coexist on one student.
   instead of a `500`.
 - Evidence reference typing in `evidence.service.ts`.
 
-**Frontend** — `EvidenceUploader` (capture + GPS + compress + explicit detach/undo),
-`EvidenceGallery` (authenticated view, verified-coordinate label, download), `DiscussionWithSelect`,
+**Frontend** — `EvidenceUploader` (capture + optional device location + compress + explicit
+detach/undo; superseded on 2026-10-09 so a denied/unavailable fix never blocks the upload),
+`EvidenceGallery` (authenticated view, device-reported location label, download), `DiscussionWithSelect`,
 `SaturdayEvidenceModal` (own mentee picker, one upload shared by all participants), all wired into
 `MentorStudentProfileView.tsx` including record-list badges and the evidence strip.
 Frontend build: **PASS**. Backend build: **PASS**. New suite `test:mentoring-evidence`: **114
@@ -1868,11 +1952,12 @@ made.
   uploads: they live under `backend/storage/uploads/counselling/` and do **not** survive a Render
   redeploy. Same design decision as the certificate uploads above — durable object
   storage is required before evidence can be treated as an official record.
-- PENDING — Evidence geotags are captured from the device and validated for plausibility, but nothing
-  verifies the device was physically at the mentoring venue. A mentor can capture elsewhere, and
-  desktop browsers typically have no location at all, which makes the upload fail closed. That is
-  deliberate, but it means the feature effectively requires a location-capable device; if on-desktop
-  capture is a real requirement, an explicit supervisor override flow needs to be designed.
+- PENDING — Evidence location is device-reported and validated only for plausibility (range and
+  numeric type); nothing verifies the device was physically at the mentoring venue, and a mentor can
+  capture elsewhere or deny the request. This is deliberate: the coordinates are labelled
+  "device-reported, not independently verified", and a denied/unavailable/timed-out fix is stored
+  honestly and never blocks the upload, so desktop browsers (which usually have no location) can
+  still submit evidence. The honest status is always shown to the mentor.
 
 ---
 
@@ -2135,6 +2220,7 @@ drives `setHodStatus` with no `deleteHod` route; `AdminStudentDocuments` viewer 
 
 | Date | Status | Summary |
 |------|--------|---------|
+| 2026-10-09 | PASS | Sidebar independent scrolling + truly-fixed header — whole-page-scroll root cause fixed. **Symptom:** scrolling the sidebar nav moved the whole page (header + sidebar + content) instead of only the nav list. **Root cause (two defects, both confirmed by live `getBoundingClientRect()` probes on a rebuilt bundle):** (1) the global mobile safeguard `html, body { overflow-x: hidden }` in `index.css` turned `html`/`body` into a scroll container and silently disabled `position: sticky` on `.ksrce-header` and the sidebar — they computed `sticky` but the header's `top` was **-600** after `scrollTo(0,600)`, and injecting `overflow-x: visible`/`clip` restored `0` while re-injecting `hidden` broke it again; (2) the sidebar was never height-constrained — `.app-container` is `min-height:100vh` and the rail sits in a flex row that grows with content, so `.sidebar-nav`'s existing `overflow-y:auto` never got a bounded height and never scrolled internally (wheel bubbled to the page); a third related defect: nav rows are column-flex children and were compressed in the collapsed rail instead of overflowing. **Fix (smallest safe CSS/layout change, no new dependency, no new scroll container):** `overflow-x: hidden` → `overflow-x: clip`; appended scoped block in `index.css` — `.sidebar-nav { min-height:0; overflow-x:hidden }`, `.sidebar-nav > .nav-item, .nav-section-label { flex-shrink:0 }`, and `@media (min-width:961px){ .sidebar { position:sticky; top:var(--header-hpx); height/max-height:calc(100vh - var(--header-hpx)); overflow:hidden; align-self:flex-start } }`; **also fixed** `Modal.tsx` + `MentorAiBotModal.tsx` which hardcoded `document.body.style.overflow='auto'` on close (leaving a stale inline overflow on `<body>` after any modal) — now restore the captured previous value. No overflow added around `.main-content`/`.page-body`, so the non-portaled fixed modal overlay is never clipped. **Verified (sandboxed backend + rebuilt SPA, headless Chromium):** 53/53 checks, 0 page/console errors — desktop 1440×900 Admin: rail sticky at y=66, height 834, nav overflows 1211/700 and scrolls (`scrollTop 0→400`) while `scrollY` stays, page at 600 stays 600 when wheeled over nav, wheel over main scrolls 600→900, header `top:0` + rail `top:66` while scrolled, last item not clipped, collapse 76px rail still overflows 1044/717 and scrolls, expand 264px; modal overlay still spans 0,0,1440,900; tablet 900×700 + mobile 390×844 drawers fixed below header, nav scrolls independently, Escape/X/backdrop close, no horizontal overflow; before/after probes reproduce the bug and confirm shipped `overflow-x: clip`; `tsc --noEmit` exit 0; `vite build` PASS (1659 modules, `index-JcWmmNV8.css`); canonical dist rebuilt with all new selectors; no sandbox ports left listening; no commit/push. |
 | 2026-10-09 | PASS | Student Dashboard Overview UI + Profile Completion card "always Incomplete" bug fixed. **Root cause (confirmed by live API evidence + browser):** `StudentDashboard.tsx` read `profile?.profileCompleted`, but `GET /api/students/:id` returns only `profile_completed: 0|1` (+ `profile_completed_at`) — no camelCase key — so the card rendered "Incomplete" even after the student completed and saved their profile (`/auth/me` + the login JWT do carry `profileCompleted`, which is why the wizard gate was fine). **Fix:** new `backend/src/utils/profile-completion.util.ts` — `calculateProfileCompletion(student)` is the single source of truth for the exact four buckets the directory always used (identity / contact / family / school, each 25; `profileCompleted` authoritative → 100) and returns `{percentage, missing[]}`; `getStudents` now calls it (same output, inline copy removed) and `getStudentById` additionally returns `profile_completion_percentage` + `profile_completion_missing` (additive only — keys, statuses, RBAC untouched). `StudentDashboard.tsx` reads `profile_completed === 1` (with a tolerant `profileCompleted` fallback) and shows a real progress bar + "Missing: …" on Incomplete — no invented percentages. **Same-pass UI overhaul** (scoped `sd-` CSS in `index.css`, navy/gold tokens): banner identity block + balanced action column (prominent-but-balanced Download Record Book PDF, aligned Internal Assessment / Mentor Documents), uniform `sd-stat` cards that wrap without overflow, two-column Meeting Schedule / Assigned Faculty Mentor grid that truly collapses ≤900px (was stuck `1fr 1fr`), mentor name/designation/cabin/phone/email shown only when present, readable empty states, compact Saturday Mentoring Log empty state, ≤640px banner stacking. **Verified on the real pipeline** (fresh-store sandbox backend on :5095 seeded via the real API + headless Chromium on rebuilt bundles): before-fix bundle "PROFILE COMPLETION Incomplete" vs after-fix "Complete" at 1440/900/390 with no horizontal overflow; **8/8 cases** — incomplete payload → Incomplete + 25% bar + missing labels; filled+saved (optionals empty) → Complete (`profile_completed=1`, 100%, `missing=[]`); refresh keeps Complete; sign-out/in keeps Complete (fresh token `profileCompleted=true`); save failure (invalid mobile → 400) never flips to Complete; optional empties don't block; response format + directory/detail agreement (100 == 100); 0 console errors. Frontend & backend `tsc --noEmit` exit 0; `vite build` PASS; canonical `frontend/dist` rebuilt with production `VITE_API_URL=localhost:5050`. Suites re-run green — `test:directory` 16/16, `test:critical` 12/12, `test:runtime` 38/38. No commit/push made. |
 | 2026-10-09 | PASS | Admin Mentoring Dashboard — "College Mentoring Split" + "Weekly Progress" **focused refinement** (presentation only, second pass over exactly these two cards). **Split (`CoveragePie`):** refined circular coverage ring with a clear centered % + `COVERAGE` label, track + gold fill from the server's de-duplicated `pie`; two restrained stat rows (green Mentored, red/amber Pending) each showing server count + % in one consistent format; subtle footer `Reporting month: 2026-10 · 1 students, each counted once`; no malformed characters. **Weekly (`WeeklyProgressList`):** consistent `DATE RANGE | BAR | COUNT` rows — compact one-line ranges (`Aug 17 – Aug 23` via `formatWeekRange`, fixed date-label width), low-attention flexible bars on a subtle track with theme fill scaled to the busiest week (gold `is-busiest`), clean zero-session dashed stubs, subtle separators + hover, counts straight from the API. **Layout:** shared `.mentoring-split-wide` grid, equal-height cards, single column ≤1024px; scoped CSS block in `index.css`. **No API/route/RBAC/calculation/data-fetch/unrelated card changed.** Verified on the real pipeline with an isolated backend (:5090, seeded `verify-data2`: pie 1/0/1 = 100%, weekly `[2,3,0,5,1,0,4,6]`, 2 zero weeks) + rebuilt SPA across desktop 1440 / tablet 1024 / mobile 390: equal card heights (394.72/394.72), ring %/arc match API, stat rows match, 8 rows, one-line API-derived date labels, stubs/bar-widths/busiest match, hover feedback, no horizontal overflow on any viewport, no mojibake (overview + Comparison + 30-Day tabs, bundle `·` scan), 0 page/console errors; dept drill-down re-verifies the same components (ring 100%, 8 rows, counts match dept API); empty dept shows the intended EmptyState. **Found (pre-existing, NOT fixed — out of scope):** the 30-Day Report tab never loads data — `loadReport` tests `currentTab === 'reports'` while the parent supplies `mentoring-reports`, so the tab always shows "Report unavailable"; the API itself returns 200 with a full payload. `tsc --noEmit` + `npm run build` PASS. `git add -A` only; no commit/push. |
 | 2026-10-09 | PASS | Admin Mentoring Dashboard — "College Mentoring Split" + "Weekly Progress" polish (presentation only). **Split:** `CoveragePie` in `frontend/src/pages/admin/AdminMentoringDashboard.tsx` no longer draws a two-slice pie — it renders a 108px coverage **ring** (inline SVG, `stroke-dasharray`/`stroke-dashoffset` on a track + fill, `role="img"` with an aria-label carrying coverage %, mentored and pending) and two stat rows (Mentored / Pending) whose counts and percentages come straight from the server payload (`pie.mentored`, `pie.pending`; the server de-duplicates, so they always sum to the total), with a `Reporting month: … · N students, each counted once` foot. **Weekly progress:** new `WeeklyProgressList` renders a token-styled list — relative bars scaled to the busiest week (gold `is-busiest` highlight), dashed placeholder for zero-session weeks, and compact `Aug 17 – Aug 23` date labels from `weekStart`/`weekEnd` with the API's `weekLabel` as fallback. **Layout:** the two inline `gridTemplateColumns: 'minmax(280px, 1fr) 2fr'` split blocks (dept drill-down + college overview) now use one `.mentoring-split-wide` class; the dept panel's `.card`s stretch to equal height. **CSS:** new scoped block in `frontend/src/styles/index.css` (`.mentoring-split-wide`, `.mentoring-panel`, `.ring-*`, `.split-*`, `.weekly-*`) with responsive rules at ≤1024px (single column) and ≤480px. **Encoding:** replaced the last mojibake (`â€"`, `Â·`) in this file's comments/labels with the real `—` / `·`. No API, data, route, RBAC, calculation or workflow change; no dependency added. **Verified:** `npx tsc --noEmit` PASS; `npx vite build` PASS (1659 modules, CSS 89.20 kB); all new selectors confirmed present in the emitted CSS bundle. No commit/push. |
@@ -2166,3 +2252,4 @@ drives `setHodStatus` with no `deleteHod` route; `AdminStudentDocuments` viewer 
 | 2026-10-09 | PASS | Add/Edit HOD modal nested-form bug fixed. Shared `Modal.tsx` renders its `.modal-content` as a `<form>` whenever `onSubmit`/`formId` are passed, and `AdminHodManagement.tsx` wrapped its children in an extra `<form id="hod-form" onSubmit={submit}>` — the browser logged `<form> cannot be a descendant of <form>` and the DOM carried two `id="hod-form"` elements. The redundant inner `<form>` is now a `<div>` in all three call sites that had it (`AdminHodManagement.tsx` — the reported bug, plus the identical pattern in `AdminInternalMarks.tsx` `mark-decision-form` and `InternalMarksMentorPanel.tsx` `mark-correction-form`), leaving one valid form per modal; `Modal.tsx` unchanged so other consumers (MenteeProgressDashboard, MentorAiBotModal, SaturdayEvidenceModal, StudentProgressView, …) are unaffected. Verified: frontend `tsc --noEmit` exit 0; `vite build` clean; headless-Chromium E2E — exactly one `<form>` on the page in both Add and Edit HOD modals, `#hod-form` is the modal form itself, 0 nested forms, 0 duplicate ids, required validation still blocks an empty submit (modal stays open), Create HOD still posts the filled payload and closes with the success toast, edit keeps username disabled + password hidden, 0 page errors and 0 console errors (the reported message is gone). No backend/routes/data changed; PROJECT_PROGRESS.md updated; no commit/push. |
 | 2026-10-09 | PASS | Marks modals — native form submission suppressed. `submitDecision` (`AdminInternalMarks.tsx`) and `submitCorrection` (`InternalMarksMentorPanel.tsx`) now open with `(e: React.FormEvent)` + `e.preventDefault()`, so no implicit/native submission can navigate the page; validation, API payloads, approve/reject flow, correction requests and toasts unchanged. No backend change. **Static verification only (flagged honestly):** frontend `tsc --noEmit` exit 0, `vite build` clean; the Playwright in-browser check (Enter-key navigation) was prepared but not executed before the HOD-cleanup task took priority. No commit/push. |
 | 2026-10-09 | PASS | Demo HOD accounts — identified, verified deactivated + login-blocked, no recreation on restart. Live store holds exactly 5 HOD users, every one demo/test/verification in origin (audit trail: scripted CREATE_HOD→LOGIN→DEACTIVATE_HOD same-second for `vhod.verify.cse001` / `vhod.live883485`, 2026-10-06; literal "Sample" account `hod.it`, 2026-10-08; hook-reproduction QA accounts `hookrepro.hod`/`hookrepro.it`, 2026-10-08). All 5 were **already** `isActive=false`: `GET /api/admin/hods` total=5 active=0 inactive=5; default-password login attempts → HTTP 403 "account has been deactivated" for all 5. Zero dependent records (only `users.json` + preserved `audit_logs.json` reference them); genuine accounts and one-active-HOD-per-department untouched (0 active HODs). Permanent delete deliberately not performed — no supported HOD delete path exists (deactivation is the only removal mechanism) and `clean-demo-data.ts` is a nuclear wipe. Restart check: killed + restarted `tsx src/index.ts` (health 200), HOD list byte-identical, admin login 200, logins still 403, census 9 users (1 ADMIN/5 HOD/2 FACULTY/1 STUDENT); `bootstrap.ts` never seeds HODs. Tests: `test:hod-admin` 22/22, `test:admin-routes` 8/8, `test:admin-auth` 13/13, `test:faculty-notifications` 21/21; frontend `tsc --noEmit` + `vite build` clean. No code changed; PROJECT_PROGRESS.md updated; no commit/push. |
+| 2026-10-09 | PASS | KSRCE document watermarking + evidence GPS/timestamps + reverse geocoding. **Watermark (backend):** new `services/document-watermark.service.ts` (`WATERMARK_TEXT = 'K S R C E'`, centred, −45°, 0.17 opacity, never throws) overlays **every page** of an existing PDF with `pdf-lib` and composites JPEG/PNG with `sharp`; the original is never modified. `document.controller.ts` writes a **separate** `<stem>-watermarked<ext>` copy on upload and records it on `StudentDocument.watermarkedFileUrl` / `watermarkStatus` / `watermarkText` / `watermarkAppliedAt` (`fileUrl` always stays the untouched original); preview (`/file`) and download serve the watermarked copy; delete removes **both**; `student-details-pdf.service.ts` watermarks the generated Student Details Form too. Unsupported/other formats are reported `unsupported` and the original is kept — never corrupted, flattened, cropped or resized. **Evidence GPS (backend):** `MentoringEvidence` gained optional location/capture/upload metadata; `evidence.service.ts` adds `parseEvidenceLocation` (rejects present-but-invalid coords with 400 `INVALID_LOCATION`/`INVALID_LATITUDE`/`INVALID_LONGITUDE`/`INVALID_LOCATION_ACCURACY`; lat −90..90, long −180..180) and `parseEvidenceCaptureTimes`; a denied/unavailable/timed-out/missing fix is stored honestly and **never blocks the upload**; coordinates are treated as device-reported, not verified proof. `uploadedAt` is the server-authoritative time (UTC; displayed local) and the uploader comes from the auth context. **Reverse geocoding:** new `services/geocoding.service.ts` (public OSM Nominatim default, **no key**) with configurable `GEOCODING_DISABLED` / `GEOCODING_BASE_URL` / `GEOCODING_USER_AGENT` / `GEOCODING_TIMEOUT_MS`; statuses RESOLVED / NOT_FOUND / RATE_LIMITED (429) / ERROR / UNAVAILABLE / DISABLED; a 429 or provider failure never blocks upload and coords are kept even with no place name; no exact-address claim. **Frontend:** `utils/evidence.ts` reads EXIF capture time from the original `File` **before** canvas compression (which strips metadata), captures geolocation once on user-initiated attach (no auto re-prompt after DENIED), and exposes honest statuses; `EvidenceUploader.tsx` shows a GPS panel + per-photo capture time; `EvidenceGallery.tsx` shows upload time/uploader, capture time, location with coords + accuracy, place name and location-captured time; `api/client.ts` appends aligned `evidenceCaptureTimes`; `MentorStudentProfileView.tsx` and `SaturdayEvidenceModal.tsx` thread one `evidenceLocation` per submission, reset at every open/edit/close point, and send it only when photos are attached. Location is collected **only** on user-initiated evidence upload; role/ownership auth, audit and existing records are unchanged. **Verified:** backend `tsc --noEmit` clean; frontend `tsc --noEmit` + `vite build` clean (1659 modules); `npx tsx src/tests/document-watermark.test.ts` 22/22, `evidence-location.test.ts` 33/33 (incl. geocode success/no-match/429/error/disabled, invalid-coord rejection, EXIF normalisation), `document-watermark-runtime.test.ts` **29/29** (real server over HTTP: single/multi-page PDF + PNG watermark, original byte-identical on disk, `/file` + `/download` serve the watermarked copy, unrelated mentor 403 / anonymous 401, delete removes both), existing `test:mentoring-evidence` **100/100** re-run green. New npm scripts `test:document-watermark`, `test:document-watermark-runtime`, `test:evidence-location`. No dependency added (`pdf-lib`/`sharp` already present); no DB change; no commit/push. |

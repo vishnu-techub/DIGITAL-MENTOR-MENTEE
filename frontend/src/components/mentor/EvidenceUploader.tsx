@@ -1,10 +1,14 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Camera, Trash2, Loader2, AlertTriangle, Users, MapPin } from 'lucide-react';
+import { Camera, Trash2, Loader2, AlertTriangle, Users, MapPin, RefreshCw, CheckCircle2 } from 'lucide-react';
 import {
   prepareEvidencePhotos,
+  captureEvidenceLocation,
+  describeLocationStatus,
   formatBytes,
   MAX_EVIDENCE_BYTES,
   MAX_EVIDENCE_FILES,
+  NOT_REQUESTED_LOCATION,
+  type EvidenceLocationState,
   type PreparedEvidencePhoto,
 } from '../../utils/evidence';
 
@@ -14,6 +18,9 @@ interface EvidenceUploaderProps {
   /** Photos picked but not yet saved. */
   photos: PreparedEvidencePhoto[];
   onPhotosChange: (next: PreparedEvidencePhoto[]) => void;
+  /** Device-reported location captured for this submission. */
+  location?: EvidenceLocationState;
+  onLocationChange?: (next: EvidenceLocationState) => void;
   /** Ids the mentor has chosen to detach on save. */
   removedExistingIds: string[];
   onRemovedExistingIdsChange: (next: string[]) => void;
@@ -30,22 +37,39 @@ export interface StoredEvidenceView {
   fileSize?: number | null;
   fileUrl?: string;
   uploadedAt?: string | null;
+  serverUploadedAt?: string | null;
   context?: string;
   evidenceGroupId?: string | null;
   capturedBy?: string;
   linkedStudents?: number;
+  // ---- Location (device-reported; null when not captured) ------------------
+  locationStatus?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  accuracyMeters?: number | null;
+  locationCapturedAt?: string | null;
+  placeName?: string | null;
+  placeNameStatus?: string;
+  // ---- Timestamps ----------------------------------------------------------
+  captureTime?: string | null;
+  captureTimeStatus?: string;
 }
 
 /**
  * Photo picker for mentoring evidence.
  *
- * GPS/geolocation is NOT captured. Photos are compressed to under 200 KB before upload.
- * No location permission is required.
+ * Photos are compressed to under 200 KB before upload. When the mentor attaches
+ * photos, the browser location is requested ONCE for this evidence submission.
+ * A refusal, timeout or unsupported device never blocks the upload — the honest
+ * outcome is shown and stored. Photos themselves are never watermarked, cropped
+ * or resized beyond the documented compression.
  */
 export const EvidenceUploader: React.FC<EvidenceUploaderProps> = ({
   existing = [],
   photos,
   onPhotosChange,
+  location = NOT_REQUESTED_LOCATION,
+  onLocationChange,
   removedExistingIds,
   onRemovedExistingIdsChange,
   onRemoveExisting,
@@ -54,6 +78,7 @@ export const EvidenceUploader: React.FC<EvidenceUploaderProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [locating, setLocating] = useState(false);
   const [error, setError] = useState('');
 
   // Keep the newest previews in a ref so the unmount cleanup can revoke them all.
@@ -67,6 +92,17 @@ export const EvidenceUploader: React.FC<EvidenceUploaderProps> = ({
       for (const photo of photosRef.current) URL.revokeObjectURL(photo.previewUrl);
     };
   }, []);
+
+  const requestLocation = async () => {
+    if (disabled) return;
+    setLocating(true);
+    try {
+      const state = await captureEvidenceLocation();
+      onLocationChange?.(state);
+    } finally {
+      setLocating(false);
+    }
+  };
 
   const handleFiles = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
@@ -88,6 +124,13 @@ export const EvidenceUploader: React.FC<EvidenceUploaderProps> = ({
       // Revoke the previews we are replacing, so their URLs are not leaked.
       for (const photo of photos) URL.revokeObjectURL(photo.previewUrl);
       onPhotosChange([...photos, ...prepared]);
+
+      // Ask for the location as a direct result of the user attaching photos.
+      // Never re-prompt after an explicit denial; offer a manual retry instead.
+      const status = location?.status ?? 'NOT_REQUESTED';
+      if (status === 'NOT_REQUESTED' || status === 'UNAVAILABLE' || status === 'TIMEOUT' || status === 'ERROR') {
+        await requestLocation();
+      }
     } catch (err: any) {
       setError(err?.message || 'Could not attach the photo.');
     } finally {
@@ -107,6 +150,9 @@ export const EvidenceUploader: React.FC<EvidenceUploaderProps> = ({
   };
 
   const markedForRemoval = (evidenceId: string) => removedExistingIds.includes(evidenceId);
+
+  const captured = location.status === 'CAPTURED' && location.latitude != null && location.longitude != null;
+  const retryable = location.status === 'DENIED' || location.status === 'UNAVAILABLE' || location.status === 'TIMEOUT' || location.status === 'ERROR';
 
   return (
     <div className="form-group" style={{ marginBottom: '1.15rem' }}>
@@ -136,8 +182,9 @@ export const EvidenceUploader: React.FC<EvidenceUploaderProps> = ({
       >
         <MapPin size={14} color="#B45309" style={{ flexShrink: 0, marginTop: 1 }} />
         <span>
-          Each photo is compressed to under {Math.round(MAX_EVIDENCE_BYTES / 1024)} KB before upload.
-          No location permission is required.
+          Each photo is compressed to under {Math.round(MAX_EVIDENCE_BYTES / 1024)} KB before upload. Location is
+          requested once, when you attach photos, and stored with the evidence record (device-reported, not
+          independently verified).
           {hint ? <> {hint}</> : null}
         </span>
       </div>
@@ -206,6 +253,65 @@ export const EvidenceUploader: React.FC<EvidenceUploaderProps> = ({
         >
           <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
           <span>{error}</span>
+        </div>
+      )}
+
+      {/* Location status — shown only for a submission that has photos. */}
+      {photos.length > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            marginTop: '0.6rem',
+            padding: '0.5rem 0.65rem',
+            borderRadius: '8px',
+            border: `1px solid ${captured ? '#BBF7D0' : '#FDE68A'}`,
+            backgroundColor: captured ? '#F0FDF4' : '#FFFBEB',
+            fontSize: '0.76rem',
+            color: captured ? '#166534' : '#92400E',
+            fontWeight: 600,
+          }}
+        >
+          {locating ? (
+            <Loader2 size={14} className="spin" />
+          ) : captured ? (
+            <CheckCircle2 size={14} />
+          ) : (
+            <MapPin size={14} />
+          )}
+          <span style={{ flex: 1 }}>
+            {locating ? 'Getting location...' : describeLocationStatus(location.status)}
+            {captured && !locating ? (
+              <span style={{ display: 'block', fontWeight: 500, fontSize: '0.71rem', marginTop: 1 }}>
+                {location.latitude!.toFixed(6)}, {location.longitude!.toFixed(6)}
+                {location.accuracy != null ? ` · ±${Math.round(location.accuracy)} m` : ''}
+              </span>
+            ) : null}
+          </span>
+          {retryable && !locating ? (
+            <button
+              type="button"
+              onClick={requestLocation}
+              disabled={disabled}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.25rem',
+                background: 'transparent',
+                border: '1px solid currentColor',
+                borderRadius: '6px',
+                padding: '0.2rem 0.45rem',
+                color: 'inherit',
+                fontSize: '0.71rem',
+                fontWeight: 700,
+                cursor: disabled ? 'not-allowed' : 'pointer',
+              }}
+            >
+              <RefreshCw size={11} />
+              Retry
+            </button>
+          ) : null}
         </div>
       )}
 
@@ -337,6 +443,11 @@ export const EvidenceUploader: React.FC<EvidenceUploaderProps> = ({
                   </div>
                   <div style={{ fontSize: '0.62rem', color: '#64748B', marginTop: 1 }}>
                     from {formatBytes(photo.originalBytes)}
+                  </div>
+                  <div style={{ fontSize: '0.6rem', color: photo.captureTime ? '#334155' : '#94A3B8', marginTop: 1 }}>
+                    {photo.captureTime
+                      ? new Date(photo.captureTime).toLocaleString()
+                      : 'Capture time unavailable'}
                   </div>
                 </div>
                 <button

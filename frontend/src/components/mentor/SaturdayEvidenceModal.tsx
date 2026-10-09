@@ -7,7 +7,11 @@ import { Modal } from '../common/Modal';
 import { CounsellingCategorySelect } from './CounsellingCategorySelect';
 import { DiscussionWithSelect, type DiscussionParticipant } from './DiscussionWithSelect';
 import { EvidenceUploader } from './EvidenceUploader';
-import type { PreparedEvidencePhoto } from '../../utils/evidence';
+import {
+  NOT_REQUESTED_LOCATION,
+  type EvidenceLocationState,
+  type PreparedEvidencePhoto,
+} from '../../utils/evidence';
 
 /**
  * Records a Saturday COMMON meeting.
@@ -17,8 +21,8 @@ import type { PreparedEvidencePhoto } from '../../utils/evidence';
  * selected participant, who each get their own reference to the same stored
  * file. That keeps N students at 1 copy on disk instead of N.
  *
- * GPS/geolocation is NOT required. Photos are compressed and uploaded without
- * location data.
+ * Location is requested once when photos are attached and is stored with the
+ * shared evidence — a denial/unavailability never blocks the save.
  */
 interface SaturdayEvidenceModalProps {
   isOpen: boolean;
@@ -56,6 +60,9 @@ export const SaturdayEvidenceModal: React.FC<SaturdayEvidenceModalProps> = ({
     mentorRemarks: '',
   });
   const [photos, setPhotos] = useState<PreparedEvidencePhoto[]>([]);
+  // Device-reported location for the ONE shared evidence submission. Reset on
+  // every open so an old fix is never attached to a new meeting.
+  const [evidenceLocation, setEvidenceLocation] = useState<EvidenceLocationState>(NOT_REQUESTED_LOCATION);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
@@ -72,6 +79,7 @@ export const SaturdayEvidenceModal: React.FC<SaturdayEvidenceModalProps> = ({
       mentorRemarks: '',
     });
     setPhotos([]);
+    setEvidenceLocation(NOT_REQUESTED_LOCATION);
     setErrors({});
 
     // Only students the logged-in user is the ACTIVE mentor for are offered,
@@ -135,6 +143,7 @@ export const SaturdayEvidenceModal: React.FC<SaturdayEvidenceModalProps> = ({
           correctiveAction: form.actionPlan.trim(),
           mentorRemarks: form.mentorRemarks.trim(),
           studentIds: selectedStudentIds,
+          evidenceLocation,
         },
         photos
       );
@@ -347,6 +356,8 @@ export const SaturdayEvidenceModal: React.FC<SaturdayEvidenceModalProps> = ({
         <EvidenceUploader
           photos={photos}
           onPhotosChange={setPhotos}
+          location={evidenceLocation}
+          onLocationChange={setEvidenceLocation}
           removedExistingIds={[]}
           onRemovedExistingIdsChange={() => {}}
           onRemoveExisting={() => {}}
