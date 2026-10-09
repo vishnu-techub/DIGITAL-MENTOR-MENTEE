@@ -171,6 +171,31 @@ function pageContentText(doc: PDFDocument, page: any): string {
   return text;
 }
 
+/**
+ * Index of the page's content stream that carries the watermark (0 = painted
+ * first = behind all later streams). Returns -1 when the watermark is absent.
+ * Used to prove the watermark is a real background layer, not a foreground
+ * overlay, from the served bytes.
+ */
+function watermarkStreamIndex(doc: PDFDocument, page: any): number {
+  const contents = page.node.Contents();
+  const refs: any[] = contents instanceof PDFArray ? contents.asArray() : contents ? [contents] : [];
+  return refs.findIndex((ref) => {
+    const stream: any = doc.context.lookup(ref);
+    let bytes: Uint8Array | null = null;
+    if (stream instanceof PDFRawStream) {
+      try {
+        bytes = decodePDFRawStream(stream).decode();
+      } catch {
+        bytes = stream.getContents();
+      }
+    } else if (stream instanceof PDFStream) {
+      bytes = stream.getContents();
+    }
+    return !!bytes && Buffer.from(bytes).toString('latin1').includes(WATERMARK_HEX);
+  });
+}
+
 function storedPathFor(fileUrl: string): string | null {
   return locateStoredUploadFn ? locateStoredUploadFn(fileUrl)?.path ?? null : null;
 }
@@ -284,6 +309,11 @@ async function main() {
       'the watermarked copy carries the KSRCE watermark',
       pageContentText(wmDoc, wmDoc.getPages()[0]).includes(WATERMARK_HEX)
     );
+    check(
+      'the watermark is a background layer (first content stream), never a foreground overlay',
+      watermarkStreamIndex(wmDoc, wmDoc.getPages()[0]) === 0,
+      `watermarkStreamIndex=${watermarkStreamIndex(wmDoc, wmDoc.getPages()[0])}`
+    );
 
     // Preview must serve the watermarked copy.
     const preview = await http('GET', `/api/documents/${singleId}/file`, { token: mentorToken });
@@ -331,6 +361,10 @@ async function main() {
     check(
       'every page of the multi-page PDF is watermarked',
       wmDoc.getPages().every((p) => pageContentText(wmDoc, p).includes(WATERMARK_HEX))
+    );
+    check(
+      'every page of the multi-page PDF gets the watermark BEHIND its content',
+      wmDoc.getPages().every((p) => watermarkStreamIndex(wmDoc, p) === 0)
     );
   }
 
@@ -440,6 +474,10 @@ async function main() {
     check(
       'the regenerated copy carries the KSRCE watermark on EVERY page',
       wmDoc.getPages().every((p) => pageContentText(wmDoc, p).includes(WATERMARK_HEX))
+    );
+    check(
+      'the regenerated copy layers the watermark BEHIND content on every page',
+      wmDoc.getPages().every((p) => watermarkStreamIndex(wmDoc, p) === 0)
     );
     check('preview serves the regenerated watermarked bytes', Buffer.isBuffer(preview.body) && Buffer.from(preview.body).equals(wmBytes));
     check('the regenerated copy is a different file from the original', regenPath !== originalPath);

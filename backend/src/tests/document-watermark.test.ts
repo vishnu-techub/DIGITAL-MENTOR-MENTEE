@@ -25,6 +25,7 @@ import {
   PDFDict,
   PDFName,
   decodePDFRawStream,
+  rgb,
 } from 'pdf-lib';
 import {
   WATERMARK_TEXT,
@@ -374,13 +375,14 @@ async function main() {
   }
 
   // ---------------------------------------------------------------------------
-  console.log('\nF. Opaque full-page scan: watermark stays ON TOP so it is not hidden');
+  console.log('\nF. Opaque full-page scan: watermark is ALSO a background layer');
   // ---------------------------------------------------------------------------
   {
     // A page whose content is one opaque image covering the whole page (a scan)
-    // must NOT get a behind-layered watermark, or it would be invisible. The
-    // service detects the near-full-page object and keeps the subtle watermark
-    // on top instead.
+    // must still get a BEHIND-layered watermark. It is hidden behind the opaque
+    // image (an accepted, documented tradeoff), but it must NEVER be moved in
+    // front of the page content — a foreground overlay is exactly what made
+    // dense tables and headings unreadable.
     const doc = await PDFDocument.create();
     const png = await sharp({
       create: { width: 40, height: 56, channels: 3, background: '#f2efe9' },
@@ -399,8 +401,8 @@ async function main() {
 
     check('the scan page is still watermarked', index >= 0, `watermarkStream=${index}`);
     check(
-      'the watermark is ON TOP of the full-page image (not hidden behind it)',
-      index === streamCount - 1,
+      'the watermark is BEHIND the full-page image (never a foreground overlay)',
+      index === 0,
       `watermarkStream=${index} of ${streamCount}`
     );
     check('the scan watermark is still subtle (alpha <= 0.15)', (alpha ?? 1) <= 0.15, `alpha=${alpha}`);
@@ -410,6 +412,43 @@ async function main() {
       'the scan watermark composites to a subtle grey',
       luminance >= 230 && luminance <= 245,
       `luminance=${luminance.toFixed(1)}`
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  console.log('\nG. Full-page background rectangle + dense text: watermark stays BEHIND the text');
+  // ---------------------------------------------------------------------------
+  {
+    // Regression for the foreground-layering defect: an earlier heuristic treated
+    // any page with a near-full-page filled rectangle (a certificate background,
+    // a shaded page) as an "opaque scan" and left the watermark ON TOP, so it
+    // darkened table text and headings. The watermark must be behind the content
+    // on such a page too.
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([595, 842]);
+    // Near-full-page background fill (the false-positive trigger).
+    page.drawRectangle({ x: 0, y: 0, width: 595, height: 842, color: rgb(0.98, 0.97, 0.94) });
+    // Dense text lines on top of the background.
+    for (let i = 0; i < 24; i++) {
+      page.drawText(`Heading / table row ${i + 1} with dense content`, {
+        x: 40,
+        y: 800 - i * 28,
+        size: 12,
+        color: rgb(0, 0, 0),
+      });
+    }
+    const original = Buffer.from(await doc.save());
+
+    const watermarked = await watermarkPdfBuffer(original);
+    const out = await PDFDocument.load(watermarked);
+    const [onlyPage] = out.getPages();
+    const { index, streamCount } = watermarkAppearance(out, onlyPage);
+
+    check('the background-rectangle page is watermarked', index >= 0, `watermarkStream=${index}`);
+    check(
+      'the watermark is BEHIND the text on a page with a full-page background',
+      index === 0,
+      `watermarkStream=${index} of ${streamCount}`
     );
   }
 

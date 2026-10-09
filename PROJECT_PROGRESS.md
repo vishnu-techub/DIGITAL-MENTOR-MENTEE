@@ -30,7 +30,12 @@ Status legend: `PASS` | `PARTIAL` | `FAIL` | `PENDING`
   across participants. Each evidence submission records an optional, device-reported location fix
   (lat/long/accuracy) and honest capture/upload timestamps; a denied or unavailable location never
   blocks the upload. Uploaded documents and the generated Student Details Form get a separate
-  `K S R C E` watermarked copy while the original is preserved. HOD department dashboard, mentoring analytics, student/faculty CRUD, mentor
+  `K S R C E` watermarked copy while the original is preserved. The watermark is applied as a
+  **genuine background layer** (its content stream is moved behind every page's original content),
+  so tables, headings and signatures always paint on top of it and are never obscured — fixed
+  2026-10-10. On a page that is one opaque full-page scan or filled background the underlaid
+  watermark is hidden behind that opaque paint rather than covering content (an accepted, documented
+  limitation). HOD department dashboard, mentoring analytics, student/faculty CRUD, mentor
   assignment and faculty notifications are implemented and verified against two seeded departments.
   The **HOD Dashboard analytics pass** (2026-10-07) re-verified every figure against stored,
   department-scoped rows: a reporting-month selector (`?month=YYYY-MM`, server-validated) drives the
@@ -186,6 +191,48 @@ Status legend: `PASS` | `PARTIAL` | `FAIL` | `PENDING`
 ---
 
 ## Completed
+
+### K S R C E watermark is now ALWAYS a true background layer — foreground-overlay regression fixed — PASS (2026-10-10)
+
+**Reported symptom:** the `K S R C E` watermark was painting **in front of** the document. Tables,
+headings, student details and signature lines were being darkened/overlapped by the diagonal on
+generated and uploaded PDFs, instead of the watermark sitting quietly behind the content.
+
+**Root cause (confirmed by rendering the real service output, not assumed):** the immediately
+preceding fix (`8baa758`) added a heuristic `hasOpaqueFullPageBackground()` that was meant to keep
+the watermark visible on genuine scanned pages (where a behind-layered mark is hidden by the opaque
+image). It scanned each page's decoded content for a near-full-page `cm` transform (image/form
+XObject) **or** a near-full-page filled `re` rectangle, and when it matched, it *skipped*
+`placeWatermarkBehindContent()` so the watermark stayed **on top**. That heuristic
+false-positived on ordinary vector pages — any page with a full-page background fill/shaded panel,
+or a full-page container rect, matched the `re` branch — so those pages fell through to the
+foreground overlay and the watermark covered their text and tables.
+
+**Fix (`backend/src/services/document-watermark.service.ts` only):** removed the heuristic
+entirely (`hasOpaqueFullPageBackground`, its helper `drawnContentText`, the now-unused `pdf-lib`
+content-stream imports) and **always** call `placeWatermarkBehindContent(page)` after drawing. Every
+page now gets a genuine underlay: the watermark stream is moved to index `0` of the page's
+`/Contents` array, so all original operators paint over it. No top-overlay path remains for PDFs.
+
+**Tradeoff (documented, deliberate):** on a page whose content is one opaque object covering the
+whole page (a scanned/photographed certificate, or a full-page opaque background fill), the
+underlaid watermark is hidden behind that paint — it is present but not visually prominent. This is
+accepted because the hard requirement is that the watermark must **never** sit in front of document
+content; the old foreground overlay is exactly what made dense tables/headings unreadable, and no
+original content is altered to force the watermark visible. The image (JPEG/PNG) path is unchanged
+(composited, same direction/opacity).
+
+**Verification (programmatic render + pixel analysis; the model cannot view images):** rendered the
+service output with MuPDF at 2x and diffed raw pixels with `sharp` — form pages `contentChanged=0`
+(original ink byte-identical, watermark present only in white space, `contentMaxDiff=0.0`), `styled`
+full-page-background page `0` content pixels darkened (previously 30), `scantext` `0` text pixels
+darkened (previously 281), direction check `\` bottom-right → top-left PASS on 5/5 pages. Unit
+suite `test:document-watermark` **44/44** (section F now asserts the scan page is behind-layered;
+new section G asserts a full-page-background + dense-text page stays behind); runtime suite
+`test:document-watermark-runtime` **46/46** (new `watermarkStreamIndex()` assertions prove the
+served bytes are behind-layered for single-page, multi-page and regenerated pre-fix documents);
+regressions `test:runtime` 38/38 and `test:evidence-location-runtime` 74/74 green. Backend
+`tsc --noEmit` clean, `npm run build` exit 0. Exactly 3 files changed; no commit/push made.
 
 ### Sidebar / navigation independent scrolling + truly-fixed header — whole-page-scroll root cause fixed — PASS (2026-10-09)
 
@@ -1243,6 +1290,29 @@ made.
 
 ## Last Change
 
+### K S R C E watermark always behind content — foreground-overlay regression fixed (2026-10-10)
+
+- **Task:** make the `K S R C E` watermark a genuine background layer on every PDF page (behind
+  text, tables, headings and signatures) for both generated and uploaded documents, and prove it.
+- **Root cause:** commit `8baa758` added `hasOpaqueFullPageBackground()` to keep the watermark
+  visible on genuine scans, but it false-positived on ordinary vector pages — a near-full-page
+  filled `re` rectangle (background fill / shaded panel / container rect) or a full-page `cm` image
+  transform matched — so those pages skipped `placeWatermarkBehindContent()` and the watermark
+  stayed **on top** of the content.
+- **Fix (`backend/src/services/document-watermark.service.ts` only):** removed the heuristic and
+  its helper `drawnContentText` (plus the now-unused `pdf-lib` content-stream imports) and now
+  **always** call `placeWatermarkBehindContent(page)`, moving the watermark stream to index `0` of
+  each page's `/Contents`. No top-overlay path remains for PDFs; the JPEG/PNG path is unchanged.
+- **Accepted tradeoff:** on a page that is one opaque full-page scan/fill, the underlaid watermark
+  is hidden behind that paint (present but not prominent) instead of covering content.
+- **Verification:** programmatic MuPDF 2x render + `sharp` raw-pixel diff — form pages
+  `contentChanged=0`, `contentMaxDiff=0.0` (original ink byte-identical); the previous
+  false-positive `styled` page now darkens 0 content pixels (was 30) and `scantext` darkens 0 (was
+  281); direction `\` bottom-right → top-left PASS 5/5. `test:document-watermark` **44/44**,
+  `test:document-watermark-runtime` **46/46**, `test:runtime` 38/38, `test:evidence-location-runtime`
+  74/74; backend `tsc --noEmit` clean; `npm run build` exit 0. PROJECT_PROGRESS.md updated; no
+  commit/push.
+
 ### Admin-only permanent HOD deletion — implemented + all 5 demo HODs deleted, verified no reappearance (2026-10-09)
 
 - **Task:** make permanent deletion of the verified demo HOD accounts possible (Admin-only) and clean
@@ -1971,7 +2041,9 @@ Backend and frontend both build clean (`tsc` / `vite build`). All 20 suites, run
 file store (re-run in full on 2026-10-08 after the Placement / Achievement / Leaderboard pass; the
 new `test:faculty-dept-reassign` suite was added in the Admin features pass that day,
 `test:bulk-upload` was added in the Bulk Upload pass on 2026-10-09 and
-`test:hod-delete` in the Admin-only permanent HOD deletion pass on 2026-10-09):
+`test:hod-delete` in the Admin-only permanent HOD deletion pass on 2026-10-09). The
+`test:document-watermark` and `test:document-watermark-runtime` suites were updated in the
+always-behind watermark pass on 2026-10-10 (44/44 and 46/46):
 
 | Script | Result |
 |---|---|
@@ -1995,6 +2067,8 @@ new `test:faculty-dept-reassign` suite was added in the Admin features pass that
 | `test:faculty-dept-reassign` | PASS — 18 passed, 0 failed (Admin faculty department reassignment + Remove-HOD/Documents-viewer frontend contracts; port 5115) |
 | `test:bulk-upload` | PASS — 23 passed, 0 failed (bulk template contract, validation/import, error report, route order, frontend source contracts; port 5116) |
 | `test:hod-delete` | PASS — 17 passed, 0 failed (Admin-only permanent HOD deletion; port 5117) |
+| `test:document-watermark` | PASS — 44 passed, 0 failed (rendered appearance + genuine background layering; scanned and full-page-background pages both behind) |
+| `test:document-watermark-runtime` | PASS — 46 passed, 0 failed (real upload/preview/download/delete + pre-fix regeneration; served bytes proven behind-layered on every page) |
 
 `test:faculty-notifications` (`backend/src/tests/faculty-notifications.test.ts`) is the dedicated
 suite for the Faculty → HOD notification work above. It seeds **two** departments (CSE and ECE),
@@ -2256,3 +2330,4 @@ drives `setHodStatus` with no `deleteHod` route; `AdminStudentDocuments` viewer 
 | 2026-10-09 | PASS | BUG FIX — K S R C E watermark not visible in downloaded/previewed documents. **Root causes (both fixed):** (1) the watermark was painted but far too faint — measured by rendering the real service output with MuPDF at 2x: the old 0.17 opacity over a 0.45 grey composited to ~luminance 231 on white (contrast ~1.10:1), effectively invisible on screen; (2) documents uploaded before the feature (and any record whose copy was lost) had no `watermarkedFileUrl`, so preview/download silently fell back to the untouched original. **Fix (smallest targeted):** `services/document-watermark.service.ts` — opacity 0.17 → **0.32**, colour 0.35 → **0.35 graphite** (both PDF and the `sharp`/SVG image path share the same constants, derived from `WATERMARK_COLOR`); still centred, −45°, original untouched, images not resized. `document.controller.ts` — new `watermarkedFileNameFor()` (one source of truth for `<stem>-watermarked<ext>`), new `ensureWatermarkedCopy()` that lazily derives the copy from the ORIGINAL on first access and persists `watermarkedFileUrl`/`watermarkStatus`/`watermarkText`/`watermarkAppliedAt` (never overwrites the original), `resolveServedDocumentPath()` is now async and prefers it, and both `/file` and legacy `/uploads/*` responses now send `Cache-Control: no-store` so a stale pre-watermark copy can never be reused. Evidence photos, GPS/place-name/timestamps, auth/ownership, unsupported-format handling and delete-both-copies are unchanged. **Verification:** rendered-pixel evidence via `mupdf` (temp sandbox, not committed): new stroke luminance **202** (contrast 1.24:1) on every page, bbox centre ≈ page centre, diagonal ≈45°; image path luminance 201. New regression checks derive the renderer's composited stroke from the PDF's own ExtGState `ca` + fill colour and fail the old 0.17 setting. `test:document-watermark` **33/33** (+11 rendered-appearance checks), `test:document-watermark-runtime` **43/43** (new section H proves a simulated pre-fix record is regenerated on access and served watermarked, original byte-identical; preview/download `no-store`), `test:evidence-location` 33/33, `test:evidence-location-runtime` 74/74, `test:mentoring-evidence` 100/100, `test:runtime` 38/38; backend `tsc` clean. **Honest limitation:** this agent cannot view images, so "visual inspection" was done as objective rendered-pixel/geometry analysis and before/after PNG renders were written for human review (temp path, not committed); no claim of human visual review is made. No secrets/.env/artifacts committed; no commit/push made. |
 | 2026-10-09 | PASS | BUG FIX — K S R C E watermark too prominent, wrong direction on image documents, and overlaying text/tables/signatures. **Root causes (both confirmed by rendering the real service output with MuPDF at 2x, not assumed):** (1) *prominence/overlap* — the 0.32-opacity graphite watermark was painted ON TOP of the page (its `pdf-lib` content stream was appended last), so the diagonal crossed body text, multi-column tables and signature lines (rendered stroke mean luminance ~203, contrast ~1.24:1). (2) *direction* — the `sharp`/SVG **image** path used `rotate(-45)` in SVG's y-DOWN space, which renders the OPPOSITE `/` diagonal (measured principal-axis slope −1.01); the **PDF** path (y-UP) was already the required `\` (bottom-right → top-left). **Fix (only `services/document-watermark.service.ts`):** opacity 0.32 → **0.12**, colour 0.35 → **0.40 light neutral grey**, watermark size 0.14 → **0.10** of the shorter page side (image font 0.12 → 0.10); new `placeWatermarkBehindContent()` moves the just-appended watermark stream to the FRONT of each page's `/Contents` array so every original operator (text, tables, images) paints on top — true background layering; new `WATERMARK_IMAGE_ROTATION_DEGREES = 45` so the SVG image path renders the SAME bottom-right → top-left `\` diagonal as the PDF. Controller/routes/model unchanged; separate watermarked copy, original-untouched guarantee, unsupported-format handling, evidence-photo exclusion and preview/download are all unchanged. **Verification (temp MuPDF sandbox, not committed):** representative 3-page PDF (headings, paragraphs, 4/5-column tables, 7pt text, signature lines, whitespace) — BEFORE mean stroke luminance ~203.4–204.3 / contrast ~1.24 / watermark stream LAST; AFTER mean stroke luminance ~237.9 / contrast ~1.07 / watermark stream index **0** (behind); diagonal measured `\` (slope ≈ +1.0) on every page, bbox centre ≈ page centre, original buffer byte-for-byte identical, every page watermarked. Image path: was `/` (slope −1.01, luminance 206.7) now `\` (slope +0.99, luminance 238.4). **Tests:** `test:document-watermark` **37/37** (new "painted BEHIND the content" assertion, subtle-but-present 0.08–0.15 alpha / 230–245 luminance bounds, new image backslash-direction pixel test); `test:document-watermark-runtime` **43/43**; regressions `test:critical` 12/12, `test:evidence-location` 33/33, `test:evidence-location-runtime` 74/74, `test:mentoring-evidence` 100/100, `test:runtime` 38/38; backend `tsc` + build clean; frontend `tsc` + `vite build` clean. **Honest limitation:** the model cannot visually view images, so direction/legibility were confirmed programmatically (PCA principal-axis + luminance/contrast), and before/after PNGs were produced for human review. Opacity is intentionally inside the requested 0.08–0.12 band (`WATERMARK_OPACITY`, one constant to tune). Committed + pushed to `temp`. |
 | 2026-10-09 | PASS | FOLLOW-UP to the K S R C E watermark fix — background-layering edge case. Rendering a PDF whose page is a single opaque full-page scan proved that a behind-layered watermark is **completely hidden** (0 changed pixels), which would violate "watermark every page, remain visible". Added a targeted hybrid in `services/document-watermark.service.ts`: `hasOpaqueFullPageBackground()` scans each page's existing content for a near-full-page `cm` transform (image/form XObject) or a near-full-page filled `re` rectangle; those scan pages keep the **subtle top overlay**, while normal vector pages still get the watermark **behind** the content (first in `/Contents` via `placeWatermarkBehindContent()`). Re-verified with MuPDF: the scan page now shows the watermark (16,309 changed pixels, max darkening 17) while every vector page remains behind (watermark stream index 0, `\` diagonal, mean luminance 237.9). New test section F asserts the scan page is watermarked, ON TOP and still subtle — `test:document-watermark` **42/42**; `test:document-watermark-runtime` **43/43**; backend `tsc` + build clean. Committed + pushed to `temp`. |
+| 2026-10-10 | PASS | BUG FIX — K S R C E watermark must be a true BACKGROUND layer on every page (was overlaying tables/headings/signatures). **Root cause (confirmed by rendering the real service output, not assumed):** the previous fix `8baa758` added `hasOpaqueFullPageBackground()` to keep the watermark visible on genuine scans, but it false-positived on ordinary vector pages — any near-full-page filled `re` rectangle (background fill / shaded panel / container rect) or full-page `cm` image transform matched — so those pages *skipped* `placeWatermarkBehindContent()` and the watermark stayed **on top**, darkening content. **Fix (`backend/src/services/document-watermark.service.ts` only):** removed the heuristic entirely (`hasOpaqueFullPageBackground`, helper `drawnContentText`, unused `pdf-lib` content-stream imports) and now **always** call `placeWatermarkBehindContent(page)` — the watermark stream is moved to index `0` of each page's `/Contents`, so all original operators paint over it; no top-overlay path remains for PDFs. Image (JPEG/PNG) path unchanged. **Accepted, documented tradeoff:** on a page that is one opaque full-page scan/fill the underlaid watermark is hidden behind that paint (present but not prominent) rather than covering content; the hard requirement is that it never sits in front of content. **Verification (programmatic MuPDF render + sharp pixel diff; model cannot view images):** form pages `contentChanged=0`, `contentMaxDiff=0.0` (original ink byte-identical; watermark only in white space); `styled` full-page-background page 0 content pixels darkened (was 30); `scantext` 0 text pixels darkened (was 281); direction `\` bottom-right → top-left PASS 5/5. Suites: `test:document-watermark` **44/44** (section F now asserts the scan page is behind; new section G asserts a full-page-background + dense-text page stays behind), `test:document-watermark-runtime` **46/46** (new `watermarkStreamIndex()` assertions on the served bytes for single-page, multi-page and regenerated pre-fix docs), regressions `test:runtime` 38/38 and `test:evidence-location-runtime` 74/74. Backend `tsc --noEmit` clean; `npm run build` exit 0. Exactly 3 files changed (1 service + 2 tests); original uploads never modified; PROJECT_PROGRESS.md updated. No commit/push made. |
