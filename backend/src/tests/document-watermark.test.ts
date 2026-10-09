@@ -373,6 +373,46 @@ async function main() {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  console.log('\nF. Opaque full-page scan: watermark stays ON TOP so it is not hidden');
+  // ---------------------------------------------------------------------------
+  {
+    // A page whose content is one opaque image covering the whole page (a scan)
+    // must NOT get a behind-layered watermark, or it would be invisible. The
+    // service detects the near-full-page object and keeps the subtle watermark
+    // on top instead.
+    const doc = await PDFDocument.create();
+    const png = await sharp({
+      create: { width: 40, height: 56, channels: 3, background: '#f2efe9' },
+    })
+      .png()
+      .toBuffer();
+    const img = await doc.embedPng(png);
+    const page = doc.addPage([595, 842]);
+    page.drawImage(img, { x: 0, y: 0, width: 595, height: 842 });
+    const original = Buffer.from(await doc.save());
+
+    const watermarked = await watermarkPdfBuffer(original);
+    const out = await PDFDocument.load(watermarked);
+    const [onlyPage] = out.getPages();
+    const { alpha, grey, index, streamCount } = watermarkAppearance(out, onlyPage);
+
+    check('the scan page is still watermarked', index >= 0, `watermarkStream=${index}`);
+    check(
+      'the watermark is ON TOP of the full-page image (not hidden behind it)',
+      index === streamCount - 1,
+      `watermarkStream=${index} of ${streamCount}`
+    );
+    check('the scan watermark is still subtle (alpha <= 0.15)', (alpha ?? 1) <= 0.15, `alpha=${alpha}`);
+    check('the scan watermark is still present (alpha >= 0.08)', (alpha ?? 0) >= 0.08, `alpha=${alpha}`);
+    const luminance = compositedLuminance(alpha ?? 0, grey ?? 1);
+    check(
+      'the scan watermark composites to a subtle grey',
+      luminance >= 230 && luminance <= 245,
+      `luminance=${luminance.toFixed(1)}`
+    );
+  }
+
   console.log(`\n=== ${pass} passed, ${fail} failed ===\n`);
   if (failures.length) {
     console.log('Failures:');

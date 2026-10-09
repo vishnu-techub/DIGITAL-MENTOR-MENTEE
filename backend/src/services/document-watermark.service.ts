@@ -12,10 +12,11 @@
  *   through here — see evidence.service.ts.
  *
  * SUPPORTED FORMATS
- *   - application/pdf  -> every page is watermarked. The watermark operators are
- *                         placed BEFORE the page's existing content stream so
- *                         the document draws on top of them; page dimensions and
- *                         existing content are preserved.
+ *   - application/pdf  -> every page is watermarked. Vector pages get the
+ *                         watermark BEHIND their content (the document paints on
+ *                         top of it); a page that is one opaque full-page scan
+ *                         gets it as a subtle top overlay so it stays visible.
+ *                         Page dimensions and existing content are preserved.
  *   - image/jpeg, image/png -> the watermark is composited with sharp at the
  *                         same direction/opacity; dimensions are preserved.
  *   Anything else is reported as `unsupported` and the caller keeps the
@@ -26,7 +27,17 @@
  * TEMPORARY LOCAL FILE STORAGE. See PROJECT_PROGRESS.md.
  */
 
-import { PDFArray, PDFDocument, PDFPage, StandardFonts, degrees, rgb } from 'pdf-lib';
+import {
+  PDFArray,
+  PDFDocument,
+  PDFPage,
+  PDFRawStream,
+  PDFStream,
+  StandardFonts,
+  decodePDFRawStream,
+  degrees,
+  rgb,
+} from 'pdf-lib';
 import sharp from 'sharp';
 
 /** Exact watermark text mandated by the institution. */
@@ -86,6 +97,57 @@ export function isWatermarkableMime(mime: string | undefined | null): boolean {
   return (WATERMARKABLE_MIME as readonly string[]).includes(normalised);
 }
 
+/** Decode the page's CURRENT content-stream operators (before any watermark). */
+function drawnContentText(doc: PDFDocument, page: PDFPage): string {
+  const contents = page.node.Contents();
+  const refs: any[] = contents instanceof PDFArray ? contents.asArray() : contents ? [contents] : [];
+  let text = '';
+  for (const ref of refs) {
+    const stream: any = doc.context.lookup(ref);
+    if (!stream) continue;
+    let bytes: Uint8Array | null = null;
+    if (stream instanceof PDFRawStream) {
+      try {
+        bytes = decodePDFRawStream(stream).decode();
+      } catch {
+        bytes = null;
+      }
+    } else if (stream instanceof PDFStream) {
+      bytes = stream.getContents();
+    }
+    if (bytes) text += Buffer.from(bytes).toString('latin1') + '\n';
+  }
+  return text;
+}
+
+/**
+ * True when the page paints something scaled across (almost) the whole page —
+ * the signature of a scanned/photographed document. A watermark placed BEHIND
+ * such an opaque object would be completely hidden, so those pages must keep the
+ * subtle watermark ON TOP instead. Detected by scanning the existing content for
+ * a near-full-page `cm` transform (image/form XObject) or a near-full-page
+ * filled rectangle (`re`), both in page points.
+ */
+function hasOpaqueFullPageBackground(text: string, width: number, height: number): boolean {
+  const thresholdW = width * 0.7;
+  const thresholdH = height * 0.7;
+
+  const cm = /([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+cm\b/g;
+  let match: RegExpExecArray | null;
+  while ((match = cm.exec(text))) {
+    if (Math.abs(Number(match[1])) >= thresholdW && Math.abs(Number(match[4])) >= thresholdH) return true;
+  }
+
+  if (/(?:^|\s)(?:f\*?|F)(?=\s|$)/.test(text)) {
+    const re = /([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+re\b/g;
+    while ((match = re.exec(text))) {
+      if (Math.abs(Number(match[3])) >= thresholdW && Math.abs(Number(match[4])) >= thresholdH) return true;
+    }
+  }
+
+  return false;
+}
+
 /**
  * Move the content stream that `page.drawText` just appended to the FRONT of
  * the page's `/Contents` array.
@@ -108,9 +170,11 @@ function placeWatermarkBehindContent(page: PDFPage): void {
  * Overlay `K S R C E` on every page of a PDF.
  *
  * The text is drawn once per page, centred on the page, rotated -45 degrees and
- * semi-transparent. It is then moved behind the page's existing content stream,
- * so page size, orientation, text, tables and images are untouched and always
- * stay readable on top of the watermark.
+ * semi-transparent. On normal pages it is moved behind the page's existing
+ * content stream so text, tables and signatures always paint on top of it; on a
+ * page that is one opaque full-page scan it stays on top, because behind it
+ * would be hidden. Page size, orientation and existing content are never
+ * changed.
  */
 export async function watermarkPdfBuffer(input: Buffer): Promise<Buffer> {
   const pdf = await PDFDocument.load(input, {
@@ -123,6 +187,11 @@ export async function watermarkPdfBuffer(input: Buffer): Promise<Buffer> {
   for (const page of pages) {
     const { width, height } = page.getSize();
     if (width <= 0 || height <= 0) continue;
+
+    // Scanned/photographed pages are one opaque image covering the page; a
+    // background watermark would vanish behind it, so those pages keep the
+    // watermark as a subtle top overlay instead (see the helper for details).
+    const opaqueBackground = hasOpaqueFullPageBackground(drawnContentText(pdf, page), width, height);
 
     // Scale the watermark to the page, keeping it readable on both A4 and
     // small custom sizes, and clamped so it never dominates the page.
@@ -151,8 +220,10 @@ export async function watermarkPdfBuffer(input: Buffer): Promise<Buffer> {
       rotate: degrees(WATERMARK_ANGLE_DEGREES),
     });
 
-    // pdf-lib appends the text above the existing content; move it behind.
-    placeWatermarkBehindContent(page);
+    // pdf-lib appends the text ABOVE the existing content. For normal vector
+    // pages move it behind the content so text/tables always cover it; for an
+    // opaque full-page scan keep it on top (behind would hide it entirely).
+    if (!opaqueBackground) placeWatermarkBehindContent(page);
   }
 
   const bytes = await pdf.save({ addDefaultPage: false, updateFieldAppearances: false });
