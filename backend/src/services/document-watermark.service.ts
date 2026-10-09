@@ -2,7 +2,8 @@
  * KSRCE DOCUMENT WATERMARK
  * ---------------------------------------------------------------------------
  * Applies the institutional watermark `K S R C E` diagonally across the centre
- * of a document, at approximately -45 degrees, in semi-transparent text.
+ * of a document, running from the BOTTOM-RIGHT toward the TOP-LEFT (a
+ * backslash "\"), in subtle semi-transparent text.
  *
  * SCOPE
  *   Documents only. The original uploaded bytes are NEVER modified: this
@@ -11,10 +12,12 @@
  *   through here — see evidence.service.ts.
  *
  * SUPPORTED FORMATS
- *   - application/pdf  -> every page is watermarked (pdf-lib overlay, page
- *                         dimensions and existing content are preserved).
- *   - image/jpeg, image/png -> the watermark is composited on top with sharp;
- *                         dimensions are preserved.
+ *   - application/pdf  -> every page is watermarked. The watermark operators are
+ *                         placed BEFORE the page's existing content stream so
+ *                         the document draws on top of them; page dimensions and
+ *                         existing content are preserved.
+ *   - image/jpeg, image/png -> the watermark is composited with sharp at the
+ *                         same direction/opacity; dimensions are preserved.
  *   Anything else is reported as `unsupported` and the caller keeps the
  *   original untouched. A processing failure is reported as `failed`; it never
  *   throws, so an upload is never lost just because a watermark could not be
@@ -23,25 +26,42 @@
  * TEMPORARY LOCAL FILE STORAGE. See PROJECT_PROGRESS.md.
  */
 
-import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
+import { PDFArray, PDFDocument, PDFPage, StandardFonts, degrees, rgb } from 'pdf-lib';
 import sharp from 'sharp';
 
 /** Exact watermark text mandated by the institution. */
 export const WATERMARK_TEXT = 'K S R C E';
 
 /**
- * Watermark text colour (a neutral graphite grey) and opacity.
+ * Watermark appearance — deliberately subtle so document text, tables and
+ * signatures stay fully readable.
  *
- * Visibility note: the earlier 0.17 opacity over a mid-grey rendered at about
- * luminance 231 on white (contrast ~1.10:1) — present in the bytes but almost
- * invisible on screen, which is what users reported. 0.32 over this darker
- * graphite composites to ~luminance 205 (~1.24:1): clearly legible and still
- * light enough to read the document underneath. Covered by a rendered-output
- * regression test in tests/document-watermark.test.ts.
+ * At 0.12 opacity over this light neutral grey the composited stroke lands at
+ * roughly luminance 237 on white (contrast ~1.08:1): clearly present in the
+ * white space of a page, but far too light to compete with document ink. The
+ * PDF path additionally paints the watermark BEFORE the page content, so any
+ * text, table cell or signature line always covers it.
+ *
+ * These values are covered by rendered-output regressions in
+ * tests/document-watermark.test.ts.
  */
-const WATERMARK_COLOR = rgb(0.35, 0.35, 0.35);
-const WATERMARK_OPACITY = 0.32;
+const WATERMARK_COLOR = rgb(0.4, 0.4, 0.4);
+const WATERMARK_OPACITY = 0.12;
+
+/**
+ * PDF user space has y pointing UP, so -45 degrees makes the text run from the
+ * BOTTOM-RIGHT toward the TOP-LEFT (a backslash "\"). This was verified by
+ * rendering the real service output and measuring the ink, not inferred from
+ * the rotation sign.
+ */
 const WATERMARK_ANGLE_DEGREES = -45;
+
+/**
+ * SVG/canvas space has y pointing DOWN, so the SAME visual diagonal (backslash,
+ * bottom-right to top-left) needs +45 here. Using the PDF's -45 in the SVG
+ * produced the opposite "/" slant — the direction defect this constant fixes.
+ */
+const WATERMARK_IMAGE_ROTATION_DEGREES = 45;
 
 export type WatermarkStatus = 'applied' | 'unsupported' | 'failed';
 
@@ -67,11 +87,30 @@ export function isWatermarkableMime(mime: string | undefined | null): boolean {
 }
 
 /**
+ * Move the content stream that `page.drawText` just appended to the FRONT of
+ * the page's `/Contents` array.
+ *
+ * PDF paints a page's content streams in array order, so placing the watermark
+ * stream first means every other stream (the original document) is painted on
+ * top of it — the watermark sits in the background and never covers text.
+ */
+function placeWatermarkBehindContent(page: PDFPage): void {
+  const contents = page.node.Contents();
+  if (!(contents instanceof PDFArray)) return;
+  const size = contents.size();
+  if (size < 2) return; // Already front (e.g. a blank page).
+  const watermarkRef = contents.get(size - 1);
+  contents.remove(size - 1);
+  contents.insert(0, watermarkRef);
+}
+
+/**
  * Overlay `K S R C E` on every page of a PDF.
  *
  * The text is drawn once per page, centred on the page, rotated -45 degrees and
- * semi-transparent. `pdf-lib` only draws over the existing content, so page
- * size, orientation and the original text/images are untouched.
+ * semi-transparent. It is then moved behind the page's existing content stream,
+ * so page size, orientation, text, tables and images are untouched and always
+ * stay readable on top of the watermark.
  */
 export async function watermarkPdfBuffer(input: Buffer): Promise<Buffer> {
   const pdf = await PDFDocument.load(input, {
@@ -87,7 +126,7 @@ export async function watermarkPdfBuffer(input: Buffer): Promise<Buffer> {
 
     // Scale the watermark to the page, keeping it readable on both A4 and
     // small custom sizes, and clamped so it never dominates the page.
-    const size = Math.max(14, Math.min(width, height) * 0.14);
+    const size = Math.max(12, Math.min(width, height) * 0.1);
     const textWidth = font.widthOfTextAtSize(WATERMARK_TEXT, size);
     const textHeight = font.heightAtSize(size);
 
@@ -111,6 +150,9 @@ export async function watermarkPdfBuffer(input: Buffer): Promise<Buffer> {
       opacity: WATERMARK_OPACITY,
       rotate: degrees(WATERMARK_ANGLE_DEGREES),
     });
+
+    // pdf-lib appends the text above the existing content; move it behind.
+    placeWatermarkBehindContent(page);
   }
 
   const bytes = await pdf.save({ addDefaultPage: false, updateFieldAppearances: false });
@@ -121,7 +163,9 @@ export async function watermarkPdfBuffer(input: Buffer): Promise<Buffer> {
  * Composite the `K S R C E` watermark over a JPEG or PNG.
  *
  * The output keeps the input's format and pixel dimensions; only a
- * semi-transparent overlay is added. The original buffer is never mutated.
+ * semi-transparent overlay is added. The original buffer is never mutated. The
+ * SVG rotation is chosen so the image watermark runs along the SAME
+ * bottom-right -> top-left diagonal as the PDF watermark.
  */
 export async function watermarkImageBuffer(input: Buffer, mime: string): Promise<Buffer> {
   const meta = await sharp(input, { failOn: 'none' }).metadata();
@@ -137,14 +181,14 @@ export async function watermarkImageBuffer(input: Buffer, mime: string): Promise
   // Let sharp infer the output format from the source; the SVG overlay is scaled
   // to the exact pixel dimensions so nothing is resized. The overlay uses the
   // SAME colour/opacity as the PDF path so images and PDFs read identically.
-  const fontSize = Math.max(18, Math.round(Math.min(width, height) * 0.12));
+  const fontSize = Math.max(16, Math.round(Math.min(width, height) * 0.1));
   const grey255 = Math.round(Number(WATERMARK_COLOR.red) * 255);
   const svg = Buffer.from(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
       `<text x="${width / 2}" y="${height / 2}" ` +
       `font-family="sans-serif" font-size="${fontSize}" font-weight="700" ` +
       `fill="rgba(${grey255},${grey255},${grey255},${WATERMARK_OPACITY})" text-anchor="middle" dominant-baseline="middle" ` +
-      `transform="rotate(${WATERMARK_ANGLE_DEGREES} ${width / 2} ${height / 2})">${WATERMARK_TEXT}</text>` +
+      `transform="rotate(${WATERMARK_IMAGE_ROTATION_DEGREES} ${width / 2} ${height / 2})">${WATERMARK_TEXT}</text>` +
       `</svg>`
   );
 

@@ -89,24 +89,56 @@ async function makePdf(pageSizes: Array<[number, number]>): Promise<Buffer> {
 }
 
 /**
- * Read the two operators that decide how dark the watermark actually LOOKS when
- * a PDF renderer paints the page:
- *   - the fill alpha (`ca`) from the ExtGState applied with `gs`, and
- *   - the grey level of the text fill colour (`r g b rg`) drawn last, which is
- *     the watermark because pdf-lib appends it over the existing content.
+ * Read the operators of the content stream that ACTUALLY contains the
+ * watermark and derive what a renderer paints:
+ *   - the fill alpha (`ca`) from the ExtGState it applies with `gs`, and
+ *   - the grey level of its text fill colour (`r g b rg`).
  *
- * This is the rendered appearance expressed from the document itself, and it is
- * what a pixel test would otherwise measure: compositing the fill onto white
- * gives 255 - alpha * (255 - grey*255).
+ * The watermark is painted BEHIND the document (first in `/Contents`), so it is
+ * no longer the last stream — we must find the stream that carries it instead
+ * of assuming the last fill colour belongs to it.
+ *
+ * Compositing the fill onto white gives 255 - alpha * (255 - grey*255).
  */
-function watermarkAppearance(doc: PDFDocument, page: any): { alpha: number | null; grey: number | null } {
+function watermarkAppearance(
+  doc: PDFDocument,
+  page: any
+): { alpha: number | null; grey: number | null; index: number; firstContentIndex: number; streamCount: number } {
+  const contents = page.node.Contents();
+  const refs: any[] = contents instanceof PDFArray ? contents.asArray() : contents ? [contents] : [];
+
+  const streams: Array<{ text: string; hasWatermark: boolean }> = refs.map((ref) => {
+    const stream: any = doc.context.lookup(ref);
+    let bytes: Uint8Array | null = null;
+    if (stream instanceof PDFRawStream) {
+      try {
+        bytes = decodePDFRawStream(stream).decode();
+      } catch {
+        bytes = stream.getContents();
+      }
+    } else if (stream instanceof PDFStream) {
+      bytes = stream.getContents();
+    }
+    const text = bytes ? Buffer.from(bytes).toString('latin1') : '';
+    return { text, hasWatermark: text.includes(WATERMARK_HEX) };
+  });
+
+  const index = streams.findIndex((s) => s.hasWatermark);
+  const text = index >= 0 ? streams[index].text : '';
+  const firstContentIndex = streams.findIndex((s) => !s.hasWatermark && s.text.length > 24);
+
+  const fills = [...text.matchAll(/([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+rg/g)];
+  const last = fills.length ? fills[fills.length - 1] : null;
+  const grey = last ? (Number(last[1]) + Number(last[2]) + Number(last[3])) / 3 : null;
+
   let alpha: number | null = null;
-  const resources = page.node.Resources();
-  const extGStateRef = resources?.lookup(PDFName.of('ExtGState'));
-  const extGState = doc.context.lookup(extGStateRef);
-  if (extGState instanceof PDFDict) {
-    for (const [, ref] of extGState.entries()) {
-      const state = doc.context.lookup(ref);
+  const gsName = text.match(/\/(GS[^\s/]+)\s+gs/)?.[1];
+  if (gsName) {
+    const resources = page.node.Resources();
+    const extGStateRef = resources?.lookup(PDFName.of('ExtGState'));
+    const extGState = doc.context.lookup(extGStateRef);
+    if (extGState instanceof PDFDict) {
+      const state = doc.context.lookup(extGState.get(PDFName.of(gsName)));
       if (state instanceof PDFDict) {
         const ca: any = state.get(PDFName.of('ca'));
         if (ca && typeof ca.asNumber === 'function') alpha = ca.asNumber();
@@ -114,16 +146,51 @@ function watermarkAppearance(doc: PDFDocument, page: any): { alpha: number | nul
     }
   }
 
-  const text = pageContentText(doc, page);
-  const fills = [...text.matchAll(/([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+rg/g)];
-  const last = fills.length ? fills[fills.length - 1] : null;
-  const grey = last ? (Number(last[1]) + Number(last[2]) + Number(last[3])) / 3 : null;
-  return { alpha, grey };
+  return { alpha, grey, index, firstContentIndex, streamCount: streams.length };
 }
 
 /** Luminance on white (0=black, 255=white) of the watermark as actually painted. */
 function compositedLuminance(alpha: number, grey: number): number {
   return 255 - alpha * (255 - grey * 255);
+}
+
+/**
+ * Principal-axis slope of every non-white pixel in a raw RGB image, in image
+ * coordinates (y-down). A backslash "\" (bottom-right <-> top-left) has a
+ * POSITIVE slope; a slash "/" has a negative one. Used to prove the rendered
+ * watermark direction, not just the rotation sign in the bytes.
+ */
+function inkSlope(raw: Buffer, width: number, height: number, channels: number): number {
+  const pts: Array<[number, number]> = [];
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const i = (y * width + x) * channels;
+      const l = 0.299 * raw[i] + 0.587 * raw[i + 1] + 0.114 * raw[i + 2];
+      if (l < 250) pts.push([x, y]);
+    }
+  }
+  const n = pts.length;
+  if (n === 0) return 0;
+  let mx = 0;
+  let my = 0;
+  for (const [x, y] of pts) {
+    mx += x;
+    my += y;
+  }
+  mx /= n;
+  my /= n;
+  let sxx = 0;
+  let syy = 0;
+  let sxy = 0;
+  for (const [x, y] of pts) {
+    const dx = x - mx;
+    const dy = y - my;
+    sxx += dx * dx;
+    syy += dy * dy;
+    sxy += dx * dy;
+  }
+  const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  return Math.tan(theta);
 }
 
 async function main() {
@@ -153,6 +220,13 @@ async function main() {
     check(
       'the watermark is semi-transparent (an ExtGState is applied)',
       /\/GS[\s\S]*gs/.test(text) || /gs\b/.test(text)
+    );
+
+    const layout = watermarkAppearance(out, out.getPages()[0]);
+    check(
+      'the watermark is painted BEHIND the document content (first stream in /Contents)',
+      layout.index === 0 && (layout.firstContentIndex === -1 || layout.index < layout.firstContentIndex),
+      `watermarkStream=${layout.index} firstContentStream=${layout.firstContentIndex} of ${layout.streamCount}`
     );
   }
 
@@ -194,17 +268,27 @@ async function main() {
     check('image dimensions are preserved', meta.width === 640 && meta.height === 480, `${meta.width}x${meta.height}`);
     check('the output is still a PNG', String(meta.format) === 'png', String(meta.format));
 
-    const raw = await sharp(result.buffer!).raw().toBuffer();
+    const { data: raw, info: rawInfo } = await sharp(result.buffer!).raw().toBuffer({ resolveWithObject: true });
+    const channels = rawInfo.channels;
     let nonWhite = 0;
     let darkest = 255;
-    for (let i = 0; i < raw.length; i += 1) {
-      if (raw[i] < 250) nonWhite += 1;
-      if (raw[i] < darkest) darkest = raw[i];
+    for (let i = 0; i < raw.length; i += channels) {
+      const l = 0.299 * raw[i] + 0.587 * raw[i + 1] + 0.114 * raw[i + 2];
+      if (l < 250) nonWhite += 1;
+      if (l < darkest) darkest = l;
     }
     check('the watermark really added pixels (not a no-op overlay)', nonWhite > 100, `${nonWhite} non-white samples`);
-    // A watermark that is present but almost white is what users reported as
-    // "not visible". The stroke must be dark enough to read on white paper.
-    check('the image watermark is visibly dark, not near-white', darkest <= 215, `darkest=${darkest}`);
+    check(
+      'the image watermark is subtle, not a heavy overlay (darkest between 225 and 248)',
+      darkest >= 225 && darkest <= 248,
+      `darkest=${darkest.toFixed(1)} (255=white)`
+    );
+    const slope = inkSlope(raw, rawInfo.width, rawInfo.height, channels);
+    check(
+      'the image watermark runs bottom-right to top-left (backslash, positive slope)',
+      slope > 0.5,
+      `principal-axis slope=${slope.toFixed(3)}`
+    );
   }
 
   {
@@ -241,13 +325,13 @@ async function main() {
   }
 
   // ---------------------------------------------------------------------------
-  console.log('\nE. Rendered appearance: the watermark is actually VISIBLE, not just present');
+  console.log('\nE. Rendered appearance: the watermark is SUBTLE, present, and behind content');
   // ---------------------------------------------------------------------------
   {
-    // The reported bug: the watermark was in the bytes but too faint to see.
-    // These assertions read the operators a renderer paints and reproduce the
-    // composited stroke luminance on white. The old 0.17-opacity/0.45-grey
-    // watermark composited to ~231 (contrast ~1.10:1) and fails this test.
+    // The fix under test: the watermark must be light enough not to compete with
+    // document ink, still present in white space, and painted behind the page
+    // content. These assertions read the operators a renderer uses and
+    // reproduce the composited stroke luminance on white.
     const sizes: Array<[number, number]> = [
       [595, 842],
       [842, 595],
@@ -256,30 +340,35 @@ async function main() {
     const watermarked = await watermarkPdfBuffer(original);
     const out = await PDFDocument.load(watermarked);
 
-    for (const [index, page] of out.getPages().entries()) {
-      const { alpha, grey } = watermarkAppearance(out, page);
-      check(`page ${index + 1}: the renderer's fill alpha is readable`, alpha !== null, String(alpha));
+    for (const [pageIndex, page] of out.getPages().entries()) {
+      const { alpha, grey, index: wmIndex, firstContentIndex } = watermarkAppearance(out, page);
+      check(`page ${pageIndex + 1}: the renderer's fill alpha is readable`, alpha !== null, String(alpha));
       check(
-        `page ${index + 1}: the watermark is semi-transparent but not near-invisible (alpha >= 0.28)`,
-        (alpha ?? 0) >= 0.28,
+        `page ${pageIndex + 1}: the watermark is subtle (alpha <= 0.15)`,
+        (alpha ?? 1) <= 0.15,
         `alpha=${alpha}`
       );
       check(
-        `page ${index + 1}: the watermark never becomes a solid block (alpha <= 0.45)`,
-        (alpha ?? 1) <= 0.45,
+        `page ${pageIndex + 1}: the watermark is still present, not disabled (alpha >= 0.08)`,
+        (alpha ?? 0) >= 0.08,
         `alpha=${alpha}`
       );
       check(
-        `page ${index + 1}: the text fill is clearly darker than white (grey <= 0.40)`,
-        (grey ?? 1) <= 0.4,
+        `page ${pageIndex + 1}: the fill is a neutral grey, not black (0.2 <= grey <= 0.6)`,
+        (grey ?? 0) >= 0.2 && (grey ?? 1) <= 0.6,
         `grey=${grey}`
       );
 
       const luminance = compositedLuminance(alpha ?? 0, grey ?? 1);
       check(
-        `page ${index + 1}: composited on white the stroke is clearly visible (luminance <= 215)`,
-        luminance <= 215,
+        `page ${pageIndex + 1}: composited on white the stroke is subtle but present (230 <= luminance <= 245)`,
+        luminance >= 230 && luminance <= 245,
         `luminance=${luminance.toFixed(1)} (255=invisible white)`
+      );
+      check(
+        `page ${pageIndex + 1}: the watermark stream is behind the page content`,
+        wmIndex === 0 && (firstContentIndex === -1 || wmIndex < firstContentIndex),
+        `watermarkStream=${wmIndex} firstContentStream=${firstContentIndex}`
       );
     }
   }
