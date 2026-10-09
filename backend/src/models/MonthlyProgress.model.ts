@@ -1,8 +1,8 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
 
-export interface IMonthlyProgress extends Document {
-  student: mongoose.Types.ObjectId;
-  mentor: mongoose.Types.ObjectId;
+export interface IMonthlyProgress extends LocalDocument {
+  student: LocalId;
+  mentor: LocalId;
   academicYear: string;
   monthName: string;
   academicRating: number;
@@ -22,13 +22,13 @@ export interface IMonthlyProgress extends Document {
 const MonthlyProgressSchema = new Schema<IMonthlyProgress>(
   {
     student: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Student',
       required: true,
       index: true,
     },
     mentor: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Faculty',
       required: true,
       index: true,
@@ -102,4 +102,4 @@ const MonthlyProgressSchema = new Schema<IMonthlyProgress>(
 // Compound Index
 MonthlyProgressSchema.index({ academicYear: 1, monthName: 1 });
 
-export const MonthlyProgress = mongoose.model<IMonthlyProgress>('MonthlyProgress', MonthlyProgressSchema);
+export const MonthlyProgress = defineModel<IMonthlyProgress>('MonthlyProgress', MonthlyProgressSchema);

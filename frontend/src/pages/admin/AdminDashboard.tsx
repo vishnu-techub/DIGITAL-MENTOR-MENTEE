@@ -6,6 +6,12 @@ import { Modal } from '../../components/common/Modal';
 import { EmptyState } from '../../components/common/EmptyState';
 import { Skeleton } from '../../components/common/Skeleton';
 import { StudentDetailsView } from '../common/StudentDetailsView';
+import { PageHeader } from '../../components/common/PageHeader';
+import { AdminMentoringDashboard } from './AdminMentoringDashboard';
+import { AdminHodManagement } from './AdminHodManagement';
+import { AdminInternalMarks } from './AdminInternalMarks';
+import { AdminStudentDocuments } from './AdminStudentDocuments';
+import { AdminBulkUpload } from './AdminBulkUpload';
 import {
   DashboardSkeleton,
   StudentsSkeleton,
@@ -51,6 +57,7 @@ import {
   ChevronLeft,
   ChevronRight,
   AlertTriangle,
+  ArrowRightLeft,
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -64,6 +71,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
   // Server-side authorisation is the real gate (the endpoint returns 403 for any
   // non-admin). This flag only keeps the control out of the UI for other roles.
   const isAdmin = user?.role === 'ADMIN';
+  // Mirrors `currentTab` for use inside `loadData` without adding it to that
+  // callback's dependency list (which would re-fetch the whole admin shell on
+  // every tab change). The mentoring dashboard loads its own college-wide data.
+  const currentTabRef = useRef(currentTab);
+  currentTabRef.current = currentTab;
   const [stats, setStats] = useState<any>(null);
   const [students, setStudents] = useState<any[]>([]);
   const [faculty, setFaculty] = useState<any[]>([]);
@@ -89,6 +101,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
 
   // Selected student for details view
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  // Selected student for the Student Documents tab's dedicated viewer. Kept
+  // separate from `selectedStudentId` so the documents flow never redirects to
+  // the full Student Profile.
+  const [documentsStudent, setDocumentsStudent] = useState<any | null>(null);
 
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -242,6 +258,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
   const [deleteFacultyTarget, setDeleteFacultyTarget] = useState<any | null>(null);
   const [deletingFaculty, setDeletingFaculty] = useState(false);
 
+  // Faculty Department Reassignment — ADMIN only. The two-step dialog picks a
+  // new department, then shows an explicit confirmation. The backend keeps
+  // every existing mentee assignment intact; this admin later reassigns those
+  // mentees through the Mentor Reassignment desk.
+  const [reassignDeptTarget, setReassignDeptTarget] = useState<any | null>(null);
+  const [reassignDeptNewId, setReassignDeptNewId] = useState('');
+  const [reassignDeptStep, setReassignDeptStep] = useState<'select' | 'confirm'>('select');
+  const [savingReassignDept, setSavingReassignDept] = useState(false);
+
   const [newFacultyForm, setNewFacultyForm] = useState({
     username: '',
     fullName: '',
@@ -310,6 +335,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
   };
 
   const loadData = async () => {
+    // The college-wide mentoring dashboard is a self-contained screen with its
+    // own endpoints and loaders. Skip the admin shell fetch while it is active.
+    if (currentTabRef.current.startsWith('mentoring-')) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const [statsRes, studentsRes, facultyRes, deptsRes, batchesRes, auditRes, settingsRes, meetingsRes, notifsRes, schoolsRes, editReqsRes] =
@@ -643,9 +674,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
     );
   };
 
+  // Apply the confirmed faculty department reassignment. Only the Admin may do
+  // this (the backend rejects every other role), and existing mentee
+  // assignments are deliberately preserved — mentees are reassigned manually
+  // through the Mentor Reassignment desk afterwards.
+  const handleConfirmReassignDept = async () => {
+    if (!reassignDeptTarget) return;
+    if (!reassignDeptNewId || reassignDeptNewId === reassignDeptTarget.department_id) return;
+    setSavingReassignDept(true);
+    try {
+      const res = await api.admin.reassignFacultyDepartment(reassignDeptTarget.id, reassignDeptNewId);
+      toast.success(
+        res.message || 'Faculty department reassigned. Existing mentees remain assigned.'
+      );
+      setReassignDeptTarget(null);
+      setReassignDeptNewId('');
+      setReassignDeptStep('select');
+      loadData();
+    } catch (err: any) {
+      toast.error('Reassignment failed: ' + (err?.message || 'unknown error'));
+    } finally {
+      setSavingReassignDept(false);
+    }
+  };
+
   // Reset student details view when sidebar tab changes
   useEffect(() => {
     setSelectedStudentId(null);
+    setDocumentsStudent(null);
     if (currentTab === 'identity-requests') {
       fetchEditRequests();
     }
@@ -656,6 +712,39 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       <StudentDetailsView
         studentId={selectedStudentId}
         onBack={() => setSelectedStudentId(null)}
+      />
+    );
+  }
+
+  // College-wide mentoring dashboard. Rendered before the loading/error gates
+  // because it owns its own loader and its own error states.
+  if (currentTab.startsWith('mentoring-')) {
+    return <AdminMentoringDashboard currentTab={currentTab} onSelectTab={onSelectTab} />;
+  }
+
+  // HOD Management tab. Also self-loading, so render before the gates too.
+  if (currentTab === 'hod-management') {
+    return <AdminHodManagement />;
+  }
+
+  // Internal Marks tab (mark-entry window + correction queue). Self-loading.
+  if (currentTab === 'internal-marks') {
+    return <AdminInternalMarks />;
+  }
+
+  // Bulk Upload (Admin only - Students & Faculty .xlsx). Self-loading.
+  if (currentTab === 'bulk-upload') {
+    return <AdminBulkUpload />;
+  }
+
+  // Student Documents tab — dedicated document list + viewer. Selecting a
+  // student here renders `AdminStudentDocuments` (document list → viewer),
+  // never the full Student Profile. Self-loading, so render before the gates.
+  if (currentTab === 'documents' && documentsStudent) {
+    return (
+      <AdminStudentDocuments
+        student={documentsStudent}
+        onBack={() => setDocumentsStudent(null)}
       />
     );
   }
@@ -694,10 +783,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Overview Tab */}
       {currentTab === 'overview' && (
         <div>
+          <PageHeader
+            eyebrow="Administration"
+            title="Admin Dashboard"
+            subtitle="College-wide mentoring, faculty and compliance statistics at a glance."
+          />
           {/* Stat Cards - 7 Real MongoDB Aggregations */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem', marginBottom: '1.5rem' }}>
             <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#EEF2F6', color: '#0B2545' }}>
+              <div className="stat-icon" style={{ backgroundColor: 'var(--color-navy-50)', color: 'var(--color-navy-800)' }}>
                 <GraduationCap size={24} />
               </div>
               <div className="stat-info">
@@ -717,7 +811,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
             </div>
 
             <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#ECFDF5', color: '#059669' }}>
+              <div className="stat-icon" style={{ backgroundColor: 'var(--color-success-50)', color: '#059669' }}>
                 <UserCheck size={24} />
               </div>
               <div className="stat-info">
@@ -727,7 +821,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
             </div>
 
             <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#FFFBEB', color: '#D97706' }}>
+              <div className="stat-icon" style={{ backgroundColor: 'var(--color-warning-50)', color: '#D97706' }}>
                 <UserPlus size={24} />
               </div>
               <div className="stat-info">
@@ -737,7 +831,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
             </div>
 
             <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#FEF2F2', color: '#DC2626' }}>
+              <div className="stat-icon" style={{ backgroundColor: 'var(--color-danger-50)', color: '#DC2626' }}>
                 <AlertCircle size={24} />
               </div>
               <div className="stat-info">
@@ -757,7 +851,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
             </div>
 
             <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#FEF3C7', color: '#B45309' }}>
+              <div className="stat-icon" style={{ backgroundColor: 'var(--color-warning-100)', color: '#B45309' }}>
                 <FileText size={24} />
               </div>
               <div className="stat-info">
@@ -776,19 +870,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
               </div>
               <div style={{ padding: '0.5rem 0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                  <span style={{ color: '#64748B', fontSize: '0.9rem' }}>Configured Meeting Day:</span>
-                  <strong style={{ color: '#0B2545' }}>Every Saturday (Fixed)</strong>
+                  <span style={{ color: 'var(--color-slate-500)', fontSize: '0.9rem' }}>Configured Meeting Day:</span>
+                  <strong style={{ color: 'var(--color-navy-800)' }}>Every Saturday (Fixed)</strong>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                  <span style={{ color: '#64748B', fontSize: '0.9rem' }}>Meeting Time:</span>
-                  <strong style={{ color: '#0B2545' }}>{settings.saturday_meeting_time || '10:30 AM'}</strong>
+                  <span style={{ color: 'var(--color-slate-500)', fontSize: '0.9rem' }}>Meeting Time:</span>
+                  <strong style={{ color: 'var(--color-navy-800)' }}>{settings.saturday_meeting_time || '10:30 AM'}</strong>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                  <span style={{ color: '#64748B', fontSize: '0.9rem' }}>Configured Venue:</span>
-                  <strong style={{ color: '#0B2545' }}>{settings.saturday_meeting_location || 'Faculty Cabin'}</strong>
+                  <span style={{ color: 'var(--color-slate-500)', fontSize: '0.9rem' }}>Configured Venue:</span>
+                  <strong style={{ color: 'var(--color-navy-800)' }}>{settings.saturday_meeting_location || 'Faculty Cabin'}</strong>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '0.75rem', borderTop: '1px solid #F1F5F9' }}>
-                  <span style={{ color: '#64748B', fontSize: '0.9rem' }}>Completed Saturday Sessions:</span>
+                  <span style={{ color: 'var(--color-slate-500)', fontSize: '0.9rem' }}>Completed Saturday Sessions:</span>
                   <strong style={{ color: '#059669' }}>{stats?.totalMeetings || 0} Sessions</strong>
                 </div>
               </div>
@@ -855,21 +949,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 <tbody>
                   {!stats?.recentActivities || stats.recentActivities.length === 0 ? (
                     <tr>
-                      <td colSpan={6} style={{ textAlign: 'center', padding: '2rem', color: '#64748B' }}>
+                      <td colSpan={6} style={{ textAlign: 'center', padding: '2rem', color: 'var(--color-slate-500)' }}>
                         No audit activities recorded.
                       </td>
                     </tr>
                   ) : (
                     stats.recentActivities.map((a: any) => (
                       <tr key={a.id}>
-                        <td style={{ fontSize: '0.75rem', color: '#64748B' }}>
+                        <td style={{ fontSize: '0.75rem', color: 'var(--color-slate-500)' }}>
                           {new Date(a.created_at).toLocaleString()}
                         </td>
                         <td style={{ fontWeight: 600 }}>{a.user_name || 'System'}</td>
                         <td><span className="badge badge-primary">{a.role || 'ADMIN'}</span></td>
                         <td><strong>{a.action}</strong></td>
                         <td>{a.entity}</td>
-                        <td style={{ fontSize: '0.78rem', color: '#475569' }}>
+                        <td style={{ fontSize: '0.78rem', color: 'var(--color-slate-600)' }}>
                           {a.entity_id ? `ID: ${a.entity_id}` : '-'}
                         </td>
                       </tr>
@@ -885,20 +979,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Student Master Tab */}
       {currentTab === 'students' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              Institutional Student Directory ({directoryTotal.toLocaleString()} Students)
-            </h2>
-            <button className="btn btn-primary btn-sm" onClick={() => setShowAddStudentModal(true)}>
-              <Plus size={16} /> Add Student with Permanent ID
-            </button>
-          </div>
+          <PageHeader
+            eyebrow="Administration"
+            title={`Institutional Student Directory (${directoryTotal.toLocaleString()} Students)`}
+            actions={
+              <button className="btn btn-primary btn-sm" onClick={() => setShowAddStudentModal(true)}>
+                <Plus size={16} /> Add Student with Permanent ID
+              </button>
+            }
+          />
 
           {/* Filters Bar */}
           <div className="card" style={{ padding: '1rem', marginBottom: '1.25rem' }}>
             <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
               <div style={{ flex: 1, minWidth: '220px', position: 'relative' }}>
-                <Search size={16} style={{ position: 'absolute', left: '10px', top: '10px', color: '#94A3B8' }} />
+                <Search size={16} style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--color-slate-400)' }} />
                 <input
                   type="text"
                   className="form-control"
@@ -981,10 +1076,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                   ) : (
                     directoryRows.map((s) => (
                     <tr key={s.id}>
-                      <td style={{ fontWeight: 700, color: '#0B2545' }}>{s.register_number}</td>
+                      <td style={{ fontWeight: 700, color: 'var(--color-navy-800)' }}>{s.register_number}</td>
                       <td>
                         <strong>{s.full_name}</strong>
-                        <div style={{ fontSize: '0.72rem', color: '#64748B' }}>ID: {s.id}</div>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--color-slate-500)' }}>ID: {s.id}</div>
                       </td>
                       <td>
                         {s.department_code} • {s.batch_name}
@@ -1082,7 +1177,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                             className="btn btn-sm"
                             style={{
                               padding: '0.35rem 0.6rem',
-                              backgroundColor: '#FEF2F2',
+                              backgroundColor: 'var(--color-danger-50)',
                               color: '#DC2626',
                               border: '1px solid #FECACA',
                               borderRadius: '6px',
@@ -1107,7 +1202,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
             {/* Mobile Cards View */}
             <div className="mobile-only" style={{ flexDirection: 'column', gap: '0.85rem', padding: '0.85rem' }}>
               {directoryRows.length === 0 ? (
-                <div style={{ padding: '1.5rem', textAlign: 'center', color: '#64748B' }}>
+                <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--color-slate-500)' }}>
                   {directoryLoading ? 'Loading students...' : directoryError || 'No students found.'}
                 </div>
               ) : (
@@ -1125,13 +1220,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
                       <div>
-                        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#0B2545', letterSpacing: '0.5px' }}>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--color-navy-800)', letterSpacing: '0.5px' }}>
                           {s.register_number}
                         </div>
-                        <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#1E293B', marginTop: '1px' }}>
+                        <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--color-slate-800)', marginTop: '1px' }}>
                           {s.full_name}
                         </div>
-                        <div style={{ fontSize: '0.78rem', color: '#64748B' }}>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--color-slate-500)' }}>
                           {s.department_code} • {s.batch_name}
                         </div>
                       </div>
@@ -1145,17 +1240,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                       </div>
                     </div>
 
-                    <div style={{ background: '#F8FAFC', padding: '0.65rem 0.85rem', borderRadius: '8px', fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.35rem', margin: '0.65rem 0' }}>
+                    <div style={{ background: 'var(--color-slate-50)', padding: '0.65rem 0.85rem', borderRadius: '8px', fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.35rem', margin: '0.65rem 0' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#64748B' }}>Assigned Mentor:</span>
+                        <span style={{ color: 'var(--color-slate-500)' }}>Assigned Mentor:</span>
                         <strong>{s.current_mentor_name || 'Unassigned'}</strong>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#64748B' }}>Profile Setup:</span>
+                        <span style={{ color: 'var(--color-slate-500)' }}>Profile Setup:</span>
                         <span>{s.profile_completed === 1 ? '✓ Completed' : '⚠ Pending'}</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#64748B' }}>Saturday Sessions:</span>
+                        <span style={{ color: 'var(--color-slate-500)' }}>Saturday Sessions:</span>
                         <strong>{s.completed_meetings_count || 0} Completed</strong>
                       </div>
                     </div>
@@ -1210,7 +1305,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                           setTempNewPassword('Password@123');
                           setShowResetPasswordModal(true);
                         }}
-                        style={{ minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontWeight: 600, backgroundColor: '#F8FAFC', color: '#475569', border: '1px solid #E2E8F0', borderRadius: '8px' }}
+                        style={{ minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontWeight: 600, backgroundColor: 'var(--color-slate-50)', color: 'var(--color-slate-600)', border: '1px solid #E2E8F0', borderRadius: '8px' }}
                       >
                         <Key size={15} /> Reset Pwd
                       </button>
@@ -1234,7 +1329,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 gap: '0.5rem',
               }}
             >
-              <div style={{ fontSize: '0.85rem', color: '#64748b' }}>
+              <div style={{ fontSize: '0.85rem', color: 'var(--color-slate-500)' }}>
                 Showing <strong>{directoryFrom.toLocaleString()}&ndash;{directoryTo.toLocaleString()}</strong> of{' '}
                 <strong>{directoryTotal.toLocaleString()}</strong> students
                 {directoryTotalPages > 1 && (
@@ -1279,14 +1374,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Faculty Directory Tab */}
       {currentTab === 'faculty' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              Faculty &amp; Mentor Master ({faculty.length} Faculty Members)
-            </h2>
-            <button className="btn btn-primary btn-sm" onClick={() => setShowAddFacultyModal(true)}>
-              <Plus size={16} /> Add Faculty Member
-            </button>
-          </div>
+          <PageHeader
+            eyebrow="Administration"
+            title={`Faculty & Mentor Master (${faculty.length} Faculty Members)`}
+            actions={
+              <button className="btn btn-primary btn-sm" onClick={() => setShowAddFacultyModal(true)}>
+                <Plus size={16} /> Add Faculty Member
+              </button>
+            }
+          />
 
           <div className="card" style={{ padding: 0 }}>
             {/* Desktop Table View */}
@@ -1307,7 +1403,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 <tbody>
                   {faculty.length === 0 ? (
                     <tr>
-                      <td colSpan={8} style={{ textAlign: 'center', padding: '2.5rem', color: '#64748B' }}>
+                      <td colSpan={8} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--color-slate-500)' }}>
                         No faculty members available.
                       </td>
                     </tr>
@@ -1317,12 +1413,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                       <td style={{ fontWeight: 700 }}>{f.employee_id}</td>
                       <td>
                         <strong>{f.full_name}</strong>
-                        <div style={{ fontSize: '0.75rem', color: '#64748B' }}>{f.email}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--color-slate-500)' }}>{f.email}</div>
                       </td>
                       <td>{f.department_code || 'CSE'}</td>
                       <td>
                         {f.designation}
-                        <div style={{ fontSize: '0.75rem', color: '#64748B' }}>{f.cabin_location || '-'}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--color-slate-500)' }}>{f.cabin_location || '-'}</div>
                       </td>
                       <td>{f.phone_number || '-'}</td>
                       {/* ── Assigned Mentees column ── */}
@@ -1366,8 +1462,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                           <button
                             className="btn btn-sm"
                             style={{
+                              fontSize: '0.72rem',
                               padding: '0.35rem 0.6rem',
-                              backgroundColor: '#FEF2F2',
+                              background: '#F5F3FF',
+                              color: '#6D28D9',
+                              border: '1px solid #DDD6FE',
+                              borderRadius: '6px',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.3rem',
+                            }}
+                            title={`Reassign department for ${f.full_name}`}
+                            onClick={() => {
+                              setReassignDeptTarget(f);
+                              setReassignDeptNewId('');
+                              setReassignDeptStep('select');
+                            }}
+                          >
+                            <ArrowRightLeft size={13} /> Reassign Dept
+                          </button>
+                          <button
+                            className="btn btn-sm"
+                            style={{
+                              padding: '0.35rem 0.6rem',
+                              backgroundColor: 'var(--color-danger-50)',
                               color: '#DC2626',
                               border: '1px solid #FECACA',
                               borderRadius: '6px',
@@ -1392,7 +1511,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
             {/* Mobile Cards View */}
             <div className="mobile-only" style={{ flexDirection: 'column', gap: '0.85rem', padding: '0.85rem' }}>
               {faculty.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '2rem', color: '#64748B' }}>
+                <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--color-slate-500)' }}>
                   No faculty members available.
                 </div>
               ) : (
@@ -1410,38 +1529,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
                       <div>
-                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', letterSpacing: '0.5px' }}>
+                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-slate-500)', letterSpacing: '0.5px' }}>
                           EMP: {f.employee_id}
                         </div>
-                        <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0B2545', marginTop: '1px' }}>
+                        <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--color-navy-800)', marginTop: '1px' }}>
                           {f.full_name}
                         </div>
-                        <div style={{ fontSize: '0.76rem', color: '#64748B' }}>{f.email}</div>
+                        <div style={{ fontSize: '0.76rem', color: 'var(--color-slate-500)' }}>{f.email}</div>
                       </div>
                       <span className={`badge ${f.is_active ? 'badge-success' : 'badge-danger'}`}>
                         {f.is_active ? 'Active' : 'Inactive'}
                       </span>
                     </div>
 
-                    <div style={{ background: '#F8FAFC', padding: '0.75rem', borderRadius: '8px', fontSize: '0.82rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem', margin: '0.65rem 0' }}>
+                    <div style={{ background: 'var(--color-slate-50)', padding: '0.75rem', borderRadius: '8px', fontSize: '0.82rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem', margin: '0.65rem 0' }}>
                       <div>
-                        <span style={{ color: '#64748B', fontSize: '0.75rem', display: 'block' }}>Department</span>
+                        <span style={{ color: 'var(--color-slate-500)', fontSize: '0.75rem', display: 'block' }}>Department</span>
                         <strong>{f.department_code || 'IT'}</strong>
                       </div>
                       <div>
-                        <span style={{ color: '#64748B', fontSize: '0.75rem', display: 'block' }}>Designation</span>
+                        <span style={{ color: 'var(--color-slate-500)', fontSize: '0.75rem', display: 'block' }}>Designation</span>
                         <strong>{f.designation || 'Faculty'}</strong>
                       </div>
                       <div>
-                        <span style={{ color: '#64748B', fontSize: '0.75rem', display: 'block' }}>Cabin</span>
+                        <span style={{ color: 'var(--color-slate-500)', fontSize: '0.75rem', display: 'block' }}>Cabin</span>
                         <strong>{f.cabin_location || 'IT Lab'}</strong>
                       </div>
                       <div>
-                        <span style={{ color: '#64748B', fontSize: '0.75rem', display: 'block' }}>Contact</span>
+                        <span style={{ color: 'var(--color-slate-500)', fontSize: '0.75rem', display: 'block' }}>Contact</span>
                         <strong>{f.phone_number || '-'}</strong>
                       </div>
                       <div style={{ gridColumn: '1 / -1', borderTop: '1px dashed #E2E8F0', paddingTop: '0.4rem', marginTop: '0.2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ color: '#64748B', fontSize: '0.78rem' }}>Assigned Mentees</span>
+                        <span style={{ color: 'var(--color-slate-500)', fontSize: '0.78rem' }}>Assigned Mentees</span>
                         <strong style={{ color: '#1D4ED8', fontSize: '0.95rem' }}>{f.mentee_count || 0} Students</strong>
                       </div>
                     </div>
@@ -1465,6 +1584,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                         </button>
                       )}
                     </div>
+                    <button
+                      className="btn btn-sm"
+                      onClick={() => {
+                        setReassignDeptTarget(f);
+                        setReassignDeptNewId('');
+                        setReassignDeptStep('select');
+                      }}
+                      style={{
+                        marginTop: '0.5rem',
+                        width: '100%',
+                        minHeight: '44px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '0.35rem',
+                        fontWeight: 600,
+                        background: '#F5F3FF',
+                        color: '#6D28D9',
+                        border: '1px solid #DDD6FE',
+                      }}
+                    >
+                      <ArrowRightLeft size={15} /> Reassign Department
+                    </button>
                   </div>
                 ))
               )}
@@ -1500,14 +1642,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Academic Departments Master Tab */}
       {currentTab === 'departments' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              Academic Departments Master ({departments.length} Departments)
-            </h2>
-            <button className="btn btn-primary btn-sm" onClick={() => setShowAddDeptModal(true)}>
-              <Plus size={16} /> Add Department
-            </button>
-          </div>
+          <PageHeader
+            eyebrow="Administration"
+            title={`Academic Departments Master (${departments.length} Departments)`}
+            actions={
+              <button className="btn btn-primary btn-sm" onClick={() => setShowAddDeptModal(true)}>
+                <Plus size={16} /> Add Department
+              </button>
+            }
+          />
 
           <div className="card">
             <div className="table-responsive">
@@ -1523,14 +1666,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 <tbody>
                   {departments.length === 0 ? (
                     <tr>
-                      <td colSpan={4} style={{ textAlign: 'center', padding: '2.5rem', color: '#64748B' }}>
+                      <td colSpan={4} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--color-slate-500)' }}>
                         No departments found.
                       </td>
                     </tr>
                   ) : (
                     departments.map((d) => (
                       <tr key={d.id}>
-                        <td style={{ fontWeight: 700, color: '#0B2545' }}>
+                        <td style={{ fontWeight: 700, color: 'var(--color-navy-800)' }}>
                           <span className="badge badge-primary">{d.code}</span>
                         </td>
                         <td><strong>{d.name}</strong></td>
@@ -1549,14 +1692,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Mentor Reassignment Desk Tab */}
       {currentTab === 'reassignment' && (
         <div>
-          <div style={{ marginBottom: '1.25rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              Institutional Mentor Reassignment Desk
-            </h2>
-            <p style={{ fontSize: '0.85rem', color: '#64748B' }}>
-              Enforces the Cardinal Rule: <strong>Student Data is Permanent</strong>. When Mentor A is changed to Mentor B, all academic, meeting, and counselling records are preserved.
-            </p>
-          </div>
+          <PageHeader
+            eyebrow="Administration"
+            title="Institutional Mentor Reassignment Desk"
+            subtitle={<>Enforces the Cardinal Rule: <strong>Student Data is Permanent</strong>. When Mentor A is changed to Mentor B, all academic, meeting, and counselling records are preserved.</>}
+          />
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
             <div className="card" style={{ borderLeft: '4px solid #C59B27' }}>
@@ -1629,11 +1769,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
               </form>
             </div>
 
-            <div className="card" style={{ backgroundColor: '#F8FAFC' }}>
+            <div className="card" style={{ backgroundColor: 'var(--color-slate-50)' }}>
               <div className="card-header">
                 <h3 className="card-title"><CheckCircle2 size={18} /> Institutional Guarantee</h3>
               </div>
-              <ul style={{ paddingLeft: '1.25rem', fontSize: '0.85rem', color: '#475569', lineHeight: 1.8 }}>
+              <ul style={{ paddingLeft: '1.25rem', fontSize: '0.85rem', color: 'var(--color-slate-600)', lineHeight: 1.8 }}>
                 <li><strong>Permanent Student ID</strong>: Student retains the exact same ID and Register Number.</li>
                 <li><strong>Academic Persistence</strong>: 10th/12th, Cut-off, and Semesters 1-8 CGPA/arrears remain 100% untouched.</li>
                 <li><strong>Past Counselling Preservation</strong>: Prior counselling entries made by old mentors remain intact.</li>
@@ -1648,14 +1788,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Saturday Settings Tab */}
       {currentTab === 'saturday-settings' && (
         <div style={{ maxWidth: '650px' }}>
-          <div style={{ marginBottom: '1.25rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              Institutional Saturday Meeting Configuration
-            </h2>
-            <p style={{ fontSize: '0.85rem', color: '#64748B' }}>
-              Saturday is institutionally fixed. Mentors and students automatically follow this configured schedule.
-            </p>
-          </div>
+          <PageHeader
+            eyebrow="Administration"
+            title="Institutional Saturday Meeting Configuration"
+            subtitle={<>Saturday is institutionally fixed. Mentors and students automatically follow this configured schedule.</>}
+          />
 
           <div className="card">
             <form onSubmit={handleUpdateSettings}>
@@ -1666,9 +1803,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                   className="form-control"
                   value={settingsForm.meetingDay}
                   disabled
-                  style={{ backgroundColor: '#F1F5F9' }}
+                  style={{ backgroundColor: 'var(--color-slate-100)' }}
                 />
-                <span style={{ fontSize: '0.72rem', color: '#64748B' }}>Institutional policy dictates Saturday is fixed.</span>
+                <span style={{ fontSize: '0.72rem', color: 'var(--color-slate-500)' }}>Institutional policy dictates Saturday is fixed.</span>
               </div>
 
               <div className="form-group">
@@ -1706,11 +1843,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Audit Trail Tab */}
       {currentTab === 'audit-trail' && (
         <div>
-          <div style={{ marginBottom: '1.25rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              Institutional Compliance & Security Audit Logs
-            </h2>
-          </div>
+          <PageHeader
+            eyebrow="Administration"
+            title="Institutional Compliance & Security Audit Logs"
+          />
 
           <div className="card">
             <div className="table-responsive">
@@ -1729,14 +1865,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 <tbody>
                   {auditLogs.length === 0 ? (
                     <tr>
-                      <td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: '#64748B' }}>
+                      <td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--color-slate-500)' }}>
                         No audit records logged.
                       </td>
                     </tr>
                   ) : (
                     auditLogs.map((log) => (
                     <tr key={log.id}>
-                      <td style={{ fontSize: '0.75rem', color: '#64748B' }}>
+                      <td style={{ fontSize: '0.75rem', color: 'var(--color-slate-500)' }}>
                         {new Date(log.created_at).toLocaleString()}
                       </td>
                       <td style={{ fontWeight: 600 }}>{log.user_name || log.username || 'System'}</td>
@@ -1744,7 +1880,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                       <td><span className="badge badge-info">{log.action}</span></td>
                       <td>{log.entity}</td>
                       <td style={{ fontSize: '0.78rem' }}>{log.entity_id || '-'}</td>
-                      <td style={{ fontSize: '0.72rem', color: '#94A3B8' }}>{log.ip_address || '127.0.0.1'}</td>
+                      <td style={{ fontSize: '0.72rem', color: 'var(--color-slate-400)' }}>{log.ip_address || '127.0.0.1'}</td>
                     </tr>
                   ))
                 )}
@@ -1758,14 +1894,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Reports Tab */}
       {currentTab === 'reports' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              Institutional Reports & Exports
-            </h2>
-            <button className="btn btn-secondary" onClick={() => api.reports.downloadCsv()}>
-              <Download size={16} /> Download Full Mentee CSV
-            </button>
-          </div>
+          <PageHeader
+            eyebrow="Administration"
+            title="Institutional Reports & Exports"
+            actions={
+              <button className="btn btn-secondary" onClick={() => api.reports.downloadCsv()}>
+                <Download size={16} /> Download Full Mentee CSV
+              </button>
+            }
+          />
 
           <div className="card">
             <div className="card-header">
@@ -1804,16 +1941,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Feeder Schools Directory Tab */}
       {currentTab === 'schools' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              Institutional Feeder Schools Directory ({schools.length} Schools)
-            </h2>
-          </div>
+          <PageHeader
+            eyebrow="Administration"
+            title={`Institutional Feeder Schools Directory (${schools.length} Schools)`}
+          />
 
           <div className="card" style={{ padding: '1rem', marginBottom: '1.25rem' }}>
             <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
               <div style={{ flex: 1, minWidth: '240px', position: 'relative' }}>
-                <Search size={16} style={{ position: 'absolute', left: '10px', top: '10px', color: '#94A3B8' }} />
+                <Search size={16} style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--color-slate-400)' }} />
                 <input
                   type="text"
                   className="form-control"
@@ -1864,7 +2000,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                     })
                     .map((s, idx) => (
                       <tr key={s._id || s.id || idx}>
-                        <td style={{ fontWeight: 700, color: '#0B2545' }}>SCH-{(idx + 1).toString().padStart(3, '0')}</td>
+                        <td style={{ fontWeight: 700, color: 'var(--color-navy-800)' }}>SCH-{(idx + 1).toString().padStart(3, '0')}</td>
                         <td style={{ fontWeight: 600 }}>{s.schoolName || s.name}</td>
                         <td>{s.city}</td>
                         <td>{s.district}</td>
@@ -1882,11 +2018,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Mentor Assignment Tab */}
       {currentTab === 'assignment' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              Mentor Assignment Desk
-            </h2>
-          </div>
+          <PageHeader
+            eyebrow="Administration"
+            title="Mentor Assignment Desk"
+          />
 
           <div className="card" style={{ padding: '1.25rem', marginBottom: '1.25rem', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -1953,36 +2088,36 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Student Documents Tab */}
       {currentTab === 'documents' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', gap: '1rem', flexWrap: 'wrap' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              Institutional Student Documents & Verification Desk
-            </h2>
-
-            {isAdmin && (
-              <button
-                type="button"
-                className="btn btn-danger"
-                disabled={deletingAllDocs}
-                onClick={() => setShowDeleteAllDocsModal(true)}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  fontWeight: 700,
-                  padding: '0.55rem 1.15rem',
-                  borderRadius: '8px',
-                }}
-              >
-                <Trash2 size={16} />
-                {deletingAllDocs ? 'Deleting All Documents...' : 'Delete All Documents'}
-              </button>
-            )}
-          </div>
+          <PageHeader
+            eyebrow="Administration"
+            title="Institutional Student Documents & Verification Desk"
+            actions={
+              isAdmin && (
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  disabled={deletingAllDocs}
+                  onClick={() => setShowDeleteAllDocsModal(true)}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontWeight: 700,
+                    padding: '0.55rem 1.15rem',
+                    borderRadius: '8px',
+                  }}
+                >
+                  <Trash2 size={16} />
+                  {deletingAllDocs ? 'Deleting All Documents...' : 'Delete All Documents'}
+                </button>
+              )
+            }
+          />
 
           <div className="card" style={{ padding: '1rem', marginBottom: '1.25rem' }}>
             <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
               <div style={{ flex: 1, minWidth: '220px', position: 'relative' }}>
-                <Search size={16} style={{ position: 'absolute', left: '10px', top: '10px', color: '#94A3B8' }} />
+                <Search size={16} style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--color-slate-400)' }} />
                 <input
                   type="text"
                   className="form-control"
@@ -2012,14 +2147,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 <tbody>
                   {filteredStudents.length === 0 ? (
                     <tr>
-                      <td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: '#64748B' }}>
+                      <td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: 'var(--color-slate-500)' }}>
                         No student documents records found.
                       </td>
                     </tr>
                   ) : (
                     filteredStudents.map((s) => (
                       <tr key={s.id}>
-                        <td style={{ fontWeight: 700, color: '#0B2545' }}>{s.register_number}</td>
+                        <td style={{ fontWeight: 700, color: 'var(--color-navy-800)' }}>{s.register_number}</td>
                         <td style={{ fontWeight: 600 }}>{s.full_name}</td>
                         <td>{s.dept_code}</td>
                         <td>{s.batch_name}</td>
@@ -2034,7 +2169,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                         <td>
                           <button
                             className="btn btn-secondary btn-sm"
-                            onClick={() => setSelectedStudentId(s.id)}
+                            onClick={() => setDocumentsStudent(s)}
                           >
                             <FileCheck size={14} /> Open Student Documents
                           </button>
@@ -2110,11 +2245,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Counselling Records Tab */}
       {currentTab === 'counselling' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              Institutional 5-Domain Counselling Hub
-            </h2>
-          </div>
+          <PageHeader
+            eyebrow="Administration"
+            title="Institutional 5-Domain Counselling Hub"
+          />
 
           <div className="grid-cols-4" style={{ marginBottom: '1.5rem' }}>
             {[
@@ -2124,8 +2258,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
               { title: 'Emotional & Social', desc: 'Wellbeing, stress, discipline, personal', color: '#7C3AED' },
             ].map((d, i) => (
               <div key={i} className="card" style={{ padding: '1rem', borderTop: `3px solid ${d.color}` }}>
-                <h4 style={{ margin: '0 0 4px', fontSize: '0.95rem', color: '#0B2545' }}>{d.title}</h4>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748B' }}>{d.desc}</p>
+                <h4 style={{ margin: '0 0 4px', fontSize: '0.95rem', color: 'var(--color-navy-800)' }}>{d.title}</h4>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--color-slate-500)' }}>{d.desc}</p>
               </div>
             ))}
           </div>
@@ -2178,37 +2312,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Saturday Meetings Tab */}
       {currentTab === 'meetings' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-            <div>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
-                Institutional Saturday Mentoring Meetings Monitor
-              </h2>
-              <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: '#64748B' }}>
-                Fixed Institutional Day: <strong>{settingsForm.meetingDay}</strong> at <strong>{settingsForm.meetingTime}</strong> in <strong>{settingsForm.meetingLocation}</strong>
-              </p>
-            </div>
-            <button
-              className="btn btn-secondary"
-              onClick={async () => {
-                try {
-                  setNotifTriggerLoading(true);
-                  await api.notifications.triggerReminders('SATURDAY_TODAY');
-                  toast.success('Saturday mentoring reminders successfully dispatched to all mentors and mentees.');
-                  setTimeout(() => setNotifTriggerSuccess(null), 4000);
-                } catch (e: any) {
-                  toast.error(e.message || 'Failed to dispatch reminders');
-                } finally {
-                  setNotifTriggerLoading(false);
-                }
-              }}
-              disabled={notifTriggerLoading}
-            >
-              <CalendarCheck2 size={16} /> {notifTriggerLoading ? 'Sending Alerts...' : 'Trigger Saturday Meeting Alerts'}
-            </button>
-          </div>
+          <PageHeader
+            eyebrow="Administration"
+            title="Institutional Saturday Mentoring Meetings Monitor"
+            subtitle={<>Fixed Institutional Day: <strong>{settingsForm.meetingDay}</strong> at <strong>{settingsForm.meetingTime}</strong> in <strong>{settingsForm.meetingLocation}</strong></>}
+            actions={
+              <button
+                className="btn btn-secondary"
+                onClick={async () => {
+                  try {
+                    setNotifTriggerLoading(true);
+                    await api.notifications.triggerReminders('SATURDAY_TODAY');
+                    toast.success('Saturday mentoring reminders successfully dispatched to all mentors and mentees.');
+                    setTimeout(() => setNotifTriggerSuccess(null), 4000);
+                  } catch (e: any) {
+                    toast.error(e.message || 'Failed to dispatch reminders');
+                  } finally {
+                    setNotifTriggerLoading(false);
+                  }
+                }}
+                disabled={notifTriggerLoading}
+              >
+                <CalendarCheck2 size={16} /> {notifTriggerLoading ? 'Sending Alerts...' : 'Trigger Saturday Meeting Alerts'}
+              </button>
+            }
+          />
 
           {notifTriggerSuccess && (
-            <div style={{ backgroundColor: '#D1FAE5', color: '#065F46', padding: '0.75rem 1rem', borderRadius: '8px', marginBottom: '1rem', border: '1px solid #6EE7B7' }}>
+            <div style={{ backgroundColor: 'var(--color-success-100)', color: '#065F46', padding: '0.75rem 1rem', borderRadius: '8px', marginBottom: '1rem', border: '1px solid #6EE7B7' }}>
               ✓ {notifTriggerSuccess}
             </div>
           )}
@@ -2230,7 +2361,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 <tbody>
                   {meetings.length === 0 ? (
                     <tr>
-                      <td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: '#64748B' }}>
+                      <td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--color-slate-500)' }}>
                         No Saturday meetings logged yet. As faculty conduct weekly Saturday sessions, records will stream here.
                       </td>
                     </tr>
@@ -2261,18 +2392,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Monthly Progress Tab */}
       {currentTab === 'monthly-progress' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              Monthly Student Progress & Action Plans
-            </h2>
-          </div>
+          <PageHeader
+            eyebrow="Administration"
+            title="Monthly Student Progress & Action Plans"
+          />
 
-          <div className="card" style={{ padding: '1.25rem', marginBottom: '1.25rem', backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0' }}>
+          <div className="card" style={{ padding: '1.25rem', marginBottom: '1.25rem', backgroundColor: 'var(--color-slate-50)', border: '1px solid #E2E8F0' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
               <Award size={24} color="#0B2545" />
               <div>
-                <h4 style={{ margin: 0, color: '#0B2545', fontWeight: 700 }}>Continuous Academic Monitoring</h4>
-                <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: '#64748B' }}>
+                <h4 style={{ margin: 0, color: 'var(--color-navy-800)', fontWeight: 700 }}>Continuous Academic Monitoring</h4>
+                <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: 'var(--color-slate-500)' }}>
                   Evaluate monthly targets, arrears clearance commitments, and academic improvement plans across all batches.
                 </p>
               </div>
@@ -2326,32 +2456,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Notifications Tab */}
       {currentTab === 'notifications' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              System Notifications & Mentoring Alerts
-            </h2>
-            <button
-              className="btn btn-primary"
-              onClick={async () => {
-                try {
-                  setNotifTriggerLoading(true);
-                  await api.notifications.triggerReminders('SATURDAY_TODAY');
-                  toast.success('Automated Saturday mentoring reminders sent successfully.');
-                  setTimeout(() => setNotifTriggerSuccess(null), 4000);
-                } catch (e: any) {
-                  toast.error(e.message || 'Failed to dispatch reminders');
-                } finally {
-                  setNotifTriggerLoading(false);
-                }
-              }}
-              disabled={notifTriggerLoading}
-            >
-              <Bell size={16} /> {notifTriggerLoading ? 'Sending...' : 'Dispatch Saturday Meeting Reminders'}
-            </button>
-          </div>
+          <PageHeader
+            eyebrow="Administration"
+            title="System Notifications & Mentoring Alerts"
+            actions={
+              <button
+                className="btn btn-primary"
+                onClick={async () => {
+                  try {
+                    setNotifTriggerLoading(true);
+                    await api.notifications.triggerReminders('SATURDAY_TODAY');
+                    toast.success('Automated Saturday mentoring reminders sent successfully.');
+                    setTimeout(() => setNotifTriggerSuccess(null), 4000);
+                  } catch (e: any) {
+                    toast.error(e.message || 'Failed to dispatch reminders');
+                  } finally {
+                    setNotifTriggerLoading(false);
+                  }
+                }}
+                disabled={notifTriggerLoading}
+              >
+                <Bell size={16} /> {notifTriggerLoading ? 'Sending...' : 'Dispatch Saturday Meeting Reminders'}
+              </button>
+            }
+          />
 
           {notifTriggerSuccess && (
-            <div style={{ backgroundColor: '#D1FAE5', color: '#065F46', padding: '0.75rem 1rem', borderRadius: '8px', marginBottom: '1rem', border: '1px solid #6EE7B7' }}>
+            <div style={{ backgroundColor: 'var(--color-success-100)', color: '#065F46', padding: '0.75rem 1rem', borderRadius: '8px', marginBottom: '1rem', border: '1px solid #6EE7B7' }}>
               ✓ {notifTriggerSuccess}
             </div>
           )}
@@ -2367,13 +2498,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                     <th>Title</th>
                     <th>Message</th>
                     <th>Type</th>
+                    <th>Faculty</th>
+                    <th>Department</th>
+                    <th>Status</th>
                     <th>Timestamp</th>
                   </tr>
                 </thead>
                 <tbody>
                   {notifications.length === 0 ? (
                     <tr>
-                      <td colSpan={4} style={{ textAlign: 'center', padding: '2.5rem', color: '#64748B' }}>
+                      <td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--color-slate-500)' }}>
                         No system notifications logged yet.
                       </td>
                     </tr>
@@ -2383,6 +2517,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                         <td style={{ fontWeight: 600 }}>{n.title}</td>
                         <td>{n.message}</td>
                         <td><span className="badge badge-info">{n.type}</span></td>
+                        <td>{n.faculty_name || '—'}</td>
+                        <td>{n.department_name || '—'}</td>
+                        <td>
+                          {n.type === 'FACULTY_NOTIFICATION' ? (
+                            <span className={`badge ${n.is_read ? 'badge-success' : 'badge-warning'}`}>
+                              {n.is_read ? 'Read' : 'Unread'}
+                            </span>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
                         <td>{new Date(n.created_at || Date.now()).toLocaleString()}</td>
                       </tr>
                     ))
@@ -2397,17 +2542,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* PDF Downloads Tab */}
       {currentTab === 'pdf-downloads' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              Institutional PDF Dossier Downloads
-            </h2>
-          </div>
+          <PageHeader
+            eyebrow="Administration"
+            title="Institutional PDF Dossier Downloads"
+          />
 
           <div className="card" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
-            <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#0B2545', marginBottom: '0.75rem' }}>
+            <h3 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-navy-800)', marginBottom: '0.75rem' }}>
               Download Autonomous KSRCE 6-Page Student Mentoring Dossier
             </h3>
-            <p style={{ fontSize: '0.85rem', color: '#64748B', marginBottom: '1.25rem' }}>
+            <p style={{ fontSize: '0.85rem', color: 'var(--color-slate-500)', marginBottom: '1.25rem' }}>
               Generate complete, official Anna University Autonomous compliant PDF records containing bio-data, feeder school history, 8-semester marks, arrears tracking, Saturday session logs, and 5-domain counselling summaries.
             </p>
 
@@ -2497,24 +2641,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       {/* Identity Edit Requests Tab */}
       {currentTab === 'identity-requests' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-            <div>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <FileCheck size={22} color="#0B2545" /> Student Identity Correction Requests
-              </h2>
-              <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: '#64748B' }}>
-                Review and approve student correction requests for official institutional records (Full Name, Register Number, Department, Batch).
-              </p>
-            </div>
-            <button
-              className="btn btn-secondary btn-sm"
-              onClick={fetchEditRequests}
-              disabled={loadingEditRequests}
-              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-            >
-              <History size={14} /> {loadingEditRequests ? 'Refreshing...' : 'Refresh Requests'}
-            </button>
-          </div>
+          <PageHeader
+            eyebrow="Administration"
+            title="Student Identity Correction Requests"
+            subtitle={<>Review and approve student correction requests for official institutional records (Full Name, Register Number, Department, Batch).</>}
+            actions={
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={fetchEditRequests}
+                disabled={loadingEditRequests}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                <History size={14} /> {loadingEditRequests ? 'Refreshing...' : 'Refresh Requests'}
+              </button>
+            }
+          />
 
           {/* Filter Pills */}
           <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
@@ -2566,10 +2707,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                     .filter(r => identityRequestFilter === 'ALL' || r.status === identityRequestFilter)
                     .length === 0 ? (
                     <tr>
-                      <td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: '#64748B' }}>
+                      <td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--color-slate-500)' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
                           <CheckCircle2 size={32} color="#94A3B8" />
-                          <div style={{ fontWeight: 600, color: '#475569' }}>No identity correction requests found.</div>
+                          <div style={{ fontWeight: 600, color: 'var(--color-slate-600)' }}>No identity correction requests found.</div>
                           <div style={{ fontSize: '0.8rem' }}>
                             {identityRequestFilter === 'PENDING'
                               ? 'There are no pending student edit requests awaiting review.'
@@ -2586,47 +2727,47 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                         const cv = req.currentValues || {};
                         return (
                           <tr key={req._id || req.id}>
-                            <td style={{ fontSize: '0.8rem', color: '#64748B', whiteSpace: 'nowrap' }}>
+                            <td style={{ fontSize: '0.8rem', color: 'var(--color-slate-500)', whiteSpace: 'nowrap' }}>
                               {req.createdAt ? new Date(req.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A'}
                             </td>
                             <td>
-                              <div style={{ fontWeight: 700, color: '#0B2545' }}>{req.studentName}</div>
-                              <div style={{ fontSize: '0.78rem', color: '#64748B' }}>{req.registerNumber}</div>
+                              <div style={{ fontWeight: 700, color: 'var(--color-navy-800)' }}>{req.studentName}</div>
+                              <div style={{ fontSize: '0.78rem', color: 'var(--color-slate-500)' }}>{req.registerNumber}</div>
                             </td>
                             <td>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem' }}>
                                 {rf.fullName && (
                                   <div>
-                                    <span style={{ color: '#64748B' }}>Name:</span>{' '}
-                                    <span style={{ textDecoration: 'line-through', color: '#94A3B8' }}>{cv.fullName || '—'}</span>{' '}
-                                    <strong style={{ color: '#0B2545' }}>➔ {rf.fullName}</strong>
+                                    <span style={{ color: 'var(--color-slate-500)' }}>Name:</span>{' '}
+                                    <span style={{ textDecoration: 'line-through', color: 'var(--color-slate-400)' }}>{cv.fullName || '—'}</span>{' '}
+                                    <strong style={{ color: 'var(--color-navy-800)' }}>➔ {rf.fullName}</strong>
                                   </div>
                                 )}
                                 {rf.registerNumber && (
                                   <div>
-                                    <span style={{ color: '#64748B' }}>Reg No:</span>{' '}
-                                    <span style={{ textDecoration: 'line-through', color: '#94A3B8' }}>{cv.registerNumber || '—'}</span>{' '}
-                                    <strong style={{ color: '#0B2545' }}>➔ {rf.registerNumber}</strong>
+                                    <span style={{ color: 'var(--color-slate-500)' }}>Reg No:</span>{' '}
+                                    <span style={{ textDecoration: 'line-through', color: 'var(--color-slate-400)' }}>{cv.registerNumber || '—'}</span>{' '}
+                                    <strong style={{ color: 'var(--color-navy-800)' }}>➔ {rf.registerNumber}</strong>
                                   </div>
                                 )}
                                 {rf.departmentName && (
                                   <div>
-                                    <span style={{ color: '#64748B' }}>Dept:</span>{' '}
-                                    <span style={{ textDecoration: 'line-through', color: '#94A3B8' }}>{cv.departmentName || '—'}</span>{' '}
-                                    <strong style={{ color: '#0B2545' }}>➔ {rf.departmentName}</strong>
+                                    <span style={{ color: 'var(--color-slate-500)' }}>Dept:</span>{' '}
+                                    <span style={{ textDecoration: 'line-through', color: 'var(--color-slate-400)' }}>{cv.departmentName || '—'}</span>{' '}
+                                    <strong style={{ color: 'var(--color-navy-800)' }}>➔ {rf.departmentName}</strong>
                                   </div>
                                 )}
                                 {rf.batchName && (
                                   <div>
-                                    <span style={{ color: '#64748B' }}>Batch:</span>{' '}
-                                    <span style={{ textDecoration: 'line-through', color: '#94A3B8' }}>{cv.batchName || '—'}</span>{' '}
-                                    <strong style={{ color: '#0B2545' }}>➔ {rf.batchName}</strong>
+                                    <span style={{ color: 'var(--color-slate-500)' }}>Batch:</span>{' '}
+                                    <span style={{ textDecoration: 'line-through', color: 'var(--color-slate-400)' }}>{cv.batchName || '—'}</span>{' '}
+                                    <strong style={{ color: 'var(--color-navy-800)' }}>➔ {rf.batchName}</strong>
                                   </div>
                                 )}
                               </div>
                             </td>
                             <td style={{ maxWidth: '240px' }}>
-                              <div style={{ fontSize: '0.82rem', color: '#334155', fontStyle: 'italic', background: '#F8FAFC', padding: '6px 8px', borderRadius: '4px' }}>
+                              <div style={{ fontSize: '0.82rem', color: 'var(--color-slate-700)', fontStyle: 'italic', background: 'var(--color-slate-50)', padding: '6px 8px', borderRadius: '4px' }}>
                                 "{req.reason || 'No justification provided'}"
                               </div>
                             </td>
@@ -2647,7 +2788,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                                 </span>
                               )}
                             </td>
-                            <td style={{ fontSize: '0.78rem', color: '#64748B' }}>
+                            <td style={{ fontSize: '0.78rem', color: 'var(--color-slate-500)' }}>
                               {req.status !== 'PENDING' ? (
                                 <div>
                                   <div>By: <strong>{req.reviewerName || 'Administrator'}</strong></div>
@@ -2655,13 +2796,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                                     <div>On: {new Date(req.reviewedAt).toLocaleDateString('en-IN')}</div>
                                   )}
                                   {req.adminComments && (
-                                    <div style={{ color: '#475569', fontStyle: 'italic', marginTop: '2px' }}>
+                                    <div style={{ color: 'var(--color-slate-600)', fontStyle: 'italic', marginTop: '2px' }}>
                                       Note: "{req.adminComments}"
                                     </div>
                                   )}
                                 </div>
                               ) : (
-                                <span style={{ color: '#94A3B8' }}>Awaiting decision</span>
+                                <span style={{ color: 'var(--color-slate-400)' }}>Awaiting decision</span>
                               )}
                             </td>
                             <td>
@@ -2782,7 +2923,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 onChange={(e) => setNewStudentForm({ ...newStudentForm, username: e.target.value })}
                 placeholder="Defaults to Register Number"
               />
-              <span style={{ fontSize: '0.72rem', color: '#64748B' }}>Leave blank to auto-use Register Number</span>
+              <span style={{ fontSize: '0.72rem', color: 'var(--color-slate-500)' }}>Leave blank to auto-use Register Number</span>
             </div>
             <div className="form-group">
               <label className="form-label">Temporary Password *</label>
@@ -2828,7 +2969,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       >
         {createdStudentCredentials && (
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#ECFDF5', border: '1px solid #A7F3D0', padding: '1rem', borderRadius: '8px', color: '#065F46', marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: 'var(--color-success-50)', border: '1px solid #A7F3D0', padding: '1rem', borderRadius: '8px', color: '#065F46', marginBottom: '1.25rem' }}>
               <CheckCircle2 size={24} color="#059669" />
               <div>
                 <strong style={{ fontSize: '0.95rem' }}>Account created successfully!</strong>
@@ -2838,39 +2979,39 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
               </div>
             </div>
 
-            <div style={{ backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '1.25rem', marginBottom: '1.25rem' }}>
+            <div style={{ backgroundColor: 'var(--color-slate-50)', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '1.25rem', marginBottom: '1.25rem' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', fontSize: '0.875rem' }}>
                 <div>
-                  <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem' }}>Student Name</span>
-                  <strong style={{ color: '#0B2545' }}>{createdStudentCredentials.fullName}</strong>
+                  <span style={{ color: 'var(--color-slate-500)', display: 'block', fontSize: '0.75rem' }}>Student Name</span>
+                  <strong style={{ color: 'var(--color-navy-800)' }}>{createdStudentCredentials.fullName}</strong>
                 </div>
                 <div>
-                  <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem' }}>Register Number</span>
-                  <strong style={{ color: '#0B2545' }}>{createdStudentCredentials.registerNumber}</strong>
+                  <span style={{ color: 'var(--color-slate-500)', display: 'block', fontSize: '0.75rem' }}>Register Number</span>
+                  <strong style={{ color: 'var(--color-navy-800)' }}>{createdStudentCredentials.registerNumber}</strong>
                 </div>
                 <div>
-                  <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem' }}>Permanent Student ID</span>
-                  <code style={{ color: '#1E293B', backgroundColor: '#EDF2F7', padding: '2px 6px', borderRadius: '4px' }}>{createdStudentCredentials.studentId}</code>
+                  <span style={{ color: 'var(--color-slate-500)', display: 'block', fontSize: '0.75rem' }}>Permanent Student ID</span>
+                  <code style={{ color: 'var(--color-slate-800)', backgroundColor: '#EDF2F7', padding: '2px 6px', borderRadius: '4px' }}>{createdStudentCredentials.studentId}</code>
                 </div>
                 <div>
-                  <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem' }}>Department & Batch</span>
-                  <strong style={{ color: '#0B2545' }}>{createdStudentCredentials.department} • {createdStudentCredentials.batch}</strong>
+                  <span style={{ color: 'var(--color-slate-500)', display: 'block', fontSize: '0.75rem' }}>Department & Batch</span>
+                  <strong style={{ color: 'var(--color-navy-800)' }}>{createdStudentCredentials.department} • {createdStudentCredentials.batch}</strong>
                 </div>
-                <div style={{ gridColumn: 'span 2', height: '1px', backgroundColor: '#E2E8F0', margin: '4px 0' }} />
+                <div style={{ gridColumn: 'span 2', height: '1px', backgroundColor: 'var(--color-slate-200)', margin: '4px 0' }} />
                 <div>
-                  <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem' }}>Login Username</span>
+                  <span style={{ color: 'var(--color-slate-500)', display: 'block', fontSize: '0.75rem' }}>Login Username</span>
                   <strong style={{ color: '#1D4ED8', fontSize: '1rem' }}>{createdStudentCredentials.username}</strong>
                 </div>
                 <div>
-                  <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem' }}>Temporary Password</span>
+                  <span style={{ color: 'var(--color-slate-500)', display: 'block', fontSize: '0.75rem' }}>Temporary Password</span>
                   <strong style={{ color: '#DC2626', fontSize: '1rem' }}>{createdStudentCredentials.temporaryPassword}</strong>
                 </div>
                 <div>
-                  <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem' }}>Account Status</span>
+                  <span style={{ color: 'var(--color-slate-500)', display: 'block', fontSize: '0.75rem' }}>Account Status</span>
                   <span className="badge badge-success">{createdStudentCredentials.isActive}</span>
                 </div>
                 <div>
-                  <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem' }}>Profile Status</span>
+                  <span style={{ color: 'var(--color-slate-500)', display: 'block', fontSize: '0.75rem' }}>Profile Status</span>
                   <span className="badge badge-warning">Pending First Login</span>
                 </div>
               </div>
@@ -2925,7 +3066,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 placeholder="e.g. Password@123"
                 required
               />
-              <span style={{ fontSize: '0.72rem', color: '#64748B' }}>Provide this new temporary password to the student.</span>
+              <span style={{ fontSize: '0.72rem', color: 'var(--color-slate-500)' }}>Provide this new temporary password to the student.</span>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem' }}>
@@ -3118,7 +3259,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 </select>
               </div>
               <div className="form-group">
-                <label className="form-label">New Password <span style={{ color: '#94A3B8', fontSize: '0.75rem' }}>(leave blank to keep current)</span></label>
+                <label className="form-label">New Password <span style={{ color: 'var(--color-slate-400)', fontSize: '0.75rem' }}>(leave blank to keep current)</span></label>
                 <input
                   type="text"
                   className="form-control"
@@ -3309,6 +3450,168 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
         </form>
       </Modal>
 
+      {/* MODAL: Reassign Faculty Department (ADMIN only, two-step confirm) */}
+      <Modal
+        isOpen={reassignDeptTarget !== null}
+        onClose={() => {
+          if (savingReassignDept) return;
+          setReassignDeptTarget(null);
+          setReassignDeptNewId('');
+          setReassignDeptStep('select');
+        }}
+        title={reassignDeptStep === 'confirm' ? 'Reassign Faculty?' : 'Reassign Department'}
+      >
+        {reassignDeptTarget && (
+          <div>
+            {reassignDeptStep === 'select' ? (
+              <>
+                <p style={{ margin: 0, color: 'var(--color-slate-500)', fontSize: '0.9rem' }}>
+                  Move <strong>{reassignDeptTarget.full_name}</strong> to a new academic department.
+                </p>
+
+                <div className="form-group" style={{ marginTop: '1rem' }}>
+                  <label className="form-label">Current Department</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={`${reassignDeptTarget.department_name || 'Unassigned'}${reassignDeptTarget.department_code ? ` (${reassignDeptTarget.department_code})` : ''}`}
+                    readOnly
+                    style={{ backgroundColor: 'var(--color-slate-100)', fontWeight: 700, color: 'var(--color-slate-700)' }}
+                  />
+                </div>
+
+                <div className="form-group" style={{ marginTop: '0.85rem' }}>
+                  <label className="form-label">New Department</label>
+                  <select
+                    className="form-control"
+                    value={reassignDeptNewId}
+                    onChange={(e) => setReassignDeptNewId(e.target.value)}
+                  >
+                    <option value="">-- Select the new department --</option>
+                    {departments
+                      .filter((d) => d.id !== reassignDeptTarget.department_id)
+                      .map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name} ({d.code})
+                        </option>
+                      ))}
+                  </select>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--color-slate-500)', marginTop: '0.3rem' }}>
+                    The same department cannot be selected.
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: '0.6rem',
+                    alignItems: 'flex-start',
+                    background: '#EFF6FF',
+                    border: '1px solid #BFDBFE',
+                    borderRadius: '8px',
+                    padding: '0.85rem 1rem',
+                    marginTop: '0.85rem',
+                    fontSize: '0.88rem',
+                    color: '#1E3A8A',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  <BookOpen size={17} style={{ flexShrink: 0, marginTop: 1 }} />
+                  <div>
+                    <strong>Existing mentees are NOT moved automatically.</strong> This changes the
+                    faculty's department scope only. The {reassignDeptTarget.mentee_count || 0} current
+                    mentee assignment{reassignDeptTarget.mentee_count === 1 ? '' : 's'} stay until you
+                    reassign them manually through the Mentor Reassignment desk.
+                  </div>
+                </div>
+
+                <div className="modal-footer" style={{ padding: 0, marginTop: '1.25rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => {
+                      setReassignDeptTarget(null);
+                      setReassignDeptNewId('');
+                      setReassignDeptStep('select');
+                    }}
+                    disabled={savingReassignDept}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-gold"
+                    disabled={savingReassignDept || !reassignDeptNewId || reassignDeptNewId === reassignDeptTarget.department_id}
+                    onClick={() => setReassignDeptStep('confirm')}
+                  >
+                    Reassign Department
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: '#7C2D12' }}>
+                  Reassign Faculty?
+                </p>
+                <p style={{ margin: '0.6rem 0 0', color: 'var(--color-slate-600)', lineHeight: 1.6 }}>
+                  <strong>{reassignDeptTarget.full_name}</strong> will be moved from{' '}
+                  <strong>{reassignDeptTarget.department_name || 'the old department'}</strong> to{' '}
+                  <strong>
+                    {departments.find((d) => d.id === reassignDeptNewId)?.name ||
+                      'the new department'}
+                  </strong>
+                  .
+                </p>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: '0.6rem',
+                    alignItems: 'flex-start',
+                    background: '#FFFBEB',
+                    border: '1px solid #FDE68A',
+                    borderRadius: '8px',
+                    padding: '0.85rem 1rem',
+                    marginTop: '0.85rem',
+                    fontSize: '0.9rem',
+                    color: '#78350F',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: 1 }} />
+                  <div>
+                    The faculty's future department-scoped access will follow the new department.
+                    Existing mentee assignments and all historical records remain unchanged — you
+                    must reassign mentees manually afterwards if they should move too.
+                  </div>
+                </div>
+
+                <div className="modal-footer" style={{ padding: 0, marginTop: '1rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setReassignDeptStep('select')}
+                    disabled={savingReassignDept}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-gold"
+                    disabled={savingReassignDept}
+                    onClick={handleConfirmReassignDept}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                  >
+                    <ArrowRightLeft size={15} />
+                    {savingReassignDept ? 'Reassigning…' : 'Confirm Reassignment'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </Modal>
+
       {/* MODAL: Add Department */}
       <Modal
         isOpen={showAddDeptModal}
@@ -3362,7 +3665,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
           <div>
             <div
               style={{
-                backgroundColor: '#FEF2F2',
+                backgroundColor: 'var(--color-danger-50)',
                 border: '1px solid #FECACA',
                 padding: '1rem',
                 borderRadius: '8px',
@@ -3381,21 +3684,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
               </div>
             </div>
 
-            <div style={{ backgroundColor: '#F8FAFC', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem', border: '1px solid #E2E8F0', fontSize: '0.875rem' }}>
+            <div style={{ backgroundColor: 'var(--color-slate-50)', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem', border: '1px solid #E2E8F0', fontSize: '0.875rem' }}>
               <div style={{ marginBottom: '6px' }}>
-                <span style={{ color: '#64748B' }}>Student Name: </span>
-                <strong style={{ color: '#0B2545' }}>{deleteStudentTarget.full_name}</strong>
+                <span style={{ color: 'var(--color-slate-500)' }}>Student Name: </span>
+                <strong style={{ color: 'var(--color-navy-800)' }}>{deleteStudentTarget.full_name}</strong>
               </div>
               <div style={{ marginBottom: '6px' }}>
-                <span style={{ color: '#64748B' }}>Register Number: </span>
+                <span style={{ color: 'var(--color-slate-500)' }}>Register Number: </span>
                 <strong>{deleteStudentTarget.register_number}</strong>
               </div>
               <div style={{ marginBottom: '6px' }}>
-                <span style={{ color: '#64748B' }}>Department & Batch: </span>
+                <span style={{ color: 'var(--color-slate-500)' }}>Department & Batch: </span>
                 <span>{deleteStudentTarget.department_code} • {deleteStudentTarget.batch_name}</span>
               </div>
               <div>
-                <span style={{ color: '#64748B' }}>Permanent Student ID: </span>
+                <span style={{ color: 'var(--color-slate-500)' }}>Permanent Student ID: </span>
                 <code>{deleteStudentTarget.id}</code>
               </div>
             </div>
@@ -3435,7 +3738,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
           <div>
             <div
               style={{
-                backgroundColor: '#FEF2F2',
+                backgroundColor: 'var(--color-danger-50)',
                 border: '1px solid #FECACA',
                 padding: '1rem',
                 borderRadius: '8px',
@@ -3454,21 +3757,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
               </div>
             </div>
 
-            <div style={{ backgroundColor: '#F8FAFC', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem', border: '1px solid #E2E8F0', fontSize: '0.875rem' }}>
+            <div style={{ backgroundColor: 'var(--color-slate-50)', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem', border: '1px solid #E2E8F0', fontSize: '0.875rem' }}>
               <div style={{ marginBottom: '6px' }}>
-                <span style={{ color: '#64748B' }}>Faculty Name: </span>
-                <strong style={{ color: '#0B2545' }}>{deleteFacultyTarget.full_name}</strong>
+                <span style={{ color: 'var(--color-slate-500)' }}>Faculty Name: </span>
+                <strong style={{ color: 'var(--color-navy-800)' }}>{deleteFacultyTarget.full_name}</strong>
               </div>
               <div style={{ marginBottom: '6px' }}>
-                <span style={{ color: '#64748B' }}>Employee ID: </span>
+                <span style={{ color: 'var(--color-slate-500)' }}>Employee ID: </span>
                 <strong>{deleteFacultyTarget.employee_id}</strong>
               </div>
               <div style={{ marginBottom: '6px' }}>
-                <span style={{ color: '#64748B' }}>Designation: </span>
+                <span style={{ color: 'var(--color-slate-500)' }}>Designation: </span>
                 <span>{deleteFacultyTarget.designation}</span>
               </div>
               <div>
-                <span style={{ color: '#64748B' }}>Active Mentees: </span>
+                <span style={{ color: 'var(--color-slate-500)' }}>Active Mentees: </span>
                 <span className="badge badge-warning">{deleteFacultyTarget.mentee_count || 0} Mentees</span>
               </div>
             </div>
@@ -3505,22 +3808,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
       >
         {selectedEditRequest && (
           <div>
-            <div style={{ backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', padding: '1rem', borderRadius: '8px', marginBottom: '1.25rem' }}>
+            <div style={{ backgroundColor: 'var(--color-slate-50)', border: '1px solid #E2E8F0', padding: '1rem', borderRadius: '8px', marginBottom: '1.25rem' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', fontSize: '0.85rem' }}>
                 <div>
-                  <span style={{ color: '#64748B', display: 'block' }}>Student Name</span>
-                  <strong style={{ color: '#0B2545', fontSize: '0.95rem' }}>{selectedEditRequest.studentName}</strong>
+                  <span style={{ color: 'var(--color-slate-500)', display: 'block' }}>Student Name</span>
+                  <strong style={{ color: 'var(--color-navy-800)', fontSize: '0.95rem' }}>{selectedEditRequest.studentName}</strong>
                 </div>
                 <div>
-                  <span style={{ color: '#64748B', display: 'block' }}>Register Number</span>
-                  <strong style={{ color: '#0B2545', fontSize: '0.95rem' }}>{selectedEditRequest.registerNumber}</strong>
+                  <span style={{ color: 'var(--color-slate-500)', display: 'block' }}>Register Number</span>
+                  <strong style={{ color: 'var(--color-navy-800)', fontSize: '0.95rem' }}>{selectedEditRequest.registerNumber}</strong>
                 </div>
                 <div>
-                  <span style={{ color: '#64748B', display: 'block' }}>Requested On</span>
+                  <span style={{ color: 'var(--color-slate-500)', display: 'block' }}>Requested On</span>
                   <span>{new Date(selectedEditRequest.createdAt).toLocaleString('en-IN')}</span>
                 </div>
                 <div>
-                  <span style={{ color: '#64748B', display: 'block' }}>Request Status</span>
+                  <span style={{ color: 'var(--color-slate-500)', display: 'block' }}>Request Status</span>
                   <span className={`badge ${selectedEditRequest.status === 'APPROVED' ? 'badge-success' : selectedEditRequest.status === 'REJECTED' ? 'badge-danger' : 'badge-warning'}`}>
                     {selectedEditRequest.status}
                   </span>
@@ -3529,7 +3832,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
             </div>
 
             <div style={{ marginBottom: '1.25rem' }}>
-              <label style={{ fontSize: '0.85rem', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '0.5rem' }}>
+              <label style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-slate-700)', display: 'block', marginBottom: '0.5rem' }}>
                 Requested Modifications:
               </label>
               <div style={{ border: '1px solid #E2E8F0', borderRadius: '8px', overflow: 'hidden' }}>
@@ -3545,28 +3848,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                     {selectedEditRequest.requestedFields?.fullName && (
                       <tr>
                         <td style={{ fontWeight: 600 }}>Full Name</td>
-                        <td style={{ color: '#64748B' }}>{selectedEditRequest.currentValues?.fullName || '—'}</td>
+                        <td style={{ color: 'var(--color-slate-500)' }}>{selectedEditRequest.currentValues?.fullName || '—'}</td>
                         <td><strong style={{ color: '#059669' }}>{selectedEditRequest.requestedFields.fullName}</strong></td>
                       </tr>
                     )}
                     {selectedEditRequest.requestedFields?.registerNumber && (
                       <tr>
                         <td style={{ fontWeight: 600 }}>Register Number</td>
-                        <td style={{ color: '#64748B' }}>{selectedEditRequest.currentValues?.registerNumber || '—'}</td>
+                        <td style={{ color: 'var(--color-slate-500)' }}>{selectedEditRequest.currentValues?.registerNumber || '—'}</td>
                         <td><strong style={{ color: '#059669' }}>{selectedEditRequest.requestedFields.registerNumber}</strong></td>
                       </tr>
                     )}
                     {selectedEditRequest.requestedFields?.departmentName && (
                       <tr>
                         <td style={{ fontWeight: 600 }}>Department</td>
-                        <td style={{ color: '#64748B' }}>{selectedEditRequest.currentValues?.departmentName || '—'}</td>
+                        <td style={{ color: 'var(--color-slate-500)' }}>{selectedEditRequest.currentValues?.departmentName || '—'}</td>
                         <td><strong style={{ color: '#059669' }}>{selectedEditRequest.requestedFields.departmentName}</strong></td>
                       </tr>
                     )}
                     {selectedEditRequest.requestedFields?.batchName && (
                       <tr>
                         <td style={{ fontWeight: 600 }}>Academic Batch</td>
-                        <td style={{ color: '#64748B' }}>{selectedEditRequest.currentValues?.batchName || '—'}</td>
+                        <td style={{ color: 'var(--color-slate-500)' }}>{selectedEditRequest.currentValues?.batchName || '—'}</td>
                         <td><strong style={{ color: '#059669' }}>{selectedEditRequest.requestedFields.batchName}</strong></td>
                       </tr>
                     )}
@@ -3576,10 +3879,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
             </div>
 
             <div style={{ marginBottom: '1.25rem' }}>
-              <label style={{ fontSize: '0.85rem', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '0.35rem' }}>
+              <label style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-slate-700)', display: 'block', marginBottom: '0.35rem' }}>
                 Student's Reason / Justification:
               </label>
-              <div style={{ background: '#F8FAFC', padding: '0.75rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.85rem', color: '#1E293B' }}>
+              <div style={{ background: 'var(--color-slate-50)', padding: '0.75rem', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '0.85rem', color: 'var(--color-slate-800)' }}>
                 {selectedEditRequest.reason || 'No written explanation provided.'}
               </div>
             </div>
@@ -3587,7 +3890,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
             {selectedEditRequest.status === 'PENDING' ? (
               <form onSubmit={handleReviewEditRequest}>
                 <div style={{ marginBottom: '1.25rem' }}>
-                  <label style={{ fontSize: '0.85rem', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '0.5rem' }}>
+                  <label style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-slate-700)', display: 'block', marginBottom: '0.5rem' }}>
                     Administrative Action *
                   </label>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
@@ -3674,8 +3977,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
               </form>
             ) : (
               <div>
-                <div style={{ backgroundColor: '#F8FAFC', padding: '0.85rem', borderRadius: '6px', border: '1px solid #E2E8F0', marginBottom: '1rem', fontSize: '0.85rem' }}>
-                  <div style={{ fontWeight: 600, color: '#334155', marginBottom: '4px' }}>Review Record:</div>
+                <div style={{ backgroundColor: 'var(--color-slate-50)', padding: '0.85rem', borderRadius: '6px', border: '1px solid #E2E8F0', marginBottom: '1rem', fontSize: '0.85rem' }}>
+                  <div style={{ fontWeight: 600, color: 'var(--color-slate-700)', marginBottom: '4px' }}>Review Record:</div>
                   <div>Reviewed By: <strong>{selectedEditRequest.reviewerName || 'Administrator'}</strong></div>
                   <div>Decision Date: {selectedEditRequest.reviewedAt ? new Date(selectedEditRequest.reviewedAt).toLocaleString('en-IN') : 'N/A'}</div>
                   {selectedEditRequest.adminComments && (
@@ -3813,21 +4116,21 @@ const AssignMenteesModal: React.FC<AssignMenteesModalProps> = ({
         margin: '0 1rem',
       }}>
         {/* Header */}
-        <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', background: '#F8FAFC', borderRadius: '16px 16px 0 0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', background: 'var(--color-slate-50)', borderRadius: '16px 16px 0 0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
-            <h3 style={{ fontWeight: 800, color: '#0B2545', fontSize: '1.1rem', marginBottom: '2px' }}>Assign Mentees</h3>
-            <div style={{ fontSize: '0.82rem', color: '#475569' }}>
+            <h3 style={{ fontWeight: 800, color: 'var(--color-navy-800)', fontSize: '1.1rem', marginBottom: '2px' }}>Assign Mentees</h3>
+            <div style={{ fontSize: '0.82rem', color: 'var(--color-slate-600)' }}>
               <strong>{faculty.full_name}</strong> — {faculty.department_name} ({faculty.department_code})
-              <span style={{ marginLeft: '0.75rem', color: '#64748B' }}>Currently: {faculty.mentee_count || 0} mentees</span>
+              <span style={{ marginLeft: '0.75rem', color: 'var(--color-slate-500)' }}>Currently: {faculty.mentee_count || 0} mentees</span>
             </div>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748B', padding: '4px' }}><X size={20} /></button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-slate-500)', padding: '4px' }}><X size={20} /></button>
         </div>
 
         {/* Filters */}
         <div style={{ padding: '0.875rem 1.5rem', borderBottom: '1px solid #F1F5F9', background: '#FAFAFA', display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
           <div style={{ position: 'relative', flex: '1 1 200px' }}>
-            <Search size={14} style={{ position: 'absolute', left: '0.6rem', top: '50%', transform: 'translateY(-50%)', color: '#94A3B8' }} />
+            <Search size={14} style={{ position: 'absolute', left: '0.6rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-slate-400)' }} />
             <input
               type="text"
               value={search}
@@ -3861,9 +4164,9 @@ const AssignMenteesModal: React.FC<AssignMenteesModalProps> = ({
         {/* Student List */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '0.5rem 0' }}>
           {loading ? (
-            <div style={{ padding: '2rem', textAlign: 'center', color: '#64748B', fontSize: '0.9rem' }}>⏳ Loading students...</div>
+            <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-slate-500)', fontSize: '0.9rem' }}>⏳ Loading students...</div>
           ) : students.length === 0 ? (
-            <div style={{ padding: '2rem', textAlign: 'center', color: '#64748B', fontSize: '0.9rem' }}>
+            <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-slate-500)', fontSize: '0.9rem' }}>
               {search ? `No students found for "${search}"` : 'No students found with current filters.'}
             </div>
           ) : (
@@ -3876,7 +4179,7 @@ const AssignMenteesModal: React.FC<AssignMenteesModalProps> = ({
                   onChange={toggleAll}
                   style={{ width: '16px', height: '16px', cursor: 'pointer' }}
                 />
-                <span style={{ fontSize: '0.8rem', color: '#64748B', fontWeight: 600 }}>
+                <span style={{ fontSize: '0.8rem', color: 'var(--color-slate-500)', fontWeight: 600 }}>
                   Select all unassigned ({students.filter((s) => !s.has_active_mentor).length})
                 </span>
                 {selected.size > 0 && (
@@ -3909,8 +4212,8 @@ const AssignMenteesModal: React.FC<AssignMenteesModalProps> = ({
                       style={{ width: '16px', height: '16px', marginTop: '2px', cursor: hasOtherMentor ? 'not-allowed' : 'pointer', flexShrink: 0 }}
                     />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, color: '#1E293B', fontSize: '0.875rem' }}>{s.full_name}</div>
-                      <div style={{ fontSize: '0.78rem', color: '#64748B', display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginTop: '2px' }}>
+                      <div style={{ fontWeight: 700, color: 'var(--color-slate-800)', fontSize: '0.875rem' }}>{s.full_name}</div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--color-slate-500)', display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginTop: '2px' }}>
                         <span style={{ background: '#F1F5F9', borderRadius: '4px', padding: '1px 6px', fontWeight: 600 }}>{s.register_number}</span>
                         <span>{s.department_code} • Year {s.year_of_study}</span>
                         <span>Batch: {s.batch_name}</span>
@@ -3935,7 +4238,7 @@ const AssignMenteesModal: React.FC<AssignMenteesModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid #E2E8F0', background: '#F8FAFC', borderRadius: '0 0 16px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+        <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid #E2E8F0', background: 'var(--color-slate-50)', borderRadius: '0 0 16px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
           {!showConfirm ? (
             <>
               <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
@@ -4033,22 +4336,22 @@ const ViewMenteesModal: React.FC<ViewMenteesModalProps> = ({ faculty, onClose, o
         margin: '0 1rem',
       }}>
         {/* Header */}
-        <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', background: '#F8FAFC', borderRadius: '16px 16px 0 0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #E2E8F0', background: 'var(--color-slate-50)', borderRadius: '16px 16px 0 0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
-            <h3 style={{ fontWeight: 800, color: '#0B2545', fontSize: '1.1rem', marginBottom: '2px' }}>
+            <h3 style={{ fontWeight: 800, color: 'var(--color-navy-800)', fontSize: '1.1rem', marginBottom: '2px' }}>
               {faculty.full_name}'s Mentees
             </h3>
-            <div style={{ fontSize: '0.82rem', color: '#475569' }}>
+            <div style={{ fontSize: '0.82rem', color: 'var(--color-slate-600)' }}>
               {faculty.department_name} ({faculty.department_code}) — {mentees.length} active mentee{mentees.length !== 1 ? 's' : ''}
             </div>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748B', padding: '4px' }}><X size={20} /></button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-slate-500)', padding: '4px' }}><X size={20} /></button>
         </div>
 
         {/* Search */}
         <div style={{ padding: '0.75rem 1.5rem', borderBottom: '1px solid #F1F5F9' }}>
           <div style={{ position: 'relative' }}>
-            <Search size={14} style={{ position: 'absolute', left: '0.6rem', top: '50%', transform: 'translateY(-50%)', color: '#94A3B8' }} />
+            <Search size={14} style={{ position: 'absolute', left: '0.6rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-slate-400)' }} />
             <input
               type="text" value={search} onChange={(e) => setSearch(e.target.value)}
               placeholder="Search mentee name or register number..."
@@ -4076,9 +4379,9 @@ const ViewMenteesModal: React.FC<ViewMenteesModalProps> = ({ faculty, onClose, o
         {/* List */}
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {loading ? (
-            <div style={{ padding: '2rem', textAlign: 'center', color: '#64748B' }}>⏳ Loading mentees...</div>
+            <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-slate-500)' }}>⏳ Loading mentees...</div>
           ) : mentees.length === 0 ? (
-            <div style={{ padding: '2.5rem', textAlign: 'center', color: '#64748B', fontSize: '0.9rem' }}>
+            <div style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--color-slate-500)', fontSize: '0.9rem' }}>
               {search ? `No mentees matching "${search}"` : `${faculty.full_name} has no assigned mentees yet.`}
             </div>
           ) : (
@@ -4088,8 +4391,8 @@ const ViewMenteesModal: React.FC<ViewMenteesModalProps> = ({ faculty, onClose, o
                 style={{ padding: '0.875rem 1.5rem', borderBottom: '1px solid #F1F5F9', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}
               >
                 <div style={{ flex: 1, minWidth: '180px' }}>
-                  <div style={{ fontWeight: 700, color: '#1E293B', fontSize: '0.875rem' }}>{m.full_name}</div>
-                  <div style={{ fontSize: '0.78rem', color: '#64748B', display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginTop: '2px' }}>
+                  <div style={{ fontWeight: 700, color: 'var(--color-slate-800)', fontSize: '0.875rem' }}>{m.full_name}</div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--color-slate-500)', display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginTop: '2px' }}>
                     <span style={{ background: '#F1F5F9', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>{m.register_number}</span>
                     <span>{m.department_code} • Yr {m.year_of_study}</span>
                     <span>{m.batch_name}</span>
@@ -4132,7 +4435,7 @@ const ViewMenteesModal: React.FC<ViewMenteesModalProps> = ({ faculty, onClose, o
         </div>
 
         {/* Footer */}
-        <div style={{ padding: '0.875rem 1.5rem', borderTop: '1px solid #E2E8F0', background: '#F8FAFC', borderRadius: '0 0 16px 16px', display: 'flex', justifyContent: 'flex-end' }}>
+        <div style={{ padding: '0.875rem 1.5rem', borderTop: '1px solid #E2E8F0', background: 'var(--color-slate-50)', borderRadius: '0 0 16px 16px', display: 'flex', justifyContent: 'flex-end' }}>
           <button className="btn btn-secondary" onClick={onClose}>Close</button>
         </div>
       </div>

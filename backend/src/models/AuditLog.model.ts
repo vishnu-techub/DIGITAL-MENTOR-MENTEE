@@ -1,7 +1,7 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
 
-export interface IAuditLog extends Document {
-  user?: mongoose.Types.ObjectId;
+export interface IAuditLog extends LocalDocument {
+  user?: LocalId;
   userName?: string;
   role?: string;
   action: string;
@@ -16,7 +16,7 @@ export interface IAuditLog extends Document {
 const AuditLogSchema = new Schema<IAuditLog>(
   {
     user: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'User',
       index: true,
     },
@@ -40,7 +40,7 @@ const AuditLogSchema = new Schema<IAuditLog>(
       type: String,
     },
     details: {
-      type: Schema.Types.Mixed,
+      type: 'Mixed',
     },
     ipAddress: {
       type: String,
@@ -62,4 +62,4 @@ const AuditLogSchema = new Schema<IAuditLog>(
 // Index
 AuditLogSchema.index({ createdAt: -1 });
 
-export const AuditLog = mongoose.model<IAuditLog>('AuditLog', AuditLogSchema);
+export const AuditLog = defineModel<IAuditLog>('AuditLog', AuditLogSchema);

@@ -22,5 +22,17 @@
   },
   "dependencies": {
     "express": "^5.2.1"
-  }
+  },
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vishnu-techub/DIGITAL-MENTOR-MENTEE.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/vishnu-techub/DIGITAL-MENTOR-MENTEE/issues"
+  },
+  "homepage": "https://github.com/vishnu-techub/DIGITAL-MENTOR-MENTEE#readme"
 }

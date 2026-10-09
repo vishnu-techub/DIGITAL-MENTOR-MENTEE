@@ -6,11 +6,15 @@ import crypto from 'crypto';
 /**
  * Single source of truth for uploaded files.
  *
+ * TEMPORARY LOCAL FILE STORAGE.
+ * Replace with a persistent database/storage implementation before production
+ * deployment.
+ *
  * Uploads are written to the local filesystem, but the runtime filesystem is not
  * writable everywhere: Render mounts the project directory read-only and only a
- * persistent disk (or, failing that, `/tmp`) accepts writes. The `uploads` tree
- * is also not tracked in git, so it does not exist in a fresh container and has
- * to be created on boot.
+ * persistent disk (or, failing that, `/tmp`) accepts writes. The uploads tree is
+ * also not tracked in git, so it does not exist in a fresh container and has to
+ * be created on boot.
  *
  * The previous code called `fs.mkdirSync` at import time without a guard, so a
  * read-only working directory threw before `startServer()` could run. The
@@ -19,7 +23,9 @@ import crypto from 'crypto';
  *
  * `UPLOADS_BASE` is the directory that actually backs every uploaded file on this
  * host. Every stored `fileUrl` keeps the stable `/uploads/<subdir>/<name>` shape,
- * and `resolveStoredUploadPath` maps that URL back onto the real directory.
+ * and `resolveStoredUploadPath` maps that URL back onto the real directory. The
+ * files live in `backend/storage/uploads/`; the stored URLs are unchanged, so no
+ * record had to be rewritten when the directory moved.
  *
  * ── Why there is a list of roots, not just one ──────────────────────────────────
  * `UPLOADS_BASE` used to be derived from `process.cwd()` alone. That makes the
@@ -33,9 +39,11 @@ import crypto from 'crypto';
  *
  * `UPLOAD_ROOTS` is that list, in priority order. It is anchored on
  * `UPLOADS_DIR`, then a mounted persistent disk, then the backend package's own
- * directory (derived from the module location, never from the cwd), then the
- * legacy cwd-relative path, and only then the ephemeral tmp fallback. Writes go to
- * the first writable entry; every read searches all of them.
+ * `storage/uploads` directory (derived from the module location, never from the
+ * cwd), then the pre-migration `backend/uploads` and cwd-relative locations kept
+ * purely so files already on disk stay resolvable, and only then the ephemeral
+ * tmp fallback. Writes go to the first writable entry; every read searches all
+ * of them.
  */
 
 const LOGICAL_PREFIX = 'uploads';
@@ -120,8 +128,11 @@ function buildUploadRoots(): string[] {
     process.env.UPLOADS_DIR,
     // A mounted persistent disk survives a redeploy; /tmp does not.
     fs.existsSync(RENDER_DISK_MOUNT) ? path.join(RENDER_DISK_MOUNT, LOGICAL_PREFIX) : null,
-    // The package's own uploads directory. cwd-independent, and the exact path
-    // `.gitignore` already reserves for user media.
+    // Canonical location: `backend/storage/uploads/`. cwd-independent, and the
+    // exact path `.gitignore` reserves for user media.
+    BACKEND_DIR ? path.join(BACKEND_DIR, 'storage', LOGICAL_PREFIX) : null,
+    // Pre-migration location. Kept as a READ root so certificates uploaded
+    // before the move stay resolvable without rewriting a single record.
     BACKEND_DIR ? path.join(BACKEND_DIR, LOGICAL_PREFIX) : null,
     // Legacy behaviour, kept so an existing checkout that was started from the
     // repository root keeps resolving.

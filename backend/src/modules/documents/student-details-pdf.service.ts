@@ -1,9 +1,9 @@
 import fs from 'fs';
 import path from 'path';
-import mongoose from 'mongoose';
 import { Student, StudentDocument } from '../../models/index.js';
 import { generateStudentPdf } from '../pdf/pdf.service.js';
 import { resolveWritableUploadsDir } from '../../config/storage.js';
+import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
 
 /**
  * Synchronizes the Student Details Form PDF for a given student.
@@ -18,12 +18,12 @@ import { resolveWritableUploadsDir } from '../../config/storage.js';
  * 5. NEVER deletes or modifies uploaded student certificates.
  */
 export async function syncStudentDetailsPdf(
-  studentIdOrRegNo: string | mongoose.Types.ObjectId,
-  uploadedByUserId?: string | mongoose.Types.ObjectId
+  studentIdOrRegNo: string | LocalId,
+  uploadedByUserId?: string | LocalId
 ) {
   try {
     let student: any = null;
-    if (mongoose.Types.ObjectId.isValid(studentIdOrRegNo)) {
+    if (isValidId(studentIdOrRegNo)) {
       student = await Student.findById(studentIdOrRegNo);
     }
     if (!student && typeof studentIdOrRegNo === 'string') {
@@ -66,8 +66,8 @@ export async function syncStudentDetailsPdf(
       primaryDoc.fileSize = pdfBytes.byteLength;
       primaryDoc.verificationStatus = 'Verified';
       primaryDoc.uploadedAt = new Date();
-      if (uploadedByUserId && mongoose.Types.ObjectId.isValid(uploadedByUserId)) {
-        primaryDoc.uploadedBy = new mongoose.Types.ObjectId(uploadedByUserId);
+      if (uploadedByUserId && isValidId(uploadedByUserId)) {
+        primaryDoc.uploadedBy = toLocalId(uploadedByUserId);
       }
       await primaryDoc.save();
       return primaryDoc;
@@ -84,8 +84,8 @@ export async function syncStudentDetailsPdf(
         fileType: 'application/pdf',
         fileSize: pdfBytes.byteLength,
         uploadedBy:
-          uploadedByUserId && mongoose.Types.ObjectId.isValid(uploadedByUserId)
-            ? new mongoose.Types.ObjectId(uploadedByUserId)
+          uploadedByUserId && isValidId(uploadedByUserId)
+            ? toLocalId(uploadedByUserId)
             : undefined,
         verificationStatus: 'Verified',
         uploadedAt: new Date(),

@@ -189,3 +189,173 @@ Commit and push the `StudentDashboard.tsx` fix, then redeploy the frontend and c
 Vercel that the student dashboard renders without a `ReferenceError`.
 
 ---
+
+## ENTRY D-002 — Login accepted → dashboard flash → redirect back to login (the "login loop")
+
+- **Timestamp:** 2026-10-07
+- **Status:** ROOT CAUSE IDENTIFIED — fixes applied and verified locally
+- **Severity:** High (auth UX), watchdog/test-only impact.
+
+### Reported symptom
+Credentials accepted, dashboard renders for a moment, then the app redirects straight back to
+the login page.
+
+### Root cause (FINAL)
+`frontend/src/context/AuthContext.tsx` `refreshUser()` — invoked by the `[token]` effect on every
+page load **and** re-invoked right after `login()` — did `logout()` in its `catch` for **any**
+error. `login()` sets the user optimistically, so the dashboard paints immediately; when the
+post-login `GET /api/auth/me` then failed for *any* reason (5xx, network, cold start, backend
+restart, wrong API base), the catch wiped the freshly issued `ksrce_token` and redirected to
+the login page — the exact loop.
+
+Amplifier: `frontend/.env` **and** `frontend/.env.example` were set to
+`VITE_API_URL=http://localhost:5000`. Nothing in this repository runs on port 5000 — the backend
+is 5050 (`backend/.env`, vite proxy target). Port 5000 is the sibling project
+`A:\mini projects\no Due` (its DB has no `ksrce@admin`, so KSRCE credentials get 401 there).
+With that base every API call — including the post-login restore — was guaranteed to fail.
+
+Secondary findings (all ruled out with evidence):
+- Only 3 LOGIN audit entries ever, all from this session's tests ⇒ the reported session never hit
+  the local 5050 backend; it failed on the restore request, matching a transient/env cause.
+- Production (Render API + Vercel frontend) verified working end-to-end via Playwright —
+  login, all dashboard APIs 200, dashboard stayed up 90s, no loop.
+- Shared-token-key, route-guard, SW (`/api/` early return), StrictMode, stale `/me` race — none
+  reproduces the loop; the single unconditional `catch { logout() }` does (proven below).
+
+### Exact change made
+Single file: `frontend/src/context/AuthContext.tsx`
+
+Before:
+```tsx
+} catch {
+  logout();
+} finally {
+  setIsLoading(false);
+}
+```
+
+After:
+```tsx
+} catch (err) {
+  const statusCode = (err as { statusCode?: number })?.statusCode ?? 0;
+  if (statusCode === 401 || statusCode === 403) {
+    logout();
+  }
+} finally {
+  setIsLoading(false);
+}
+```
+
+Behaviour now: only a genuine auth rejection (401/403) logs the user out; transient failures
+keep the user and token so the dashboard never bounces. Also `frontend/.env` → `localhost:5050`
+and `frontend/.env.example` restored to the documented values (Render URL for production; empty
+for the Vite dev proxy). No other source file touched; the project-wide auth contract, token
+storage (`ksrce_token` single key), guards, and backend auth are unchanged.
+
+### Reproduced / verified
+| Check | Result |
+|---|---|
+| Pre-fix reproduction: force `/auth/me` to 500 after a successful login (Playwright) | **FAIL reproduced** — `bouncedToLogin=true`, `tokenKept=false` |
+| Post-fix: same forced `/auth/me` 500 after login | **PASS** — `bouncedToLogin=false`, `tokenKept=true`, dashboard up |
+| Normal flow: login → dashboard stays 8s+ | **PASS** — all dashboard APIs 200 |
+| Page reload restores session (`/auth/me` 200) | **PASS** — stays on dashboard |
+| Logout | **PASS** — back at login, token cleared |
+| Backend auth-adjacent suite | **PASS** — `test:critical` 12/12 |
+| Build/typecheck | **PASS** — frontend `tsc && vite build` clean |
+
+### Files changed
+| File | Change |
+|---|---|
+| `frontend/src/context/AuthContext.tsx` | `refreshUser` logs out only on 401/403 |
+| `frontend/.env` | `VITE_API_URL=http://localhost:5050` (was 5000) |
+| `frontend/.env.example` | restored documented values (Render / empty dev proxy) |
+| `PROJECT_PROGRESS.md` | Current Issue + Last Change + Log row (2026-10-07) |
+
+### Next action
+Committing is only done when explicitly requested. No deployment required — the fix is in
+frontend source and will ship with the next build.
+
+---
+
+## ENTRY D-003 — Admin login rejected (HTTP 401) — bootstrap overwrote the stored password on every startup
+
+- **Timestamp:** 2026-10-09
+- **Status:** ROOT CAUSE IDENTIFIED — fix applied and locally verified
+- **Severity:** High (auth lifecycle) — silent lockout risk for the primary Administrator.
+
+### Reported symptom
+`POST /api/auth/login` with the Administrator's credentials returned **401 Unauthorized**, while the
+login endpoint itself was healthy (a valid configured password returns 200, a wrong one returns 401).
+
+### Root cause (FINAL)
+`backend/src/database/bootstrap.ts` — the **existing-admin branch** unconditionally re-hashed
+`ADMIN_PASSWORD` and wrote it over the stored admin `passwordHash` (and overwrote
+`username` / `email` / `fullName` / `department`) on **every process start**.
+
+Consequently any password the admin had set **in the app**, or any stored password that differed from
+the current `ADMIN_PASSWORD`, was silently reverted at the next boot. The password the user actually
+held then failed `bcrypt.compare` → **401**.
+
+Reproduced deterministically against a throwaway store: create the admin from `ADMIN_PASSWORD`, change
+its password to a new value, run `ensureSystemBootstrap()` again → the new password no longer matches;
+`ADMIN_PASSWORD` does. (Behaviour before the fix.)
+
+**Ruled out (with evidence):** login handler / route / JWT, the stored data, the frontend API base
+(`frontend/.env` → `localhost:5050`), and the recent sidebar/UI work — the login payload in
+`LoginPage.tsx`, `AuthContext.tsx` and `client.ts` is unchanged. Live before/after the fix: valid
+configured credentials → 200 `ADMIN`; wrong password → 401; unknown user → 401.
+
+### Exact change made
+One product file: `backend/src/database/bootstrap.ts`.
+- **Existing admin → PRESERVE.** Startup no longer overwrites the stored password or identity fields;
+  it only guarantees `role === 'ADMIN'` and `isActive === true`.
+- **Missing admin → still created** from `ADMIN_PASSWORD` (unchanged create path).
+- **Explicit opt-in reset:** `ADMIN_FORCE_PASSWORD_RESET=true` (with `ADMIN_PASSWORD`) re-applies the
+  configured password to the existing account once. Documented in `backend/.env.example`.
+
+No auth bypass, no hardcoded credential, no disabled verification, no auto-granted Admin, and no
+account/data reset. Tests already set `ADMIN_PASSWORD` and use a fresh `DATA_DIR` (the create path), so
+they are unaffected — and the fix prevents the silent post-change lockout the tests never exercised.
+
+### Test added
+`backend/src/tests/admin-auth-bootstrap.test.ts` (npm script `test:admin-auth`). 13 checks:
+fresh-store creation; restart preserves an in-app-changed password **and** identity; the stale
+`ADMIN_PASSWORD` is then rejected; a second restart is byte-identical; `ADMIN_FORCE_PASSWORD_RESET=true`
+re-applies `ADMIN_PASSWORD` without clobbering identity; the reset is one-shot. **13/13 PASS.**
+
+### Verification
+| Check | Command | Result |
+|---|---|---|
+| Admin credential lifecycle (new) | `npm run test:admin-auth` | **PASS** — 13/13 |
+| Live login, fixed server | `POST http://localhost:5050/api/auth/login` | **PASS** — 200 `ADMIN` for configured / lowercase / `admin` alias; wrong password 401; unknown user 401 |
+| Live restart preserves admin | server boot log | **PASS** — `[Bootstrap] Existing Administrator (ksrce@admin) preserved (password unchanged).` |
+| Data preservation / reassignment | `npm run test:critical` | **PASS** — 12/12 |
+| Admin route contract | `npm run test:admin-routes` | **PASS** — 8/8 |
+| Runtime end-to-end | `npm run test:runtime` | **PASS** — 38/38 |
+| Backend typecheck / build | `npx tsc --noEmit` / `npm run build` | **PASS** — exit 0 |
+| Frontend typecheck / build | `npx tsc --noEmit` / `npm run build` | **PASS** — 1659 modules, `dist/assets/index-BYBaBS3q.js` |
+
+### Files changed
+| File | Change |
+|---|---|
+| `backend/src/database/bootstrap.ts` | existing admin preserved on startup; opt-in `ADMIN_FORCE_PASSWORD_RESET` |
+| `backend/.env.example` | document `ADMIN_FORCE_PASSWORD_RESET` |
+| `backend/src/tests/admin-auth-bootstrap.test.ts` | new regression suite |
+| `backend/package.json` | added `test:admin-auth` script |
+| `PROJECT_PROGRESS.md` | Current Issue + Last Change + Log row |
+| `DEBUG_NOTES.md` | this note |
+
+### Remaining issues
+1. **Separate, confirmed, OUT-OF-SCOPE dashboard defect (not touched here):**
+   `frontend/src/pages/admin/AdminMentoringDashboard.tsx` is missing its mount effect
+   `useEffect(() => { loadData(); }, [loadData]);` (the adjacent `.broken` backup file still has it), so the
+   Admin Mentoring Dashboard remains on its skeleton. It is unrelated to authentication and needs its
+   own authorization to change dashboard behaviour.
+2. Scratch files from the earlier dashboard edit (`fix.py`, `temp_fix.py`, `temp_load.txt`) and the
+   session debug scripts have been removed.
+
+### Next action
+None required for login. If an operator wants `ADMIN_PASSWORD` to be authoritative again, set
+`ADMIN_FORCE_PASSWORD_RESET=true` for a single boot.
+
+---

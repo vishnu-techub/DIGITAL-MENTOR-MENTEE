@@ -2,31 +2,37 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotifications } from '../../context/NotificationContext';
 import { usePwa } from '../../context/PwaContext';
-import { Bell, User, LogOut, CheckCheck, Calendar, Shield, Menu, X, Download, CheckCircle2 } from 'lucide-react';
+import { Bell, LogOut, CheckCheck, Menu, X, Download, CheckCircle2, ChevronDown, ShieldCheck } from 'lucide-react';
 
 interface NavbarProps {
   onToggleSidebar?: () => void;
   isSidebarOpen?: boolean;
+  /** Human label of the section currently open, shown as topbar context. */
+  pageLabel?: string;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }) => {
+export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen, pageLabel }) => {
   const { user, logout } = useAuth();
-  const { notifications, unreadCount, markAsRead, triggerSaturdayReminders } = useNotifications();
+  const { notifications, unreadCount, markAsRead } = useNotifications();
   const { isInstalled, promptInstall } = usePwa();
   const [showNotifications, setShowNotifications] = useState(false);
-  const [isTriggering, setIsTriggering] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [showProfile, setShowProfile] = useState(false);
+  const notifRef = useRef<HTMLDivElement>(null);
+  const profileRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setShowNotifications(false);
-      }
+      const target = event.target as Node;
+      if (notifRef.current && !notifRef.current.contains(target)) setShowNotifications(false);
+      if (profileRef.current && !profileRef.current.contains(target)) setShowProfile(false);
     };
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setShowNotifications(false);
+      if (event.key === 'Escape') {
+        setShowNotifications(false);
+        setShowProfile(false);
+      }
     };
-    if (showNotifications) {
+    if (showNotifications || showProfile) {
       document.addEventListener('mousedown', handleClickOutside);
       document.addEventListener('keydown', handleEscape);
     }
@@ -34,23 +40,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleEscape);
     };
-  }, [showNotifications]);
-
-  const handleTrigger = async (type: string) => {
-    setIsTriggering(true);
-    await triggerSaturdayReminders(type);
-    setIsTriggering(false);
-  };
-
-  const getRoleBadgeClass = (role?: string) => {
-    switch (role) {
-      case 'ADMIN': return 'badge-danger';
-      case 'HOD': return 'badge-warning';
-      case 'FACULTY': return 'badge-primary';
-      case 'STUDENT': return 'badge-success';
-      default: return 'badge-info';
-    }
-  };
+  }, [showNotifications, showProfile]);
 
   const getRoleLabel = (role?: string) => {
     switch (role) {
@@ -62,11 +52,27 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
     }
   };
 
+  const displayName = user?.fullName?.includes('Balasubramanian')
+    ? 'System admin'
+    : user?.fullName || 'System admin';
+
+  const initials = (user?.fullName || 'User')
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('') || 'U';
+
+  const roleLine = user?.role === 'ADMIN'
+    ? 'ADMIN • KSRCE'
+    : `${user?.role || 'USER'}${user?.dept_code ? ` • ${user.dept_code}` : ''}`;
+
   return (
     <header className="ksrce-header">
-      <div style={{ display: 'flex', alignItems: 'center' }}>
+      <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
         {onToggleSidebar && (
           <button
+            type="button"
             onClick={onToggleSidebar}
             className="btn-hamburger"
             aria-label={isSidebarOpen ? 'Close navigation drawer' : 'Open navigation drawer'}
@@ -74,7 +80,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
             aria-controls="primary-sidebar"
             style={{
               background: 'rgba(255, 255, 255, 0.12)',
-              border: 'none',
+              border: '1px solid rgba(255, 255, 255, 0.16)',
               borderRadius: 'var(--radius-md)',
               padding: '0.45rem',
               color: '#ffffff',
@@ -97,20 +103,28 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
             className="ksrce-logo-img"
           />
           <div className="ksrce-brand-text desktop-only">
-            <h1>K.S.R. COLLEGE OF ENGINEERING (Autonomous)</h1>
-            <p>DIGITAL MENTOR–MENTEE MANAGEMENT SYSTEM • TIRUCHENGODE</p>
+            <h1>K.S.R. COLLEGE OF ENGINEERING</h1>
+            <p>DIGITAL MENTOR–MENTEE MANAGEMENT SYSTEM</p>
           </div>
           <div className="mobile-brand-text mobile-only">
             <h1>KSRCE Mentoring</h1>
             <p>Digital Portal</p>
           </div>
         </div>
+
+        {pageLabel && (
+          <div className="topbar-context desktop-only">
+            <span className="topbar-context-label">{pageLabel}</span>
+            <span className="topbar-context-role">{getRoleLabel(user?.role)}</span>
+          </div>
+        )}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-        {/* PWA Download / Install App Button or Installed Badge */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+        {/* PWA Download / Install App */}
         {!isInstalled ? (
           <button
+            type="button"
             onClick={promptInstall}
             className="btn-download-app desktop-only"
             style={{
@@ -134,7 +148,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
           </button>
         ) : (
           <span
-            className="badge-app-installed"
+            className="badge-app-installed desktop-only"
             style={{
               backgroundColor: 'rgba(16, 185, 129, 0.18)',
               color: '#6EE7B7',
@@ -154,52 +168,21 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
           </span>
         )}
 
-        {/* Notifications Bell */}
-        <div ref={dropdownRef} style={{ position: 'relative' }}>
+        {/* Notifications */}
+        <div ref={notifRef} style={{ position: 'relative' }}>
           <button
-            onClick={() => setShowNotifications(!showNotifications)}
+            type="button"
+            className="topbar-icon-btn"
+            onClick={() => setShowNotifications((v) => !v)}
             aria-label={`Institutional notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ', none unread'}`}
             aria-expanded={showNotifications}
             aria-haspopup="true"
-            style={{
-              background: 'rgba(255, 255, 255, 0.1)',
-              border: 'none',
-              borderRadius: 'var(--radius-md)',
-              padding: '0.5rem',
-              color: '#ffffff',
-              display: 'flex',
-              alignItems: 'center',
-              position: 'relative',
-              cursor: 'pointer',
-              minHeight: 'var(--touch-target)',
-              minWidth: 'var(--touch-target)',
-              justifyContent: 'center',
-              transition: 'background var(--motion-fast) var(--ease-standard)',
-            }}
             title="Institutional Notifications"
           >
             <Bell size={20} />
-            {unreadCount > 0 && (
-              <span
-                style={{
-                  position: 'absolute',
-                  top: '-4px',
-                  right: '-4px',
-                  background: '#EF4444',
-                  color: '#ffffff',
-                  fontSize: '0.65rem',
-                  fontWeight: 800,
-                  borderRadius: '9999px',
-                  padding: '1px 5px',
-                  border: '2px solid #0B2545',
-                }}
-              >
-                {unreadCount}
-              </span>
-            )}
+            {unreadCount > 0 && <span className="topbar-unread">{unreadCount}</span>}
           </button>
 
-          {/* Notifications Dropdown */}
           {showNotifications && (
             <div
               className="notification-dropdown"
@@ -208,8 +191,8 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
               style={{
                 position: 'absolute',
                 right: 0,
-                top: '46px',
-                width: '340px',
+                top: 'calc(100% + 0.55rem)',
+                width: '360px',
                 maxWidth: 'calc(100vw - 24px)',
                 backgroundColor: '#ffffff',
                 borderRadius: 'var(--radius-lg)',
@@ -220,85 +203,32 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
                 overflow: 'hidden',
               }}
             >
-              <div
-                style={{
-                  padding: '0.75rem 1rem',
-                  borderBottom: '1px solid #E2E8F0',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  backgroundColor: '#F8FAFC',
-                }}
-              >
-                <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#0B2545' }}>
-                  Notifications ({unreadCount} unread)
-                </span>
+              <div className="notif-head">
+                <span className="notif-title">Notifications ({unreadCount} unread)</span>
                 {unreadCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => markAsRead('all')}
-                    style={{
-                      background: 'transparent',
-                      color: 'var(--primary-600)',
-                      fontSize: 'var(--text-sm)',
-                      fontWeight: 600,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.25rem',
-                      cursor: 'pointer',
-                      padding: '0.25rem 0.4rem',
-                      borderRadius: 'var(--radius-sm)',
-                    }}
-                  >
+                  <button type="button" className="notif-mark-all" onClick={() => markAsRead('all')}>
                     <CheckCheck size={14} /> Mark all read
                   </button>
                 )}
               </div>
 
-              <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+              <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
                 {notifications.length === 0 ? (
-                  <div
-                    style={{
-                      padding: '1.75rem 1.5rem',
-                      textAlign: 'center',
-                      color: 'var(--slate-500)',
-                      fontSize: 'var(--text-base)',
-                    }}
-                  >
-                    No new notifications.
-                  </div>
+                  <div className="notif-empty">You are all caught up — no notifications right now.</div>
                 ) : (
                   notifications.map((n) => (
                     <button
                       type="button"
                       key={n.id}
                       onClick={() => markAsRead(n.id)}
-                      style={{
-                        width: '100%',
-                        textAlign: 'left',
-                        padding: '0.75rem 1rem',
-                        borderBottom: '1px solid var(--slate-100)',
-                        borderLeft: n.is_read ? '3px solid transparent' : '3px solid var(--gold-500)',
-                        backgroundColor: n.is_read ? '#ffffff' : 'var(--primary-50)',
-                        cursor: 'pointer',
-                        transition: 'background var(--motion-fast) var(--ease-standard)',
-                      }}
+                      className={`notif-item ${n.is_read ? '' : 'unread'}`}
                     >
-                      <div
-                        style={{
-                          fontWeight: n.is_read ? 500 : 700,
-                          fontSize: 'var(--text-sm)',
-                          color: 'var(--slate-900)',
-                          marginBottom: '2px',
-                        }}
-                      >
+                      <div className="notif-item-title">
                         {n.title}
                         {!n.is_read && <span className="sr-only"> (unread)</span>}
                       </div>
-                      <div style={{ fontSize: 'var(--text-sm)', color: 'var(--slate-600)', lineHeight: 1.45 }}>
-                        {n.message}
-                      </div>
-                      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--slate-400)', marginTop: '4px' }}>
+                      <div className="notif-item-msg">{n.message}</div>
+                      <div className="notif-item-time">
                         {new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </div>
                     </button>
@@ -309,40 +239,43 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar, isSidebarOpen }
           )}
         </div>
 
-        {/* User Profile Info - Desktop Only */}
-        <div className="desktop-only" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 'var(--text-base)', fontWeight: 600, color: '#ffffff' }}>
-              {user?.fullName?.includes('Balasubramanian') ? 'System admin' : (user?.fullName || 'System admin')}
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.4rem', marginTop: '2px' }}>
-              <span className={`badge ${getRoleBadgeClass(user?.role)}`} style={{ fontSize: 'var(--text-xs)', padding: '0.1rem 0.45rem' }}>
-                {getRoleLabel(user?.role)}
-              </span>
-              {user?.dept_code && (
-                <span className="badge badge-info" style={{ fontSize: 'var(--text-xs)', padding: '0.1rem 0.45rem' }}>
-                  {user.dept_code}
-                </span>
-              )}
-            </div>
-          </div>
-
+        {/* User chip + profile menu (desktop) */}
+        <div ref={profileRef} className="desktop-only" style={{ position: 'relative' }}>
           <button
             type="button"
-            onClick={logout}
-            className="btn btn-sm"
-            style={{
-              background: 'rgba(255, 255, 255, 0.15)',
-              color: '#ffffff',
-              border: '1px solid rgba(255, 255, 255, 0.3)',
-              padding: '0.45rem 0.75rem',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.24)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)'; }}
-            title="Sign out of institutional portal"
+            className="topbar-user"
+            onClick={() => setShowProfile((v) => !v)}
+            aria-expanded={showProfile}
+            aria-haspopup="true"
+            aria-label="Open account menu"
+            title="Account menu"
           >
-            <LogOut size={16} /> Logout
+            <span className="topbar-user-avatar" aria-hidden="true">{initials}</span>
+            <span className="topbar-user-name">{displayName}</span>
+            <ChevronDown size={15} style={{ opacity: 0.85 }} aria-hidden="true" />
           </button>
+
+          {showProfile && (
+            <div className="profile-menu" role="menu" aria-label="Account menu">
+              <div className="profile-menu-head">
+                <div className="profile-menu-name">{displayName}</div>
+                <div className="profile-menu-meta">
+                  {getRoleLabel(user?.role)}
+                  {user?.role !== 'ADMIN' && user?.dept_code ? ` • ${user.dept_code}` : ''}
+                </div>
+              </div>
+              <div
+                className="profile-menu-item"
+                style={{ cursor: 'default', color: 'var(--slate-500)', fontWeight: 500 }}
+                role="presentation"
+              >
+                <ShieldCheck size={16} /> Session active
+              </div>
+              <button type="button" className="profile-menu-item" role="menuitem" onClick={logout}>
+                <LogOut size={16} /> Sign out
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </header>

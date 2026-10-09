@@ -1,7 +1,7 @@
 {
   "name": "ksrce-mentor-backend",
   "version": "1.0.0",
-  "description": "Backend API for KSRCE Digital Mentor-Mentee Management System",
+  "description": "Backend API for KSRCE Digital Mentor-Mentee Management System. TEMPORARY LOCAL FILE STORAGE - replace with a persistent database/storage implementation before production deployment.",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -17,7 +17,20 @@
     "test:grammar": "tsx src/tests/grammar-test.ts",
     "test:grammar-safety": "tsx src/tests/grammar-safety.test.ts",
     "test:grammar-api": "tsx src/tests/grammar-api.test.ts",
-    "test:state-machine": "tsx src/tests/record-permission-state.test.ts"
+    "test:hod": "tsx src/tests/hod-scope.test.ts",
+    "test:faculty-notifications": "tsx src/tests/faculty-notifications.test.ts",
+    "test:admin-routes": "tsx src/tests/admin-dashboard-routes.test.ts",
+    "test:hod-admin": "tsx src/tests/admin-hod-management.test.ts",
+    "test:faculty-dept-reassign": "tsx src/tests/faculty-department-reassign.test.ts",
+    "test:bulk-upload": "tsx src/tests/bulk-upload.test.ts",
+    "test:admin": "tsx src/tests/admin-overview.test.ts",
+    "test:mentoring-evidence": "tsx src/tests/mentoring-evidence.test.ts",
+    "test:internal-marks": "tsx src/tests/internal-marks.test.ts",
+    "test:placement": "tsx src/tests/placement.test.ts",
+    "test:leaderboard": "tsx src/tests/leaderboard.test.ts",
+    "test:runtime": "tsx src/tests/runtime-verification.test.ts",
+    "test:state-machine": "tsx src/tests/record-permission-state.test.ts",
+    "test:admin-auth": "tsx src/tests/admin-auth-bootstrap.test.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -29,10 +42,9 @@
     "jsonwebtoken": "^9.0.2",
     "jspdf": "^2.5.2",
     "jspdf-autotable": "^3.8.4",
-    "mongoose": "^9.10.2",
     "multer": "^2.4.0",
     "pdf-lib": "^1.17.1",
-    "sqlite3": "^5.1.7",
+    "sharp": "^0.34.5",
     "zod": "^3.24.2"
   },
   "devDependencies": {
@@ -43,7 +55,7 @@
     "@types/multer": "^2.2.0",
     "@types/node": "^22.13.4",
     "@types/sqlite3": "^3.1.11",
-    "mongodb-memory-server": "^11.3.0",
+    "sqlite3": "^5.1.7",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3"
   }

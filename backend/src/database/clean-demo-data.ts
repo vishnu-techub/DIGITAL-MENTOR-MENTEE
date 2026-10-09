@@ -23,7 +23,7 @@ export async function removeAllDemoData(): Promise<void> {
 
   await connectDB();
   console.log('============================================================');
-  console.log('PURGING ALL DEMO / SAMPLE DATA FROM MONGODB...');
+  console.log('PURGING ALL DEMO / SAMPLE DATA FROM THE LOCAL FILE STORE...');
   console.log('============================================================');
 
   // 1. Delete all non-admin users (students, sample mentors, sample HOD)
@@ -88,7 +88,7 @@ export async function removeAllDemoData(): Promise<void> {
   await ensureSystemBootstrap();
 
   console.log('============================================================');
-  console.log('✓ ALL DEMO DATA SUCCESSFULLY PURGED FROM MONGODB.');
+  console.log('✓ ALL DEMO DATA SUCCESSFULLY PURGED FROM LOCAL FILE STORE.');
   console.log('✓ Clean institutional state confirmed.');
   console.log('============================================================');
 }

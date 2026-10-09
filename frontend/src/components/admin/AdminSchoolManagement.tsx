@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
+import { PageHeader } from '../common/PageHeader';
 import {
-  School,
   Search,
   Plus,
   Edit2,
@@ -200,41 +200,37 @@ export const AdminSchoolManagement: React.FC = () => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-        <div>
-          <h2 style={{ fontSize: '1.4rem', fontWeight: 700, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <School size={24} style={{ color: '#2563eb' }} />
-            School Master Directory
-          </h2>
-          <p style={{ margin: '0.25rem 0 0', color: '#64748b', fontSize: '0.875rem' }}>
-            Tamil Nadu Engineering Admissions (TNEA) Official School Database & Management
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <button
-            className="btn btn-secondary"
-            onClick={() => {
-              loadSchools();
-              loadDistrictsAndStats();
-            }}
-            title="Refresh database records"
-          >
-            <RefreshCw size={16} /> Refresh
-          </button>
-          <button className="btn btn-primary" onClick={handleOpenAddModal}>
-            <Plus size={16} /> Add School
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Administration"
+        title="School Management"
+        subtitle="Tamil Nadu Engineering Admissions (TNEA) Official School Database & Management"
+        actions={
+          <>
+            <button
+              className="btn btn-secondary"
+              onClick={() => {
+                loadSchools();
+                loadDistrictsAndStats();
+              }}
+              title="Refresh database records"
+            >
+              <RefreshCw size={16} /> Refresh
+            </button>
+            <button className="btn btn-primary" onClick={handleOpenAddModal}>
+              <Plus size={16} /> Add School
+            </button>
+          </>
+        }
+      />
 
       {/* Notifications */}
       {successMsg && (
-        <div style={{ padding: '0.75rem 1rem', backgroundColor: '#ecfdf5', border: '1px solid #10b981', color: '#065f46', borderRadius: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <div style={{ padding: '0.75rem 1rem', backgroundColor: 'var(--color-success-50)', border: '1px solid var(--color-success-500)', color: '#065f46', borderRadius: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <CheckCircle size={18} /> {successMsg}
         </div>
       )}
       {error && (
-        <div style={{ padding: '0.75rem 1rem', backgroundColor: '#fef2f2', border: '1px solid #ef4444', color: '#991b1b', borderRadius: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <div style={{ padding: '0.75rem 1rem', backgroundColor: 'var(--color-danger-50)', border: '1px solid var(--color-danger-500)', color: '#991b1b', borderRadius: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <AlertTriangle size={18} /> {error}
         </div>
       )}
@@ -242,8 +238,8 @@ export const AdminSchoolManagement: React.FC = () => {
       {/* Stats Overview */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
         <div className="card" style={{ padding: '1rem' }}>
-          <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 600, textTransform: 'uppercase' }}>Total Schools</div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#0f172a', marginTop: '0.25rem' }}>
+          <div style={{ fontSize: '0.8rem', color: 'var(--color-slate-500)', fontWeight: 600, textTransform: 'uppercase' }}>Total Schools</div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--color-slate-900)', marginTop: '0.25rem' }}>
             {stats.total.toLocaleString()}
           </div>
         </div>
@@ -254,8 +250,8 @@ export const AdminSchoolManagement: React.FC = () => {
           </div>
         </div>
         <div className="card" style={{ padding: '1rem' }}>
-          <div style={{ fontSize: '0.8rem', color: '#ef4444', fontWeight: 600, textTransform: 'uppercase' }}>Disabled / Inactive</div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#ef4444', marginTop: '0.25rem' }}>
+          <div style={{ fontSize: '0.8rem', color: 'var(--color-danger-500)', fontWeight: 600, textTransform: 'uppercase' }}>Disabled / Inactive</div>
+          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--color-danger-500)', marginTop: '0.25rem' }}>
             {stats.inactive.toLocaleString()}
           </div>
         </div>
@@ -272,7 +268,7 @@ export const AdminSchoolManagement: React.FC = () => {
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '1rem' }}>
           {/* Search Box */}
           <div style={{ position: 'relative' }}>
-            <Search size={18} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+            <Search size={18} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-slate-400)' }} />
             <input
               type="text"
               className="form-control"
@@ -338,13 +334,13 @@ export const AdminSchoolManagement: React.FC = () => {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: '#64748b' }}>
+                  <td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: 'var(--color-slate-500)' }}>
                     Loading schools...
                   </td>
                 </tr>
               ) : schools.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: '#64748b' }}>
+                  <td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: 'var(--color-slate-500)' }}>
                     No schools found matching your search criteria.
                   </td>
                 </tr>
@@ -352,12 +348,12 @@ export const AdminSchoolManagement: React.FC = () => {
                 schools.map((school) => (
                   <tr key={school._id}>
                     <td>
-                      <div style={{ fontWeight: 600, color: '#0f172a' }}>{school.schoolName}</div>
-                      <div style={{ fontSize: '0.78rem', color: '#64748b' }}>{school.displayName}</div>
+                      <div style={{ fontWeight: 600, color: 'var(--color-slate-900)' }}>{school.schoolName}</div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--color-slate-500)' }}>{school.displayName}</div>
                     </td>
                     <td>{school.city}</td>
                     <td>
-                      <span className="badge" style={{ backgroundColor: '#f1f5f9', color: '#334155' }}>
+                      <span className="badge" style={{ backgroundColor: 'var(--color-slate-100)', color: 'var(--color-slate-700)' }}>
                         {school.district}
                       </span>
                     </td>
@@ -365,7 +361,7 @@ export const AdminSchoolManagement: React.FC = () => {
                       <span
                         className="badge"
                         style={{
-                          backgroundColor: school.schoolType?.toLowerCase().includes('govt') ? '#dbeafe' : '#fef3c7',
+                          backgroundColor: school.schoolType?.toLowerCase().includes('govt') ? 'var(--color-navy-100)' : 'var(--color-warning-100)',
                           color: school.schoolType?.toLowerCase().includes('govt') ? '#1e40af' : '#92400e',
                         }}
                       >
@@ -426,13 +422,13 @@ export const AdminSchoolManagement: React.FC = () => {
             justifyContent: 'space-between',
             alignItems: 'center',
             padding: '0.75rem 1rem',
-            borderTop: '1px solid #e2e8f0',
-            backgroundColor: '#f8fafc',
+            borderTop: '1px solid var(--color-slate-200)',
+            backgroundColor: 'var(--color-slate-50)',
             flexWrap: 'wrap',
             gap: '0.5rem',
           }}
         >
-          <div style={{ fontSize: '0.85rem', color: '#64748b' }}>
+          <div style={{ fontSize: '0.85rem', color: 'var(--color-slate-500)' }}>
             Showing <strong>{schools.length}</strong> of <strong>{totalCount.toLocaleString()}</strong> schools (Page {page} of {totalPages})
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -492,14 +488,14 @@ export const AdminSchoolManagement: React.FC = () => {
               overflow: 'hidden',
             }}
           >
-            <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: '#0f172a' }}>
+            <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-slate-200)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-slate-900)' }}>
                 {editingSchool ? 'Edit School Details' : 'Add New Institution'}
               </h3>
               <button
                 type="button"
                 onClick={() => setShowModal(false)}
-                style={{ background: 'none', border: 'none', fontSize: '1.25rem', cursor: 'pointer', color: '#64748b' }}
+                style={{ background: 'none', border: 'none', fontSize: '1.25rem', cursor: 'pointer', color: 'var(--color-slate-500)' }}
               >
                 ✕
               </button>

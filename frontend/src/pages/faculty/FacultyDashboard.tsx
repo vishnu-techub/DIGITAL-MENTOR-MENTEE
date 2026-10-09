@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { api, ApiError } from '../../api/client';
+import { api, ApiError, type SentFacultyNotification } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { MentorStudentProfileView } from '../mentor/MentorStudentProfileView';
 import { StudentDetailsTab } from '../common/StudentDetailsView';
 import { EmptyState } from '../../components/common/EmptyState';
+import { PageHeader } from '../../components/common/PageHeader';
+import { LeaderboardView } from '../../components/leaderboard/LeaderboardView';
 import { Skeleton } from '../../components/common/Skeleton';
 import { DashboardSkeleton, StudentsSkeleton } from '../../components/common/SkeletonLoader';
 import { NetworkErrorState } from '../error/NetworkErrorState';
@@ -31,6 +33,7 @@ import {
   Plus,
   Folder,
   FileSpreadsheet,
+  Bell,
 } from 'lucide-react';
 import { useToast } from '../../context/ToastContext';
 
@@ -64,6 +67,14 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
 
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [studentInitialTab, setStudentInitialTab] = useState<StudentDetailsTab>('overview');
+
+  // Department notification composer + the notices this faculty member sent.
+  const [sentNotes, setSentNotes] = useState<SentFacultyNotification[]>([]);
+  const [sentNotesLoading, setSentNotesLoading] = useState(false);
+  const [noteDetail, setNoteDetail] = useState<SentFacultyNotification | null>(null);
+  const [composeTitle, setComposeTitle] = useState('');
+  const [composeMessage, setComposeMessage] = useState('');
+  const [sending, setSending] = useState(false);
 
   const toast = useToast();
   // Download Overall Mentee Data (Excel) state (Requirements 10 & 14)
@@ -150,6 +161,50 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
   useEffect(() => {
     loadData();
   }, [user]);
+
+  const loadSentNotes = async () => {
+    setSentNotesLoading(true);
+    try {
+      const res = await api.notifications.sent();
+      setSentNotes(res.data?.notifications || []);
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not load your sent notifications.', 'Load Failed');
+    } finally {
+      setSentNotesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (currentTab === 'notifications') loadSentNotes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTab]);
+
+  const sendDepartmentNotification = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const title = composeTitle.trim();
+    const message = composeMessage.trim();
+    if (!title || !message) {
+      toast.error('Both a title and a message are required.', 'Cannot Send');
+      return;
+    }
+    setSending(true);
+    try {
+      // The department is chosen by the server from this account's own faculty
+      // record, so the form never asks for one.
+      const res = await api.notifications.sendFaculty({ title, message });
+      setComposeTitle('');
+      setComposeMessage('');
+      toast.success(
+        `Delivered to the ${res.data.department_name} HOD (${res.data.hod_recipients} recipient, ${res.data.admin_recipients} admin copy).`,
+        'Notification Sent'
+      );
+      await loadSentNotes();
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not send the notification.', 'Send Failed');
+    } finally {
+      setSending(false);
+    }
+  };
 
   // Sync sidebar tab navigation with student view tabs or return to list
   useEffect(() => {
@@ -254,6 +309,12 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
       {/* Overview Tab */}
       {currentTab === 'overview' && (
         <div>
+          <PageHeader
+            eyebrow="Mentor"
+            title="Mentor Dashboard"
+            subtitle="Your assigned mentee roster, weekly Saturday meeting rhythm, and key mentoring metrics at a glance."
+          />
+
           {/* Quick Actions Bar (Section 7) */}
           <div
             style={{
@@ -264,12 +325,12 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
               background: '#ffffff',
               padding: '0.85rem 1.25rem',
               borderRadius: '12px',
-              border: '1px solid #E2E8F0',
+              border: '1px solid var(--color-slate-200)',
               boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
               alignItems: 'center',
             }}
           >
-            <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#0B2545', textTransform: 'uppercase', letterSpacing: '0.5px', marginRight: '0.35rem' }}>
+            <span style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--color-navy-800)', textTransform: 'uppercase', letterSpacing: '0.5px', marginRight: '0.35rem' }}>
               Quick Actions:
             </span>
             <button
@@ -325,8 +386,8 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                   alignItems: 'center',
                   gap: '0.4rem',
                   fontWeight: 600,
-                  backgroundColor: downloadExcelState === 'complete' ? '#059669' : '#0B2545',
-                  borderColor: downloadExcelState === 'complete' ? '#059669' : '#0B2545',
+                  backgroundColor: downloadExcelState === 'complete' ? 'var(--color-success-600)' : 'var(--color-navy-800)',
+                  borderColor: downloadExcelState === 'complete' ? 'var(--color-success-600)' : 'var(--color-navy-800)',
                   color: '#ffffff',
                   borderTopRightRadius: 0,
                   borderBottomRightRadius: 0,
@@ -358,7 +419,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                 disabled={downloadExcelState === 'generating' || downloadExcelState === 'downloading'}
                 style={{
                   backgroundColor: '#071A30',
-                  borderColor: '#0B2545',
+                  borderColor: 'var(--color-navy-800)',
                   color: '#ffffff',
                   borderTopLeftRadius: 0,
                   borderBottomLeftRadius: 0,
@@ -376,7 +437,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
           {/* Stat Cards - 7 Key Mentor Metrics (Section 7) */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem', marginBottom: '1.5rem' }}>
             <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#EEF2F6', color: '#0B2545' }}>
+              <div className="stat-icon" style={{ backgroundColor: 'var(--color-navy-50)', color: 'var(--color-navy-800)' }}>
                 <Users size={22} />
               </div>
               <div className="stat-info">
@@ -386,7 +447,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
             </div>
 
             <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#EFF6FF', color: '#1D4ED8' }}>
+              <div className="stat-icon" style={{ backgroundColor: '#EFF6FF', color: 'var(--color-navy-500)' }}>
                 <CalendarCheck2 size={22} />
               </div>
               <div className="stat-info">
@@ -398,7 +459,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
             </div>
 
             <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#FFFBEB', color: '#D97706' }}>
+              <div className="stat-icon" style={{ backgroundColor: 'var(--color-gold-50)', color: 'var(--color-warning-600)' }}>
                 <AlertTriangle size={22} />
               </div>
               <div className="stat-info">
@@ -418,7 +479,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
             </div>
 
             <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#FEF2F2', color: '#DC2626' }}>
+              <div className="stat-icon" style={{ backgroundColor: 'var(--color-danger-50)', color: 'var(--color-danger-600)' }}>
                 <AlertCircle size={22} />
               </div>
               <div className="stat-info">
@@ -428,7 +489,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
             </div>
 
             <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#FEF3C7', color: '#B45309' }}>
+              <div className="stat-icon" style={{ backgroundColor: 'var(--color-gold-100)', color: '#B45309' }}>
                 <FileText size={22} />
               </div>
               <div className="stat-info">
@@ -438,7 +499,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
             </div>
 
             <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#ECFDF5', color: '#059669' }}>
+              <div className="stat-icon" style={{ backgroundColor: 'var(--color-success-50)', color: 'var(--color-success-600)' }}>
                 <Award size={22} />
               </div>
               <div className="stat-info">
@@ -453,7 +514,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
             className="card"
             style={{
               marginBottom: '1.5rem',
-              background: 'linear-gradient(135deg, #0B2545 0%, #134074 100%)',
+              background: 'linear-gradient(135deg, var(--color-navy-800) 0%, var(--color-navy-600) 100%)',
               color: '#ffffff',
               border: 'none',
             }}
@@ -486,7 +547,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
             <div className="card-header">
               <h3 className="card-title"><Users size={18} /> My Assigned Mentees ({mentees.length})</h3>
               <div style={{ position: 'relative', width: '260px' }}>
-                <Search size={14} style={{ position: 'absolute', left: '10px', top: '10px', color: '#94A3B8' }} />
+                <Search size={14} style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--color-slate-400)' }} />
                 <input
                   type="text"
                   className="form-control"
@@ -515,17 +576,17 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                 <tbody>
                   {filteredMentees.length === 0 ? (
                     <tr>
-                      <td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem 1rem', color: '#64748B' }}>
+                      <td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--color-slate-500)' }}>
                         No students have been assigned yet.
                       </td>
                     </tr>
                   ) : (
                     filteredMentees.map((m) => (
                       <tr key={m.id}>
-                        <td style={{ fontWeight: 700, color: '#0B2545' }}>{m.register_number}</td>
+                        <td style={{ fontWeight: 700, color: 'var(--color-navy-800)' }}>{m.register_number}</td>
                         <td>
                           <strong>{m.full_name}</strong>
-                          <div style={{ fontSize: '0.72rem', color: '#64748B' }}>{m.mobile_number || 'No phone'}</div>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--color-slate-500)' }}>{m.mobile_number || 'No phone'}</div>
                         </td>
                         <td>{m.batch_name}</td>
                         <td>
@@ -569,7 +630,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
             {/* Mobile Cards View */}
             <div className="mobile-only" style={{ flexDirection: 'column', gap: '0.85rem', padding: '0.85rem' }}>
               {filteredMentees.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '2rem 1rem', color: '#64748B' }}>
+                <div style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--color-slate-500)' }}>
                   No students have been assigned yet.
                 </div>
               ) : (
@@ -580,20 +641,20 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                     style={{
                       padding: '1rem',
                       borderRadius: '12px',
-                      border: '1px solid #E2E8F0',
+                      border: '1px solid var(--color-slate-200)',
                       boxShadow: '0 2px 6px rgba(0,0,0,0.04)',
                       background: '#ffffff',
                     }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
                       <div>
-                        <div style={{ fontSize: '0.82rem', fontWeight: 800, color: '#0B2545', letterSpacing: '0.5px' }}>
+                        <div style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--color-navy-800)', letterSpacing: '0.5px' }}>
                           {m.register_number}
                         </div>
-                        <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#1E293B', marginTop: '1px' }}>
+                        <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--color-slate-800)', marginTop: '1px' }}>
                           {m.full_name}
                         </div>
-                        <div style={{ fontSize: '0.78rem', color: '#64748B' }}>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--color-slate-500)' }}>
                           {m.batch_name} • {m.residential_type?.replace('_', ' ') || 'DAY SCHOLAR'}
                         </div>
                       </div>
@@ -632,16 +693,11 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
       {/* Mentees Full Directory Tab (Section 8) */}
       {currentTab === 'mentees' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-            <div>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
-                My Assigned Mentees Directory
-              </h2>
-              <div style={{ fontSize: '0.825rem', color: '#64748B', marginTop: '2px' }}>
-                Showing {filteredMentees.length} of {mentees.length} assigned students
-              </div>
-            </div>
-
+          <PageHeader
+            eyebrow="Mentor"
+            title="My Mentees"
+            subtitle={`Showing ${filteredMentees.length} of ${mentees.length} assigned students`}
+            actions={
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
               <button
                 className="btn btn-outline btn-sm"
@@ -667,8 +723,8 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                     alignItems: 'center',
                     gap: '0.4rem',
                     fontWeight: 600,
-                    backgroundColor: downloadExcelState === 'complete' ? '#059669' : '#0B2545',
-                    borderColor: downloadExcelState === 'complete' ? '#059669' : '#0B2545',
+                    backgroundColor: downloadExcelState === 'complete' ? 'var(--color-success-600)' : 'var(--color-navy-800)',
+                    borderColor: downloadExcelState === 'complete' ? 'var(--color-success-600)' : 'var(--color-navy-800)',
                     color: '#ffffff',
                     borderTopRightRadius: 0,
                     borderBottomRightRadius: 0,
@@ -700,7 +756,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                   disabled={downloadExcelState === 'generating' || downloadExcelState === 'downloading'}
                   style={{
                     backgroundColor: '#071A30',
-                    borderColor: '#0B2545',
+                    borderColor: 'var(--color-navy-800)',
                     color: '#ffffff',
                     borderTopLeftRadius: 0,
                     borderBottomLeftRadius: 0,
@@ -714,7 +770,8 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                 </button>
               </div>
             </div>
-          </div>
+            }
+          />
 
           {/* Section 8 Search & Multi-criteria Filter Bar */}
           <div
@@ -724,13 +781,13 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
               marginBottom: '1.25rem',
               background: '#ffffff',
               borderRadius: '12px',
-              border: '1px solid #E2E8F0',
+              border: '1px solid var(--color-slate-200)',
             }}
           >
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem', alignItems: 'center' }}>
               {/* Search */}
               <div style={{ position: 'relative' }}>
-                <Search size={15} style={{ position: 'absolute', left: '10px', top: '10px', color: '#94A3B8' }} />
+                <Search size={15} style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--color-slate-400)' }} />
                 <input
                   type="text"
                   className="form-control"
@@ -819,7 +876,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
             {/* Active Filters Reset Row */}
             {(searchQuery || selectedDeptFilter || selectedYearFilter || selectedSectionFilter || selectedArrearFilter !== 'ALL' || selectedCompletionFilter !== 'ALL') && (
               <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.78rem', color: '#64748B' }}>
+                <span style={{ fontSize: '0.78rem', color: 'var(--color-slate-500)' }}>
                   Showing <strong>{filteredMentees.length}</strong> matching students
                 </span>
                 <button
@@ -868,7 +925,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                     justifyContent: 'space-between',
                     padding: '1.25rem',
                     borderRadius: '12px',
-                    border: '1px solid #E2E8F0',
+                    border: '1px solid var(--color-slate-200)',
                     boxShadow: '0 2px 8px rgba(11, 37, 69, 0.04)',
                     position: 'relative',
                   }}
@@ -882,14 +939,14 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                           height: '50px',
                           minWidth: '50px',
                           borderRadius: '50%',
-                          background: 'linear-gradient(135deg, #0B2545 0%, #134074 100%)',
-                          color: '#C59B27',
+                          background: 'linear-gradient(135deg, var(--color-navy-800) 0%, var(--color-navy-600) 100%)',
+                          color: 'var(--color-gold-500)',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
                           fontWeight: 800,
                           fontSize: '1.15rem',
-                          border: '2px solid #C59B27',
+                          border: '2px solid var(--color-gold-500)',
                           boxShadow: '0 2px 6px rgba(0,0,0,0.08)',
                           overflow: 'hidden',
                         }}
@@ -910,7 +967,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                           style={{
                             fontSize: '1.05rem',
                             fontWeight: 800,
-                            color: '#0B2545',
+                            color: 'var(--color-navy-800)',
                             margin: 0,
                             whiteSpace: 'nowrap',
                             overflow: 'hidden',
@@ -926,7 +983,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                               fontSize: '0.78rem',
                               fontWeight: 700,
                               color: '#B45309',
-                              backgroundColor: '#FEF3C7',
+                              backgroundColor: 'var(--color-gold-100)',
                               padding: '1px 6px',
                               borderRadius: '4px',
                             }}
@@ -955,23 +1012,23 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                         gridTemplateColumns: '1fr 1fr',
                         gap: '0.5rem',
                         padding: '0.65rem',
-                        backgroundColor: '#F8FAFC',
+                        backgroundColor: 'var(--color-slate-50)',
                         borderRadius: '8px',
                         marginBottom: '0.85rem',
                         border: '1px solid #EDF2F7',
                       }}
                     >
                       <div>
-                        <div style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>
+                        <div style={{ fontSize: '0.68rem', color: 'var(--color-slate-500)', fontWeight: 600, textTransform: 'uppercase' }}>
                           Current CGPA
                         </div>
-                        <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0B2545', marginTop: '2px' }}>
+                        <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--color-navy-800)', marginTop: '2px' }}>
                           {cgpaVal}
                         </div>
                       </div>
 
                       <div>
-                        <div style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>
+                        <div style={{ fontSize: '0.68rem', color: 'var(--color-slate-500)', fontWeight: 600, textTransform: 'uppercase' }}>
                           Active Arrears
                         </div>
                         <div style={{ marginTop: '2px' }}>
@@ -985,19 +1042,19 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                       </div>
 
                       <div>
-                        <div style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>
+                        <div style={{ fontSize: '0.68rem', color: 'var(--color-slate-500)', fontWeight: 600, textTransform: 'uppercase' }}>
                           Counselling
                         </div>
-                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B', marginTop: '2px' }}>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-slate-800)', marginTop: '2px' }}>
                           {m.counselling_count || 0} Sessions
                         </div>
                       </div>
 
                       <div>
-                        <div style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>
+                        <div style={{ fontSize: '0.68rem', color: 'var(--color-slate-500)', fontWeight: 600, textTransform: 'uppercase' }}>
                           Documents
                         </div>
-                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B', marginTop: '2px' }}>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-slate-800)', marginTop: '2px' }}>
                           {m.document_count || 0} Uploaded
                         </div>
                       </div>
@@ -1005,16 +1062,16 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
 
                     {/* Profile Completion Progress */}
                     <div style={{ marginBottom: '0.85rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', fontWeight: 600, color: '#475569', marginBottom: '3px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-slate-600)', marginBottom: '3px' }}>
                         <span>Profile Completion</span>
-                        <span style={{ color: completion >= 100 ? '#059669' : '#D97706' }}>{completion}%</span>
+                        <span style={{ color: completion >= 100 ? 'var(--color-success-600)' : 'var(--color-warning-600)' }}>{completion}%</span>
                       </div>
-                      <div style={{ width: '100%', height: '5px', backgroundColor: '#E2E8F0', borderRadius: '4px', overflow: 'hidden' }}>
+                      <div style={{ width: '100%', height: '5px', backgroundColor: 'var(--color-slate-200)', borderRadius: '4px', overflow: 'hidden' }}>
                         <div
                           style={{
                             width: `${Math.min(100, completion)}%`,
                             height: '100%',
-                            backgroundColor: completion >= 100 ? '#059669' : '#C59B27',
+                            backgroundColor: completion >= 100 ? 'var(--color-success-600)' : 'var(--color-gold-500)',
                             borderRadius: '4px',
                             transition: 'width 0.3s ease',
                           }}
@@ -1024,7 +1081,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                   </div>
 
                   {/* Section 8 Actions Footer (4 Required Buttons) */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.45rem', marginTop: '0.5rem', paddingTop: '0.65rem', borderTop: '1px solid #F1F5F9' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.45rem', marginTop: '0.5rem', paddingTop: '0.65rem', borderTop: '1px solid var(--color-slate-100)' }}>
                     <button
                       className="btn btn-primary btn-sm"
                       style={{ fontSize: '0.78rem', padding: '0.45rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}
@@ -1075,16 +1132,11 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
       {/* Saturday Meetings Tab */}
       {currentTab === 'meetings' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-            <div>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
-                Saturday Mentor–Mentee Meetings Log
-              </h2>
-              <div style={{ fontSize: '0.8rem', color: '#64748B' }}>
-                Next Meeting: {schedule?.nextSaturdayDate} • {schedule?.time}
-              </div>
-            </div>
-          </div>
+          <PageHeader
+            eyebrow="Mentor"
+            title="Saturday Meetings"
+            subtitle={`Next Meeting: ${schedule?.nextSaturdayDate} • ${schedule?.time}`}
+          />
 
           {meetings.length === 0 ? (
             <div
@@ -1092,15 +1144,15 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
               style={{
                 textAlign: 'center',
                 padding: '3.5rem 1.5rem',
-                backgroundColor: '#F8FAFC',
-                border: '2px dashed #CBD5E1',
+                backgroundColor: 'var(--color-slate-50)',
+                border: '2px dashed var(--color-slate-300)',
               }}
             >
-              <CalendarCheck2 size={48} style={{ color: '#94A3B8', margin: '0 auto 1rem' }} />
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#1E293B', marginBottom: '0.25rem' }}>
+              <CalendarCheck2 size={48} style={{ color: 'var(--color-slate-400)', margin: '0 auto 1rem' }} />
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-slate-800)', marginBottom: '0.25rem' }}>
                 No meeting records available.
               </h3>
-              <p style={{ fontSize: '0.85rem', color: '#64748B', maxWidth: '420px', margin: '0 auto' }}>
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-slate-500)', maxWidth: '420px', margin: '0 auto' }}>
                 Saturday mentor-mentee interaction logs will appear here once logged.
               </p>
             </div>
@@ -1125,11 +1177,11 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                         <td style={{ fontWeight: 700 }}>{meet.meeting_date}</td>
                         <td>
                           <strong>{meet.student_name}</strong>
-                          <div style={{ fontSize: '0.75rem', color: '#64748B' }}>{meet.register_number}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--color-slate-500)' }}>{meet.register_number}</div>
                         </td>
                         <td>
                           {meet.meeting_time}
-                          <div style={{ fontSize: '0.75rem', color: '#64748B' }}>{meet.location}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--color-slate-500)' }}>{meet.location}</div>
                         </td>
                         <td>
                           <span className={`badge ${meet.attendance_status === 'PRESENT' ? 'badge-success' : 'badge-danger'}`}>
@@ -1162,14 +1214,11 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
       {/* 5-Domain Counselling Tab */}
       {currentTab === 'counselling' && (
         <div>
-          <div style={{ marginBottom: '1.25rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
-              5-Domain Counselling & Specialized Interventions
-            </h2>
-            <p style={{ fontSize: '0.85rem', color: '#64748B' }}>
-              Select any mentee from your roster to record interventions across Academic, Training & Placement, Extra-Curricular, Innovation, and Skill Development.
-            </p>
-          </div>
+          <PageHeader
+            eyebrow="Mentor"
+            title="5-Domain Counselling"
+            subtitle="Select any mentee from your roster to record interventions across Academic, Training & Placement, Extra-Curricular, Innovation, and Skill Development."
+          />
 
           {mentees.length === 0 ? (
             <div
@@ -1177,15 +1226,15 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
               style={{
                 textAlign: 'center',
                 padding: '3.5rem 1.5rem',
-                backgroundColor: '#F8FAFC',
-                border: '2px dashed #CBD5E1',
+                backgroundColor: 'var(--color-slate-50)',
+                border: '2px dashed var(--color-slate-300)',
               }}
             >
-              <BookOpen size={48} style={{ color: '#94A3B8', margin: '0 auto 1rem' }} />
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#1E293B', marginBottom: '0.25rem' }}>
+              <BookOpen size={48} style={{ color: 'var(--color-slate-400)', margin: '0 auto 1rem' }} />
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-slate-800)', marginBottom: '0.25rem' }}>
                 No counselling records available.
               </h3>
-              <p style={{ fontSize: '0.85rem', color: '#64748B', maxWidth: '420px', margin: '0 auto' }}>
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-slate-500)', maxWidth: '420px', margin: '0 auto' }}>
                 Counselling records will be listed once students are assigned and sessions are conducted.
               </p>
             </div>
@@ -1235,14 +1284,11 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
       {/* Monthly Progress Tab */}
       {currentTab === 'progress' && (
         <div>
-          <div style={{ marginBottom: '1.25rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
-              Monthly Mentoring Improvement Progress
-            </h2>
-            <p style={{ fontSize: '0.85rem', color: '#64748B' }}>
-              Continuous evaluation across End of Month 1, Month 2, Month 3, and End of Semester milestones.
-            </p>
-          </div>
+          <PageHeader
+            eyebrow="Mentor"
+            title="Monthly Improvement"
+            subtitle="Continuous evaluation across End of Month 1, Month 2, Month 3, and End of Semester milestones."
+          />
 
           {mentees.length === 0 ? (
             <div
@@ -1250,15 +1296,15 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
               style={{
                 textAlign: 'center',
                 padding: '3.5rem 1.5rem',
-                backgroundColor: '#F8FAFC',
-                border: '2px dashed #CBD5E1',
+                backgroundColor: 'var(--color-slate-50)',
+                border: '2px dashed var(--color-slate-300)',
               }}
             >
-              <Award size={48} style={{ color: '#94A3B8', margin: '0 auto 1rem' }} />
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#1E293B', marginBottom: '0.25rem' }}>
+              <Award size={48} style={{ color: 'var(--color-slate-400)', margin: '0 auto 1rem' }} />
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-slate-800)', marginBottom: '0.25rem' }}>
                 No progress records available.
               </h3>
-              <p style={{ fontSize: '0.85rem', color: '#64748B', maxWidth: '420px', margin: '0 auto' }}>
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-slate-500)', maxWidth: '420px', margin: '0 auto' }}>
                 Monthly progress ratings and evaluations will appear here once recorded.
               </p>
             </div>
@@ -1310,22 +1356,19 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
       {/* Student Documents Tab (Section 14 & Quick Action) */}
       {currentTab === 'documents' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-            <div>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
-                Mentee Documents & Institutional Portfolios
-              </h2>
-              <p style={{ fontSize: '0.85rem', color: '#64748B', marginTop: '2px' }}>
-                View uploaded certificates, Student Details Form PDFs, and document archives for all assigned mentees.
-              </p>
-            </div>
-            <button
-              className="btn btn-pdf btn-sm"
-              onClick={() => setShowQuickPdfModal(true)}
-            >
-              <Download size={14} /> Download Student PDF
-            </button>
-          </div>
+          <PageHeader
+            eyebrow="Mentor"
+            title="Student Documents"
+            subtitle="View uploaded certificates, Student Details Form PDFs, and document archives for all assigned mentees."
+            actions={
+              <button
+                className="btn btn-pdf btn-sm"
+                onClick={() => setShowQuickPdfModal(true)}
+              >
+                <Download size={14} /> Download Student PDF
+              </button>
+            }
+          />
 
           {mentees.length === 0 ? (
             <EmptyState
@@ -1350,10 +1393,10 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                   <tbody>
                     {mentees.map((m) => (
                       <tr key={m.id || m._id}>
-                        <td style={{ fontWeight: 700, color: '#0B2545' }}>{m.register_number}</td>
+                        <td style={{ fontWeight: 700, color: 'var(--color-navy-800)' }}>{m.register_number}</td>
                         <td>
                           <strong>{m.full_name}</strong>
-                          <div style={{ fontSize: '0.75rem', color: '#64748B' }}>{m.email}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--color-slate-500)' }}>{m.email}</div>
                         </td>
                         <td>
                           {m.department_code || m.department_name} • {m.year || 2} Year
@@ -1405,7 +1448,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
             style={{
               padding: '2rem',
               borderRadius: '16px',
-              background: 'linear-gradient(135deg, #0B2545 0%, #134074 100%)',
+              background: 'linear-gradient(135deg, var(--color-navy-800) 0%, var(--color-navy-600) 100%)',
               color: '#ffffff',
               marginBottom: '1.5rem',
             }}
@@ -1420,7 +1463,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  color: '#C59B27',
+                  color: 'var(--color-gold-500)',
                 }}
               >
                 <Sparkles size={24} />
@@ -1429,13 +1472,13 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                 <h2 style={{ fontSize: '1.4rem', fontWeight: 800, margin: 0, color: '#ffffff' }}>
                   Faculty Mentorship AI Advisory Assistant
                 </h2>
-                <div style={{ fontSize: '0.85rem', color: '#CBD5E1' }}>
+                <div style={{ fontSize: '0.85rem', color: 'var(--color-slate-300)' }}>
                   Institutional Guidance • Communication Coaching • Arrear Remediation Strategies
                 </div>
               </div>
             </div>
 
-            <p style={{ color: '#E2E8F0', fontSize: '0.925rem', maxWidth: '720px', lineHeight: 1.6 }}>
+            <p style={{ color: 'var(--color-slate-200)', fontSize: '0.925rem', maxWidth: '720px', lineHeight: 1.6 }}>
               A specialized consultative assistant for mentors. Formulate discussion agendas, design remedial action plans, and prepare personalized intervention strategies for your mentees.
             </p>
 
@@ -1452,7 +1495,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
 
           {/* Sample Prompts Grid */}
           <div className="card" style={{ padding: '1.5rem' }}>
-            <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#0B2545', marginBottom: '1rem' }}>
+            <h3 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-navy-800)', marginBottom: '1rem' }}>
               Frequently Asked Guidance Prompts
             </h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '0.75rem' }}>
@@ -1469,10 +1512,10 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                   style={{
                     padding: '0.85rem 1rem',
                     borderRadius: '8px',
-                    backgroundColor: '#F8FAFC',
-                    border: '1px solid #E2E8F0',
+                    backgroundColor: 'var(--color-slate-50)',
+                    border: '1px solid var(--color-slate-200)',
                     fontSize: '0.875rem',
-                    color: '#334155',
+                    color: 'var(--color-slate-700)',
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
@@ -1481,13 +1524,156 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                   onClick={() => setIsAiBotOpen(true)}
                 >
                   <span>"{prompt}"</span>
-                  <ArrowRight size={14} style={{ color: '#0B2545', flexShrink: 0, marginLeft: '0.5rem' }} />
+                  <ArrowRight size={14} style={{ color: 'var(--color-navy-800)', flexShrink: 0, marginLeft: '0.5rem' }} />
                 </div>
               ))}
             </div>
           </div>
         </div>
       )}
+
+      {/* Achievement Leaderboard Tab */}
+      {currentTab === 'leaderboard' && <LeaderboardView />}
+
+      {/* Department Notifications Tab */}
+      {currentTab === 'notifications' && (
+        <div>
+          <PageHeader
+            eyebrow="Faculty"
+            title="Notifications"
+            subtitle="The notice goes to your own department's Head of Department. You cannot address another department."
+          />
+
+          <div className="card" style={{ marginBottom: '1.5rem' }}>
+            <div className="card-header">
+              <h3 className="card-title">
+                <Bell size={18} /> New Notification
+              </h3>
+              <span className="badge badge-neutral">To: My Department HOD</span>
+            </div>
+            <form onSubmit={sendDepartmentNotification}>
+              <div className="form-group">
+                <label className="form-label">Title *</label>
+                <input
+                  className="form-control"
+                  maxLength={150}
+                  value={composeTitle}
+                  onChange={(e) => setComposeTitle(e.target.value)}
+                  placeholder="e.g. Lab session rescheduled this week"
+                  required
+                />
+                <div style={{ fontSize: '0.75rem', color: 'var(--color-slate-500)', marginTop: '0.25rem' }}>
+                  {composeTitle.length}/150
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Message *</label>
+                <textarea
+                  className="form-control"
+                  rows={5}
+                  maxLength={2000}
+                  value={composeMessage}
+                  onChange={(e) => setComposeMessage(e.target.value)}
+                  placeholder="Describe what your HOD needs to know."
+                  required
+                />
+                <div style={{ fontSize: '0.75rem', color: 'var(--color-slate-500)', marginTop: '0.25rem' }}>
+                  {composeMessage.length}/2000
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button type="submit" className="btn btn-gold" disabled={sending}>
+                  {sending ? 'Sending…' : 'Send to Department HOD'}
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <h3 className="card-title">
+                <FileText size={18} /> Notices You Have Sent
+              </h3>
+              <span className="badge badge-secondary">{sentNotes.length} sent</span>
+            </div>
+            {sentNotesLoading && sentNotes.length === 0 ? (
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-slate-500)', padding: '1.5rem' }}>
+                Loading your sent notices…
+              </p>
+            ) : sentNotes.length === 0 ? (
+              <EmptyState
+                icon={<Bell size={28} />}
+                title="Nothing sent yet"
+                description="Notices you send to your department HOD are listed here with their read receipt."
+              />
+            ) : (
+              <div className="table-responsive">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Title</th>
+                      <th>Department</th>
+                      <th>Sent</th>
+                      <th>HOD Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sentNotes.map((n) => (
+                      <tr key={n.id}>
+                        <td style={{ fontWeight: 700 }}>{n.title}</td>
+                        <td>{n.department_name || '—'}</td>
+                        <td>{n.created_at ? new Date(n.created_at).toLocaleString() : '—'}</td>
+                        <td>
+                          <span className={`badge ${n.is_read ? 'badge-success' : 'badge-warning'}`}>
+                            {n.is_read ? 'Read by HOD' : 'Unread'}
+                          </span>
+                        </td>
+                        <td>
+                          <button className="btn btn-secondary btn-sm" onClick={() => setNoteDetail(n)}>
+                            View
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal: sent notification detail */}
+      <Modal
+        isOpen={Boolean(noteDetail)}
+        onClose={() => setNoteDetail(null)}
+        title={noteDetail ? noteDetail.title : 'Notification'}
+      >
+        {noteDetail ? (
+          <>
+            <div style={{ display: 'grid', gap: '0.5rem', fontSize: '0.875rem', color: 'var(--color-slate-600)' }}>
+              <div><strong>Department:</strong> {noteDetail.department_name || '—'}</div>
+              <div><strong>Sent:</strong> {noteDetail.created_at ? new Date(noteDetail.created_at).toLocaleString() : '—'}</div>
+              <div>
+                <strong>HOD status:</strong>{' '}
+                <span className={`badge ${noteDetail.is_read ? 'badge-success' : 'badge-warning'}`}>
+                  {noteDetail.is_read ? 'Read by HOD' : 'Unread'}
+                </span>
+              </div>
+            </div>
+            <div className="section-heading" style={{ marginTop: '1rem' }}>Message</div>
+            <p style={{ fontSize: '0.95rem', lineHeight: 1.7, color: 'var(--color-slate-700)', whiteSpace: 'pre-wrap' }}>
+              {noteDetail.message}
+            </p>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setNoteDetail(null)}>
+                Close
+              </button>
+            </div>
+          </>
+        ) : null}
+      </Modal>
 
       {/* Separate AI Advisory Assistant Modal (Section 13) */}
       <MentorAiBotModal isOpen={isAiBotOpen} onClose={() => setIsAiBotOpen(false)} />
@@ -1499,7 +1685,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
         title="Download Student Dossier PDF"
       >
         <div style={{ padding: '0.5rem 0' }}>
-          <p style={{ fontSize: '0.875rem', color: '#64748B', marginBottom: '1rem' }}>
+          <p style={{ fontSize: '0.875rem', color: 'var(--color-slate-500)', marginBottom: '1rem' }}>
             Select any assigned mentee to download their complete institutional dossier PDF including profile, academic history, arrears, and counselling records.
           </p>
 
@@ -1549,7 +1735,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
         title="Add Mentee Counselling Session"
       >
         <div style={{ padding: '0.5rem 0' }}>
-          <p style={{ fontSize: '0.875rem', color: '#64748B', marginBottom: '1rem' }}>
+          <p style={{ fontSize: '0.875rem', color: 'var(--color-slate-500)', marginBottom: '1rem' }}>
             Select an assigned mentee to open their counselling record book and add an intervention record with multi-category classification and grammar assistance.
           </p>
 
@@ -1618,7 +1804,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                   width: '40px',
                   height: '40px',
                   borderRadius: '8px',
-                  backgroundColor: '#059669',
+                  backgroundColor: 'var(--color-success-600)',
                   color: '#ffffff',
                   display: 'flex',
                   alignItems: 'center',
@@ -1644,7 +1830,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                   display: 'block',
                   fontSize: '0.85rem',
                   fontWeight: 600,
-                  color: '#1E293B',
+                  color: 'var(--color-slate-800)',
                   marginBottom: '0.4rem',
                 }}
               >
@@ -1658,23 +1844,23 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                 onChange={(e) => setExportAcademicYear(e.target.value)}
                 style={{ fontSize: '0.85rem' }}
               />
-              <span style={{ fontSize: '0.75rem', color: '#64748B', display: 'block', marginTop: '4px' }}>
+              <span style={{ fontSize: '0.75rem', color: 'var(--color-slate-500)', display: 'block', marginTop: '4px' }}>
                 Default automatically detects the current autonomous collegiate academic cycle.
               </span>
             </div>
 
             <div
               style={{
-                background: '#F8FAFC',
-                border: '1px solid #E2E8F0',
+                background: 'var(--color-slate-50)',
+                border: '1px solid var(--color-slate-200)',
                 borderRadius: '8px',
                 padding: '0.85rem 1rem',
                 marginBottom: '1.5rem',
                 fontSize: '0.8rem',
-                color: '#475569',
+                color: 'var(--color-slate-600)',
               }}
             >
-              <div style={{ fontWeight: 600, color: '#0B2545', marginBottom: '6px' }}>
+              <div style={{ fontWeight: 600, color: 'var(--color-navy-800)', marginBottom: '6px' }}>
                 16 Institutional Columns Included:
               </div>
               <ol style={{ margin: 0, paddingLeft: '1.25rem', lineHeight: 1.5 }}>
@@ -1703,8 +1889,8 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '0.45rem',
-                  backgroundColor: downloadExcelState === 'complete' ? '#059669' : '#0B2545',
-                  borderColor: downloadExcelState === 'complete' ? '#059669' : '#0B2545',
+                  backgroundColor: downloadExcelState === 'complete' ? 'var(--color-success-600)' : 'var(--color-navy-800)',
+                  borderColor: downloadExcelState === 'complete' ? 'var(--color-success-600)' : 'var(--color-navy-800)',
                   fontWeight: 600,
                 }}
               >

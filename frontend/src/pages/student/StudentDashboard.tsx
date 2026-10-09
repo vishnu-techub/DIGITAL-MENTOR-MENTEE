@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { api, ApiError } from '../../api/client';
+import { api, ApiError, type StudentPdfMode } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { StudentDocumentsManager } from '../../components/documents/StudentDocumentsManager';
 import { StudentProgressView } from '../../components/student/StudentProgressView';
+import { LeaderboardView } from '../../components/leaderboard/LeaderboardView';
 import { EmptyState } from '../../components/common/EmptyState';
 import { Skeleton } from '../../components/common/Skeleton';
+import { PageHeader } from '../../components/common/PageHeader';
 import {
   StudentProfileSkeleton,
   CounsellingSkeleton,
@@ -209,14 +211,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
     loadData();
   }, [user]);
 
-  const handleDownloadPdf = async () => {
+  const handleDownloadPdf = async (mode: StudentPdfMode = 'full') => {
     if (!profile) return;
     setPdfDownloading(true);
     try {
-      await api.pdf.downloadStudentPdf(
-        profile.id,
-        `KSRCE_RecordBook_${profile.register_number}.pdf`
-      );
+      const filenameMap: Record<StudentPdfMode, string> = {
+        full: `KSRCE_RecordBook_${profile.register_number}.pdf`,
+        internal: `KSRCE_Internal_Assessment_${profile.register_number}.pdf`,
+        'mentor-documents': `KSRCE_Mentor_Documents_${profile.register_number}.pdf`,
+      };
+      await api.pdf.downloadStudentPdf(profile.id, filenameMap[mode], mode);
     } catch (err: any) {
       toast.error('Error downloading PDF: ' + err.message);
     } finally {
@@ -346,8 +350,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
   const loadIdentityRequestOptions = async () => {
     try {
       const [deptRes, batchRes] = await Promise.all([
-        api.admin.getDepartments(),
-        api.admin.getBatches(),
+        api.reference.getDepartments(),
+        api.reference.getBatches(),
       ]);
       if (deptRes.success) {
         const depts = Array.isArray(deptRes.data) ? deptRes.data : deptRes.data?.departments || [];
@@ -590,12 +594,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
       {/* Overview Tab */}
       {currentTab === 'overview' && (
         <div>
+          <PageHeader
+            eyebrow="Student"
+            title="Overview"
+            subtitle="A snapshot of your academic standing, mentor allocation, and recent mentoring activity."
+          />
           {/* Welcome Banner */}
           <div
             className="card"
             style={{
               marginBottom: '1.5rem',
-              background: 'linear-gradient(135deg, #0B2545 0%, #13315C 100%)',
+              background: 'linear-gradient(135deg, var(--color-navy-800) 0%, var(--color-navy-700) 100%)',
               color: '#ffffff',
               border: 'none',
               padding: '1.75rem',
@@ -619,22 +628,42 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
               </div>
 
               {/* Prominent PDF Download */}
-              <button
-                className="btn btn-pdf"
-                onClick={handleDownloadPdf}
-                disabled={pdfDownloading}
-                style={{ padding: '0.65rem 1.5rem', fontSize: '0.9rem' }}
-              >
-                <FileText size={18} />
-                {pdfDownloading ? 'Generating...' : 'DOWNLOAD MY RECORD BOOK (PDF)'}
-              </button>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '0.5rem' }}>
+                <button
+                  className="btn btn-pdf"
+                  onClick={() => handleDownloadPdf('full')}
+                  disabled={pdfDownloading}
+                  style={{ padding: '0.65rem 1.5rem', fontSize: '0.9rem' }}
+                >
+                  <FileText size={18} />
+                  {pdfDownloading ? 'Generating...' : 'DOWNLOAD MY RECORD BOOK (PDF)'}
+                </button>
+                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => handleDownloadPdf('internal')}
+                    disabled={pdfDownloading}
+                    title="Download the internal assessment (IA1 / IA2 / End Sem) PDF"
+                  >
+                    Internal Assessment
+                  </button>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => handleDownloadPdf('mentor-documents')}
+                    disabled={pdfDownloading}
+                    title="Download the mentor documents (meetings / counselling / evidence) PDF"
+                  >
+                    Mentor Documents
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
           {/* Quick Metrics */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
             <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#EEF2F6', color: '#0B2545' }}>
+              <div className="stat-icon" style={{ backgroundColor: 'var(--color-navy-50)', color: 'var(--color-navy-800)' }}>
                 <GraduationCap size={24} />
               </div>
               <div className="stat-info">
@@ -659,7 +688,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
             </div>
 
             <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#F1F5F9', color: '#334155' }}>
+              <div className="stat-icon" style={{ backgroundColor: 'var(--color-slate-100)', color: 'var(--color-slate-700)' }}>
                 <BookOpen size={24} />
               </div>
               <div className="stat-info">
@@ -707,7 +736,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
               const notice = getMeetingNotice(schedule);
               if (notice.isPast) {
                 return (
-                  <div className="card" style={{ borderLeft: '4px solid #64748B' }}>
+                  <div className="card" style={{ borderLeft: '4px solid var(--color-slate-500)' }}>
                     <div className="card-header">
                       <h3 className="card-title"><CalendarCheck2 size={18} /> Meeting Schedule</h3>
                       <span className="badge badge-secondary">All Caught Up</span>
@@ -719,7 +748,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
                 );
               }
               return (
-                <div className="card" style={{ borderLeft: '4px solid #C59B27' }}>
+                <div className="card" style={{ borderLeft: '4px solid var(--color-gold-500)' }}>
                   <div className="card-header">
                     <h3 className="card-title"><CalendarCheck2 size={18} /> {notice.title}</h3>
                     <span className="badge badge-warning">{notice.badge}</span>
@@ -731,7 +760,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
                     <div style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '0.75rem' }}>
                       Location: <strong>{profile?.currentMentor?.cabin_location || schedule?.location || 'Faculty Cabin'}</strong>
                     </div>
-                    <div style={{ fontSize: '0.8rem', color: '#64748B', backgroundColor: '#F8FAFC', padding: '0.6rem 0.8rem', borderRadius: '8px' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--color-slate-500)', backgroundColor: 'var(--color-slate-50)', padding: '0.6rem 0.8rem', borderRadius: '8px' }}>
                       Scheduled Date: <strong>{schedule?.nextSaturdayDate}</strong>. Attendance is mandatory as per college mentoring regulations.
                     </div>
                     {schedule?.meetingDescription && (
@@ -815,19 +844,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
       {/* My Profile Tab */}
       {currentTab === 'profile' && (
         <div style={{ maxWidth: '900px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-            <div>
-              <h2 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
-                My Student Profile
-              </h2>
-              <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: '#64748B' }}>
-                View and update your contact, demographic, and parental information.
-              </p>
-            </div>
-            <button className="btn btn-pdf btn-sm" onClick={handleDownloadPdf}>
-              <FileText size={16} /> Download Student Record PDF
-            </button>
-          </div>
+          <PageHeader
+            eyebrow="Student"
+            title="My Profile"
+            subtitle="View and update your contact, demographic, and parental information."
+            actions={
+              <button className="btn btn-pdf btn-sm" onClick={() => handleDownloadPdf('full')}>
+                <FileText size={16} /> Download Student Record PDF
+              </button>
+            }
+          />
 
           {saveSuccessMsg && (
             <div
@@ -850,8 +876,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
           )}
 
           {/* Section 1: Immutable Identity Information */}
-          <div className="card" style={{ marginBottom: '1.5rem', backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0' }}>
-            <div className="card-header" style={{ borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div className="card" style={{ marginBottom: '1.5rem', backgroundColor: 'var(--color-slate-50)', border: '1px solid var(--color-slate-200)' }}>
+            <div className="card-header" style={{ borderBottom: '1px solid var(--color-slate-200)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Lock size={16} color="#64748B" />
                 <h3 className="card-title" style={{ fontSize: '1rem', color: '#1E293B', margin: 0 }}>
@@ -1245,14 +1271,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
       {/* Academic Ledger Tab */}
       {currentTab === 'academics' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              Permanent Academic Ledger (Semesters 1 to 8)
-            </h2>
-            <button className="btn btn-pdf btn-sm" onClick={handleDownloadPdf}>
-              <FileText size={16} /> Download Academic Transcript PDF
-            </button>
-          </div>
+          <PageHeader
+            eyebrow="Student"
+            title="Permanent Academic Ledger (Semesters 1 to 8)"
+            subtitle="Your institution-maintained admission details, semester grades, and arrear history."
+            actions={
+              <button className="btn btn-pdf btn-sm" onClick={() => handleDownloadPdf('full')}>
+                <FileText size={16} /> Download Academic Transcript PDF
+              </button>
+            }
+          />
 
           {/* Schooling */}
           <div className="card" style={{ marginBottom: '1.5rem' }}>
@@ -1497,11 +1525,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
       {/* Saturday Meetings Tab */}
       {currentTab === 'meetings' && (
         <div>
-          <div style={{ marginBottom: '1.25rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              My Saturday Mentor–Mentee Meeting Records
-            </h2>
-          </div>
+          <PageHeader
+            eyebrow="Student"
+            title="My Saturday Mentor–Mentee Meeting Records"
+            subtitle="Attendance, challenges discussed, and corrective actions recorded at each mentoring session."
+          />
 
           <div className="card">
             <div className="table-responsive">
@@ -1541,11 +1569,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
       {/* Mentoring & Counselling History Tab */}
       {currentTab === 'mentoring-history' && (
         <div>
-          <div style={{ marginBottom: '1.25rem' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0B2545' }}>
-              5-Domain Counselling & Mentoring History
-            </h2>
-          </div>
+          <PageHeader
+            eyebrow="Student"
+            title="5-Domain Counselling & Mentoring History"
+            subtitle="Counselling sessions and mentor assignment history maintained by the institution."
+          />
 
           {/* Counselling Table */}
           <div className="card" style={{ marginBottom: '1.5rem' }}>
@@ -1622,6 +1650,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
         <StudentProgressView />
       )}
 
+      {/* Achievement Leaderboard Tab */}
+      {currentTab === 'leaderboard' && <LeaderboardView />}
+
       {/* Documents / Certificates Tab */}
       {currentTab === 'documents' && profile && (
         <div>
@@ -1636,13 +1667,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
       {/* PDF Tab */}
       {currentTab === 'pdf' && (
         <div style={{ maxWidth: '650px' }}>
+          <PageHeader
+            eyebrow="Student"
+            title="Official Record Book (PDF)"
+            subtitle="Download a complete copy of your institutional mentoring dossier."
+          />
           <div className="card" style={{ textAlign: 'center', padding: '3rem 2rem' }}>
             <div
               style={{
                 width: '72px',
                 height: '72px',
-                backgroundColor: '#FFFBEB',
-                color: '#B8860B',
+                backgroundColor: 'var(--color-gold-50)',
+                color: 'var(--color-gold-600)',
                 borderRadius: '50%',
                 margin: '0 auto 1.25rem',
                 display: 'flex',
@@ -1652,16 +1688,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
             >
               <FileText size={36} />
             </div>
-            <h3 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#0B2545', marginBottom: '0.5rem' }}>
-              Official Institutional Record Book (PDF)
-            </h3>
             <p style={{ fontSize: '0.9rem', color: '#64748B', marginBottom: '1.75rem', lineHeight: 1.6 }}>
               Download your complete verified academic dossier containing demographics, parents information, schooling, semesters 1 to 8 CGPA/arrears, mentor assignment lineage, and all Saturday meeting & counselling logs.
             </p>
             <button
               className="btn btn-pdf"
               style={{ padding: '0.85rem 2.25rem', fontSize: '1rem' }}
-              onClick={handleDownloadPdf}
+              onClick={() => handleDownloadPdf('full')}
               disabled={pdfDownloading}
             >
               <FileText size={20} />

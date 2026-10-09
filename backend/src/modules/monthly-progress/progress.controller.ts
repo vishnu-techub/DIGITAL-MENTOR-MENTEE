@@ -1,5 +1,4 @@
 import { Response } from 'express';
-import mongoose from 'mongoose';
 import {
   MonthlyProgress,
   Student,
@@ -9,13 +8,14 @@ import {
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
+import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
 
 export async function getMonthlyProgress(req: AuthRequest, res: Response) {
   const studentId = req.params.studentId as string;
 
   try {
     let student = null;
-    if (mongoose.Types.ObjectId.isValid(studentId)) {
+    if (isValidId(studentId)) {
       student = await Student.findById(studentId);
     }
     if (!student) {
@@ -86,7 +86,7 @@ export async function createMonthlyProgress(req: AuthRequest, res: Response) {
 
   try {
     let student = null;
-    if (mongoose.Types.ObjectId.isValid(studentId)) {
+    if (isValidId(studentId)) {
       student = await Student.findById(studentId);
     }
     if (!student) {
@@ -98,7 +98,7 @@ export async function createMonthlyProgress(req: AuthRequest, res: Response) {
 
     let mentorDoc = null;
     if (req.user?.facultyId) {
-      if (mongoose.Types.ObjectId.isValid(req.user.facultyId)) {
+      if (isValidId(req.user.facultyId)) {
         mentorDoc = await Faculty.findById(req.user.facultyId);
       } else {
         mentorDoc = await Faculty.findOne({ employeeId: req.user.facultyId });

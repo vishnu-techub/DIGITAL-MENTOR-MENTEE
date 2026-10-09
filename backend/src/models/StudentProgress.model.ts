@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
 
 export type ProgressCategory =
   | 'Event Certificate'
@@ -22,8 +22,8 @@ export type ProgressStatus =
   | 'Verified'
   | 'Rejected';
 
-export interface IStudentProgress extends Document {
-  studentId: mongoose.Types.ObjectId;
+export interface IStudentProgress extends LocalDocument {
+  studentId: LocalId;
   registerNumber: string;
   studentName: string;
   department?: string;
@@ -42,7 +42,7 @@ export interface IStudentProgress extends Document {
   fileType?: string;
   status: ProgressStatus;
   rejectionReason?: string;
-  reviewedBy?: mongoose.Types.ObjectId;
+  reviewedBy?: LocalId;
   reviewerName?: string;
   reviewedAt?: Date;
   createdAt: Date;
@@ -52,7 +52,7 @@ export interface IStudentProgress extends Document {
 const StudentProgressSchema = new Schema<IStudentProgress>(
   {
     studentId: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Student',
       required: [true, 'studentId is required'],
       index: true,
@@ -160,7 +160,7 @@ const StudentProgressSchema = new Schema<IStudentProgress>(
       default: '',
     },
     reviewedBy: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Faculty',
     },
     reviewerName: {
@@ -183,7 +183,7 @@ StudentProgressSchema.index({ studentId: 1, category: 1 });
 StudentProgressSchema.index({ registerNumber: 1, category: 1 });
 StudentProgressSchema.index({ studentId: 1, createdAt: -1 });
 
-export const StudentProgress = mongoose.model<IStudentProgress>(
+export const StudentProgress = defineModel<IStudentProgress>(
   'StudentProgress',
   StudentProgressSchema
 );

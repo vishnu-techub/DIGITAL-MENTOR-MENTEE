@@ -1,7 +1,7 @@
-import mongoose from 'mongoose';
 import { AuthUser } from '../middleware/auth.middleware.js';
 import { ROLES } from '../config/constants.js';
 import { Student, MentorAssignment, Faculty } from '../models/index.js';
+import { isValidId, toLocalId, type LocalId } from '../services/localId.js';
 
 /**
  * CENTRAL AUTHORISATION UTILITY
@@ -30,10 +30,9 @@ function deny(status: number, message: string): AccessDecision {
   return { allowed: false, status, message };
 }
 
-/** Normalise any ObjectId | populated doc | string reference into a comparable string id. */
+/** Normalise any populated doc | LocalId | string reference into a comparable string id. */
 export function toIdString(value: any): string | null {
   if (value === null || value === undefined || value === '') return null;
-  if (value instanceof mongoose.Types.ObjectId) return value.toString();
   if (typeof value === 'object') {
     if (value._id) return value._id.toString();
     return null;
@@ -46,7 +45,7 @@ export async function resolveFacultyIdForUser(user?: AuthUser): Promise<string |
   if (!user) return null;
   const raw = user.facultyId;
   if (!raw) return null;
-  if (mongoose.Types.ObjectId.isValid(raw)) {
+  if (isValidId(raw)) {
     const byId = await Faculty.findById(raw).select('_id').lean();
     if (byId) return (byId as any)._id.toString();
   }
@@ -59,8 +58,8 @@ export async function isActiveMentorOf(user: AuthUser | undefined, studentId: st
   const mentorId = await resolveFacultyIdForUser(user);
   if (!mentorId) return false;
   const asg = await MentorAssignment.findOne({
-    student: new mongoose.Types.ObjectId(studentId),
-    mentor: new mongoose.Types.ObjectId(mentorId),
+    student: toLocalId(studentId),
+    mentor: toLocalId(mentorId),
     status: 'ACTIVE',
   })
     .select('_id')
@@ -148,7 +147,7 @@ export async function buildScopedStudentFilter(
 
   if (user.role === ROLES.HOD) {
     if (user.departmentId) {
-      filter.department = new mongoose.Types.ObjectId(user.departmentId);
+      filter.department = toLocalId(user.departmentId);
     } else {
       filter._id = null;
     }
@@ -162,7 +161,7 @@ export async function buildScopedStudentFilter(
       return filter;
     }
     const asgs = await MentorAssignment.find({
-      mentor: new mongoose.Types.ObjectId(mentorId),
+      mentor: toLocalId(mentorId),
       status: 'ACTIVE',
     })
       .select('student')
@@ -173,8 +172,8 @@ export async function buildScopedStudentFilter(
 
   // STUDENT
   if (user.studentId) {
-    if (mongoose.Types.ObjectId.isValid(user.studentId)) {
-      filter._id = new mongoose.Types.ObjectId(user.studentId);
+    if (isValidId(user.studentId)) {
+      filter._id = toLocalId(user.studentId);
     } else {
       filter.registerNumber = String(user.studentId).toUpperCase();
     }
@@ -190,7 +189,7 @@ export async function loadAccessibleStudent(
   idOrReg: string
 ): Promise<{ student: any | null; decision: AccessDecision }> {
   let student: any = null;
-  if (mongoose.Types.ObjectId.isValid(idOrReg)) {
+  if (isValidId(idOrReg)) {
     student = await Student.findById(idOrReg);
   }
   if (!student) {

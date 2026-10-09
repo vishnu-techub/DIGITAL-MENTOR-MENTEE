@@ -3,6 +3,7 @@ import { api, type RecordState, type RecordPermissions } from '../../api/client'
 import { useToast } from '../../context/ToastContext';
 import { Modal } from '../common/Modal';
 import { RecordStatusBadge, readPermissions } from '../../lib/recordStatus';
+import { PageHeader } from '../common/PageHeader';
 import {
   Award,
   Trophy,
@@ -270,31 +271,11 @@ export const StudentProgressView: React.FC = () => {
 
   return (
     <div className="student-progress-container" style={{ padding: '0.5rem 0' }}>
-      {/* Header Banner */}
-      <div
-        className="card"
-        style={{
-          padding: '1.25rem 1.5rem',
-          marginBottom: '1.5rem',
-          borderRadius: '12px',
-          background: 'linear-gradient(135deg, #0B2545 0%, #134074 100%)',
-          color: '#ffffff',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-        }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-              <Trophy size={22} color="#FDE047" />
-              <h2 style={{ margin: 0, fontSize: '1.35rem', fontWeight: 800, color: '#ffffff' }}>
-                My Progress & Achievements
-              </h2>
-            </div>
-            <p style={{ margin: 0, fontSize: '0.86rem', color: '#93C5FD', maxWidth: '650px' }}>
-              Maintain your accomplishments, certifications, hackathons, and activities. Submissions automatically sync with your assigned mentor and appear in institutional Excel records.
-            </p>
-          </div>
-
+      <PageHeader
+        eyebrow={<><Trophy size={14} aria-hidden="true" /> Student</>}
+        title="My Progress & Achievements"
+        subtitle="Maintain your accomplishments, certifications, hackathons, and activities. Submissions automatically sync with your assigned mentor and appear in institutional Excel records."
+        actions={
           <button
             type="button"
             onClick={handleOpenAdd}
@@ -316,8 +297,8 @@ export const StudentProgressView: React.FC = () => {
           >
             <Plus size={16} /> Add Achievement
           </button>
-        </div>
-      </div>
+        }
+      />
 
       {/* Summary Cards */}
       <div

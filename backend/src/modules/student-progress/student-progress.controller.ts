@@ -2,7 +2,6 @@ import { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
-import mongoose from 'mongoose';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
 import { StudentProgress, ProgressCategory, ProgressLevel, ProgressStatus } from '../../models/StudentProgress.model.js';
 import { Student } from '../../models/Student.model.js';
@@ -24,6 +23,7 @@ import {
   type RecordPermissions,
 } from '../../utils/record-permission.util.js';
 import { resolveStoredUploadPath, resolveWritableUploadsDir } from '../../config/storage.js';
+import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
 
 // Setup a Writable Uploads Directory for Progress Certificates
 const UPLOADS_DIR = resolveWritableUploadsDir('progress');
@@ -72,7 +72,7 @@ export const progressUploadMiddleware = multer({
 async function resolveAuthStudent(req: AuthRequest) {
   if (req.user?.role === ROLES.STUDENT) {
     if (req.user.studentId) {
-      if (mongoose.Types.ObjectId.isValid(req.user.studentId)) {
+      if (isValidId(req.user.studentId)) {
         const byId = await Student.findById(req.user.studentId).populate('department batch');
         if (byId) return byId;
       }
@@ -683,7 +683,7 @@ export async function getMenteeProgressForMentor(req: AuthRequest, res: Response
   try {
     const studentId = req.params.studentId as string;
 
-    if (!studentId || !mongoose.Types.ObjectId.isValid(studentId)) {
+    if (!studentId || !isValidId(studentId)) {
       return sendError(res, 'Invalid student ID parameter.', 400);
     }
 
@@ -780,7 +780,7 @@ export async function verifyMenteeProgress(req: AuthRequest, res: Response) {
     for (const candidate of order) {
       if (candidate === 'DOCUMENT') {
         const doc = await StudentDocument.findOne({
-          _id: mongoose.Types.ObjectId.isValid(id) ? id : undefined,
+          _id: isValidId(id) ? id : undefined,
           studentId: student._id,
           isPrimary: false,
           documentType: { $ne: 'student_details_form' },
@@ -792,7 +792,7 @@ export async function verifyMenteeProgress(req: AuthRequest, res: Response) {
         }
       } else {
         const prog = await StudentProgress.findOne({
-          _id: mongoose.Types.ObjectId.isValid(id) ? id : undefined,
+          _id: isValidId(id) ? id : undefined,
           studentId: student._id,
         });
         if (prog) {
@@ -830,8 +830,8 @@ export async function verifyMenteeProgress(req: AuthRequest, res: Response) {
       record.verificationStatus = targetStatus;
       record.rejectionReason = targetStatus === RECORD_STATE.REJECTED ? rejectionReason.trim() : '';
       if (targetStatus === RECORD_STATE.REJECTED) {
-        record.rejectedBy = mongoose.Types.ObjectId.isValid(String(req.user?.id || ''))
-          ? new mongoose.Types.ObjectId(String(req.user?.id))
+        record.rejectedBy = isValidId(String(req.user?.id || ''))
+          ? toLocalId(String(req.user?.id))
           : undefined;
         record.rejectedDate = new Date();
       } else {

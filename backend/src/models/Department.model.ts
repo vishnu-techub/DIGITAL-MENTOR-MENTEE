@@ -1,6 +1,6 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
 
-export interface IDepartment extends Document {
+export interface IDepartment extends LocalDocument {
   code: string;
   name: string;
   hodName?: string;
@@ -35,4 +35,4 @@ const DepartmentSchema = new Schema<IDepartment>(
 
 
 
-export const Department = mongoose.model<IDepartment>('Department', DepartmentSchema);
+export const Department = defineModel<IDepartment>('Department', DepartmentSchema);

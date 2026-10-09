@@ -1,5 +1,4 @@
 import { Response } from 'express';
-import mongoose from 'mongoose';
 import {
   Department,
   Student,
@@ -13,12 +12,13 @@ import { sendSuccess, sendError } from '../../utils/response.js';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
 import { ROLES } from '../../config/constants.js';
 import { calculateArrearStatistics } from '../../utils/arrears.util.js';
+import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
 
 export async function getDepartmentReport(req: AuthRequest, res: Response) {
   try {
     const filter: any = {};
     if (req.user?.role === ROLES.HOD && req.user.departmentId) {
-      if (mongoose.Types.ObjectId.isValid(req.user.departmentId)) {
+      if (isValidId(req.user.departmentId)) {
         filter._id = req.user.departmentId;
       }
     }
@@ -94,7 +94,7 @@ export async function exportStudentsCsv(req: AuthRequest, res: Response) {
     const filter: any = { isActive: true };
 
     if (req.user?.role === ROLES.HOD && req.user.departmentId) {
-      if (mongoose.Types.ObjectId.isValid(req.user.departmentId)) {
+      if (isValidId(req.user.departmentId)) {
         filter.department = req.user.departmentId;
       }
     }

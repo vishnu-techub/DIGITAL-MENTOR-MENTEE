@@ -1,6 +1,5 @@
 import { Response } from 'express';
 import bcrypt from 'bcryptjs';
-import mongoose from 'mongoose';
 import {
   Student,
   User,
@@ -32,6 +31,8 @@ import {
   joinErrors,
 } from '../../utils/validation.util.js';
 import { syncStudentDetailsPdf } from '../documents/student-details-pdf.service.js';
+import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
+import { buildEvidenceViews, normaliseEvidenceRefs } from '../counselling/evidence.service.js';
 
 /**
  * SINGLE SOURCE OF TRUTH for a student's institutional email.
@@ -71,7 +72,7 @@ function normaliseArrearSubjects(input: any): { codes: string[]; details: { subj
 
 // Helper: Resolve student from id, registerNumber, or user ID
 async function findStudentByIdOrReg(idOrReg: string) {
-  if (mongoose.Types.ObjectId.isValid(idOrReg)) {
+  if (isValidId(idOrReg)) {
     const byId = await Student.findById(idOrReg).populate('department batch user school.tenthSchoolId school.twelfthSchoolId');
     if (byId) return byId;
     const byUser = await Student.findOne({ user: idOrReg }).populate('department batch user school.tenthSchoolId school.twelfthSchoolId');
@@ -107,7 +108,7 @@ export async function getStudents(req: AuthRequest, res: Response) {
     if (req.user?.role === ROLES.HOD && req.user.departmentId) {
       filter.department = req.user.departmentId;
     } else if (departmentId) {
-      if (mongoose.Types.ObjectId.isValid(departmentId)) {
+      if (isValidId(departmentId)) {
         filter.department = departmentId;
       } else {
         const d = await Department.findOne({ $or: [{ code: departmentId.toUpperCase() }, { _id: departmentId }] });
@@ -116,7 +117,7 @@ export async function getStudents(req: AuthRequest, res: Response) {
     }
 
     if (batchId) {
-      if (mongoose.Types.ObjectId.isValid(batchId)) {
+      if (isValidId(batchId)) {
         filter.batch = batchId;
       } else {
         const b = await Batch.findOne({ name: batchId });
@@ -442,15 +443,39 @@ export async function getStudentById(req: AuthRequest, res: Response) {
       mentor_remarks: m.mentorRemarks,
     }));
 
-    const formattedCounselling = counsellingRecords.map((c) => ({
-      id: c._id.toString(),
-      session_date: c.sessionDate,
-      category: c.category,
-      challenge_observed: c.challengeObserved,
-      corrective_action: c.correctiveAction,
-      student_feedback: c.studentFeedback,
-      mentor_remarks: c.mentorRemarks,
-    }));
+    const discussionLabel = (participants: unknown): string => {
+      const list = Array.isArray(participants) ? participants : [];
+      const hasStudent = list.includes('student');
+      const hasParent = list.includes('parent');
+      if (hasStudent && hasParent) return 'Student & Parent';
+      if (hasStudent) return 'Student';
+      if (hasParent) return 'Parent';
+      return 'Not recorded';
+    };
+
+    const formattedCounselling = await Promise.all(
+      counsellingRecords.map(async (c: any) => ({
+        id: c._id.toString(),
+        session_date: c.sessionDate,
+        category: c.category,
+        categories: Array.isArray(c.categories) ? c.categories : [],
+        challenge_observed: c.challengeObserved,
+        corrective_action: c.correctiveAction,
+        student_feedback: c.studentFeedback,
+        mentor_remarks: c.mentorRemarks,
+        // Who the mentor held this discussion with. Reported exactly as stored;
+        // an older record that predates the field reads "Not recorded".
+        discussion_with: Array.isArray(c.discussionWith) ? c.discussionWith : [],
+        discussionWith: Array.isArray(c.discussionWith) ? c.discussionWith : [],
+        discussion_with_label: discussionLabel(c.discussionWith),
+        record_kind: c.recordKind || 'INDIVIDUAL',
+        recordKind: c.recordKind || 'INDIVIDUAL',
+        evidence: await buildEvidenceViews(
+          normaliseEvidenceRefs(c.evidence).map((ref: any) => ref.evidenceId)
+        ),
+        evidence_count: normaliseEvidenceRefs(c.evidence).length,
+      }))
+    );
 
     const formattedProgress = monthlyProgress.map((p) => ({
       id: p._id.toString(),
@@ -852,7 +877,7 @@ export async function submitStudentProfile(req: AuthRequest, res: Response) {
 
     // Validate school selection: accept selected school from database OR entered school name
     let tenthSchoolDoc = null;
-    if (tenthSchoolId && mongoose.Types.ObjectId.isValid(tenthSchoolId)) {
+    if (tenthSchoolId && isValidId(tenthSchoolId)) {
       tenthSchoolDoc = await School.findById(tenthSchoolId);
     }
     const finalTenthSchoolName = tenthSchoolDoc?.displayName || tenthSchool?.trim() || student.school?.tenthSchool || '';
@@ -861,7 +886,7 @@ export async function submitStudentProfile(req: AuthRequest, res: Response) {
     }
 
     let twelfthSchoolDoc = null;
-    if (twelfthSchoolId && mongoose.Types.ObjectId.isValid(twelfthSchoolId)) {
+    if (twelfthSchoolId && isValidId(twelfthSchoolId)) {
       twelfthSchoolDoc = await School.findById(twelfthSchoolId);
     }
     const finalTwelfthSchoolName = twelfthSchoolDoc?.displayName || twelfthSchool?.trim() || student.school?.twelfthSchool || '';
@@ -964,10 +989,10 @@ export async function submitStudentProfile(req: AuthRequest, res: Response) {
     student.school = {
       tenthMark: tenthMarkResult.value ?? student.school?.tenthMark ?? 0,
       tenthSchool: finalTenthSchoolName,
-      tenthSchoolId: tenthSchoolDoc?._id || (mongoose.Types.ObjectId.isValid(tenthSchoolId) ? tenthSchoolId : null) || student.school?.tenthSchoolId || null,
+      tenthSchoolId: tenthSchoolDoc?._id || (isValidId(tenthSchoolId) ? tenthSchoolId : null) || student.school?.tenthSchoolId || null,
       twelfthMark: twelfthMarkResult.value ?? student.school?.twelfthMark ?? 0,
       twelfthSchool: finalTwelfthSchoolName,
-      twelfthSchoolId: twelfthSchoolDoc?._id || (mongoose.Types.ObjectId.isValid(twelfthSchoolId) ? twelfthSchoolId : null) || student.school?.twelfthSchoolId || null,
+      twelfthSchoolId: twelfthSchoolDoc?._id || (isValidId(twelfthSchoolId) ? twelfthSchoolId : null) || student.school?.twelfthSchoolId || null,
       cutoffMark: cutoffResult.value ?? student.school?.cutoffMark ?? 0,
       admissionType: effectiveAdmissionType,
       scholarshipDetails: (scholarshipDetails || student.school?.scholarshipDetails || 'Nil').trim(),
@@ -1569,11 +1594,11 @@ export async function updateStudentAcademics(req: AuthRequest, res: Response) {
     let tenthSchoolDoc: any = null;
     let twelfthSchoolDoc: any = null;
     if (tenthSchoolId) {
-      if (!mongoose.Types.ObjectId.isValid(String(tenthSchoolId))) errors.push('Invalid 10th standard school reference.');
+      if (!isValidId(String(tenthSchoolId))) errors.push('Invalid 10th standard school reference.');
       else tenthSchoolDoc = await School.findById(tenthSchoolId);
     }
     if (twelfthSchoolId) {
-      if (!mongoose.Types.ObjectId.isValid(String(twelfthSchoolId))) errors.push('Invalid 12th standard school reference.');
+      if (!isValidId(String(twelfthSchoolId))) errors.push('Invalid 12th standard school reference.');
       else twelfthSchoolDoc = await School.findById(twelfthSchoolId);
     }
 

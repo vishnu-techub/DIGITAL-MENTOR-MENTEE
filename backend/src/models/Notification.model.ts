@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
 
 export type NotificationType =
   | 'MEETING_REMINDER'
@@ -9,10 +9,11 @@ export type NotificationType =
   | 'MENTOR_ASSIGNMENT'
   | 'SYSTEM_ANNOUNCEMENT'
   | 'MEETING_REMINDER_FRIDAY'
-  | 'MEETING_TODAY_SATURDAY';
+  | 'MEETING_TODAY_SATURDAY'
+  | 'FACULTY_NOTIFICATION';
 
-export interface INotification extends Document {
-  user: mongoose.Types.ObjectId;
+export interface INotification extends LocalDocument {
+  user: LocalId;
   title: string;
   message: string;
   type: NotificationType | string;
@@ -21,6 +22,23 @@ export interface INotification extends Document {
   relatedEntityId?: string;
   actionUrl?: string;
   scheduledFor?: Date;
+  /**
+   * Faculty -> HOD notices only. The department is stamped server-side from the
+   * sender's own Faculty record, never from the request body, and it is the
+   * field every department-scoped read filters on. Every other notification
+   * type leaves it undefined.
+   */
+  department?: LocalId;
+  /** Faculty record id of the sender (denormalised so the sent list needs no join). */
+  facultyId?: string;
+  /** Sender display name at send time. */
+  facultyName?: string;
+  /**
+   * Why this particular copy exists. One logical send produces one document per
+   * recipient, so the author's "sent" list filters to the HOD copies instead of
+   * listing the same notice once for every recipient.
+   */
+  recipientRole?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -28,7 +46,7 @@ export interface INotification extends Document {
 const NotificationSchema = new Schema<INotification>(
   {
     user: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'User',
       required: true,
       index: true,
@@ -62,6 +80,22 @@ const NotificationSchema = new Schema<INotification>(
     scheduledFor: {
       type: Date,
     },
+    department: {
+      type: 'ObjectId',
+      ref: 'Department',
+      index: true,
+    },
+    facultyId: {
+      type: String,
+      index: true,
+    },
+    facultyName: {
+      type: String,
+    },
+    recipientRole: {
+      type: String,
+      index: true,
+    },
   },
   {
     timestamps: true,
@@ -71,5 +105,6 @@ const NotificationSchema = new Schema<INotification>(
 // Indexes
 NotificationSchema.index({ user: 1, isRead: 1 });
 NotificationSchema.index({ createdAt: -1 });
+NotificationSchema.index({ department: 1, isRead: 1 });
 
-export const Notification = mongoose.model<INotification>('Notification', NotificationSchema);
+export const Notification = defineModel<INotification>('Notification', NotificationSchema);

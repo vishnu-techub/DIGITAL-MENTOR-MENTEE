@@ -1,5 +1,25 @@
+/**
+ * ============================================================================
+ * LEGACY ONE-OFF TOOL -- KEEP FOR REFERENCE, DO NOT RUN ON A LIVE STORE
+ * ============================================================================
+ * TEMPORARY LOCAL FILE STORAGE. Replace with a persistent database/storage
+ * implementation before production deployment.
+ *
+ * This was the original migration path: it read the project's first SQLite
+ * prototype (`backend/data/ksrce_mentoring.db`, an immutable backup that predates
+ * the MongoDB era) and re-inserted it into the live database. It is NOT wired to
+ * any npm script and is only run by hand.
+ *
+ * It is retained, not deleted, because the SQLite file it reads is a real
+ * historical backup and there is no other tool that can import it. It is the ONLY
+ * remaining consumer of the `sqlite3` package, which is therefore kept as a
+ * devDependency for this file alone.
+ *
+ * It has been repointed from MongoDB at the local file store, so running it now
+ * would import the 2019-era rows into `backend/data/*.json` alongside live
+ * records. Back up `backend/data/` first if you ever need it.
+ */
 import sqlite3 from 'sqlite3';
-import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import path from 'path';
 import { connectDB } from '../config/database.js';
@@ -17,6 +37,7 @@ import {
   School,
   SystemSetting,
 } from '../models/index.js';
+import { isValidId, toLocalId, type LocalId } from '../services/localId.js';
 
 function querySqlite(db: sqlite3.Database, sql: string, params: any[] = []): Promise<any[]> {
   return new Promise((resolve, reject) => {
@@ -29,12 +50,10 @@ function querySqlite(db: sqlite3.Database, sql: string, params: any[] = []): Pro
 
 export async function restoreAllDetails(): Promise<void> {
   console.log('============================================================');
-  console.log('RESTORING ALL PREVIOUS DATA FROM SQLITE TO MONGODB...');
+  console.log('RESTORING ALL PREVIOUS DATA FROM SQLITE TO THE LOCAL FILE STORE...');
   console.log('============================================================');
 
-  if (mongoose.connection.readyState !== 1) {
-    await connectDB();
-  }
+  await connectDB();
 
   const sqlitePath = path.resolve(process.cwd(), 'data/ksrce_mentoring.db');
   const sqliteDb = new sqlite3.Database(sqlitePath, sqlite3.OPEN_READONLY);
@@ -43,7 +62,7 @@ export async function restoreAllDetails(): Promise<void> {
     // 1. Departments Map
     console.log('1. Restoring / Mapping Departments...');
     const sqliteDepts = await querySqlite(sqliteDb, 'SELECT * FROM departments');
-    const deptIdMap = new Map<string, mongoose.Types.ObjectId>();
+    const deptIdMap = new Map<string, LocalId>();
 
     for (const d of sqliteDepts) {
       let deptDoc = await Department.findOne({ code: d.code });
@@ -67,7 +86,7 @@ export async function restoreAllDetails(): Promise<void> {
     // 2. Batches Map
     console.log('2. Restoring / Mapping Batches...');
     const sqliteBatches = await querySqlite(sqliteDb, 'SELECT * FROM batches');
-    const batchIdMap = new Map<string, mongoose.Types.ObjectId>();
+    const batchIdMap = new Map<string, LocalId>();
 
     for (const b of sqliteBatches) {
       let batchDoc = await Batch.findOne({ name: b.name });
@@ -92,7 +111,7 @@ export async function restoreAllDetails(): Promise<void> {
     // 3. Users Map
     console.log('3. Restoring Users...');
     const sqliteUsers = await querySqlite(sqliteDb, 'SELECT * FROM users');
-    const userIdMap = new Map<string, mongoose.Types.ObjectId>();
+    const userIdMap = new Map<string, LocalId>();
 
     for (const u of sqliteUsers) {
       const deptMongoId = u.department_id ? deptIdMap.get(u.department_id) : undefined;
@@ -118,7 +137,7 @@ export async function restoreAllDetails(): Promise<void> {
     // 4. Faculty Map
     console.log('4. Restoring Faculty...');
     const sqliteFaculty = await querySqlite(sqliteDb, 'SELECT * FROM faculty');
-    const facultyIdMap = new Map<string, mongoose.Types.ObjectId>();
+    const facultyIdMap = new Map<string, LocalId>();
 
     for (const f of sqliteFaculty) {
       const userMongoId = userIdMap.get(f.user_id);
@@ -183,7 +202,7 @@ export async function restoreAllDetails(): Promise<void> {
     const sqliteParents = await querySqlite(sqliteDb, 'SELECT * FROM parent_details');
     const sqliteSchools = await querySqlite(sqliteDb, 'SELECT * FROM academic_school_details');
     const sqliteSiblings = await querySqlite(sqliteDb, 'SELECT * FROM sibling_details');
-    const studentIdMap = new Map<string, mongoose.Types.ObjectId>();
+    const studentIdMap = new Map<string, LocalId>();
 
     for (const s of sqliteStudents) {
       let userMongoId = userIdMap.get(s.user_id) || userIdMap.get(s.register_number);

@@ -1,9 +1,9 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
 
 export type AcademicEditStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
-export interface IAcademicEditRequest extends Document {
-  student: mongoose.Types.ObjectId;
+export interface IAcademicEditRequest extends LocalDocument {
+  student: LocalId;
   registerNumber: string;
   studentName: string;
   semesterNumber: number;
@@ -16,17 +16,17 @@ export interface IAcademicEditRequest extends Document {
 
   reason: string;
   /** Optional supporting document owned by the same student. */
-  supportingDocument?: mongoose.Types.ObjectId;
+  supportingDocument?: LocalId;
   supportingDocumentName?: string;
   supportingDocumentUrl?: string;
 
   status: AcademicEditStatus;
 
-  approvedBy?: mongoose.Types.ObjectId;
+  approvedBy?: LocalId;
   approvedByName?: string;
   approvedAt?: Date;
 
-  rejectedBy?: mongoose.Types.ObjectId;
+  rejectedBy?: LocalId;
   rejectedByName?: string;
   rejectedAt?: Date;
   rejectionReason?: string;
@@ -38,7 +38,7 @@ export interface IAcademicEditRequest extends Document {
 const AcademicEditRequestSchema = new Schema<IAcademicEditRequest>(
   {
     student: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Student',
       required: true,
       index: true,
@@ -76,7 +76,7 @@ const AcademicEditRequestSchema = new Schema<IAcademicEditRequest>(
     },
 
     supportingDocument: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'StudentDocument',
     },
     supportingDocumentName: { type: String, trim: true },
@@ -89,11 +89,11 @@ const AcademicEditRequestSchema = new Schema<IAcademicEditRequest>(
       index: true,
     },
 
-    approvedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    approvedBy: { type: 'ObjectId', ref: 'User' },
     approvedByName: { type: String, trim: true },
     approvedAt: { type: Date },
 
-    rejectedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    rejectedBy: { type: 'ObjectId', ref: 'User' },
     rejectedByName: { type: String, trim: true },
     rejectedAt: { type: Date },
     rejectionReason: { type: String, trim: true },
@@ -110,5 +110,4 @@ AcademicEditRequestSchema.index({ student: 1, semesterNumber: 1, status: 1 });
 AcademicEditRequestSchema.index({ status: 1, createdAt: -1 });
 
 export const AcademicEditRequest =
-  mongoose.models.AcademicEditRequest ||
-  mongoose.model<IAcademicEditRequest>('AcademicEditRequest', AcademicEditRequestSchema);
+  getModel<IAcademicEditRequest>('AcademicEditRequest', AcademicEditRequestSchema);

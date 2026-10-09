@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { User, Student, Faculty, Department, Batch } from '../../models/index.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
+import { toIdString } from '../../utils/access.util.js';
 import { JWT_SECRET, AuthRequest } from '../../middleware/auth.middleware.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
 
@@ -79,7 +80,7 @@ export async function login(req: Request, res: Response) {
       role: user.role,
       email: user.email,
       fullName: user.fullName,
-      departmentId: user.department ? user.department._id.toString() : null,
+      departmentId: toIdString(user.department),
       facultyId,
       studentId,
       profileCompleted,

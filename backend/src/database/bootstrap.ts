@@ -20,14 +20,25 @@ export async function ensureSystemBootstrap(): Promise<void> {
   // 1. Ensure all collections, schemas, and indexes are synchronized
   await runMigrations();
 
-  console.log('Ensuring clean institutional configuration in MongoDB...');
+  console.log('Ensuring clean institutional configuration in the local file store...');
 
   // 2. Institutional Master Lookups: Academic Departments (if not existing)
   const institutionalDepartments = [
+    { code: 'AUTO', name: 'Automobile Engineering' },
+    { code: 'BME', name: 'Biomedical Engineering' },
     { code: 'CSE', name: 'Computer Science and Engineering' },
+    { code: 'CIVIL', name: 'Civil Engineering' },
+    { code: 'CSD', name: 'Computer Science and Design' },
+    { code: 'CSE_IOT', name: 'Computer Science and Engineering (IOT)' },
+    { code: 'CSE_CS', name: 'Computer Science and Engineering (Cyber Security)' },
     { code: 'ECE', name: 'Electronics and Communication Engineering' },
-    { code: 'IT', name: 'Information Technology' },
+    { code: 'EEE', name: 'Electrical and Electronics Engineering' },
     { code: 'MECH', name: 'Mechanical Engineering' },
+    { code: 'IT', name: 'Information Technology' },
+    { code: 'SFE', name: 'Safety and Fire Engineering' },
+    { code: 'MCA', name: 'Master of Computer Applications (MCA)' },
+    { code: 'MBA', name: 'Management Studies (MBA)' },
+    { code: 'AIDS', name: 'Artificial Intelligence and Data Science' },
   ];
 
   for (const dept of institutionalDepartments) {
@@ -105,17 +116,43 @@ export async function ensureSystemBootstrap(): Promise<void> {
     });
     console.log(`[Bootstrap] Initialized primary Administrator account (${adminUsername}).`);
   } else {
-    adminUser.username = adminUsername;
-    adminUser.email = adminEmail || adminUser.email || 'admin@ksrce.ac.in';
-    adminUser.passwordHash = passwordHash;
-    adminUser.role = 'ADMIN';
-    adminUser.fullName = 'System admin';
-    adminUser.isActive = true;
-    if (adminDept) {
-      adminUser.department = adminDept._id;
+    // An administrator already exists. PRESERVE the account and, critically, the
+    // stored password.
+    //
+    // The previous behaviour re-hashed ADMIN_PASSWORD and wrote it over the stored
+    // hash on EVERY startup. If the admin had changed their password in the app, or
+    // ADMIN_PASSWORD had drifted from what was actually stored, the next restart
+    // silently reverted the credential and the password the user actually held was
+    // rejected with HTTP 401. Bootstrap must be able to re-create a missing admin,
+    // but it must never overwrite one that already exists.
+    //
+    // A deliberate, explicit reset remains available: set
+    // ADMIN_FORCE_PASSWORD_RESET=true together with ADMIN_PASSWORD to re-apply the
+    // configured password once.
+    const forcePasswordReset = ['1', 'true', 'yes', 'on'].includes(
+      (process.env.ADMIN_FORCE_PASSWORD_RESET || '').trim().toLowerCase()
+    );
+
+    if (forcePasswordReset) {
+      adminUser.passwordHash = passwordHash;
+      console.log('[Bootstrap] ADMIN_FORCE_PASSWORD_RESET is set - resetting the Administrator password from ADMIN_PASSWORD.');
     }
+
+    // Keep the account usable as the system administrator, but never clobber the
+    // identity/credential fields an operator or the admin themselves may have set.
+    if (adminUser.role !== 'ADMIN') {
+      adminUser.role = 'ADMIN';
+    }
+    if (adminUser.isActive !== true) {
+      adminUser.isActive = true;
+    }
+
     await adminUser.save();
-    console.log(`[Bootstrap] Configured/updated Administrator account (${adminUsername}).`);
+    console.log(
+      forcePasswordReset
+        ? `[Bootstrap] Administrator password reset for (${adminUser.username}); account preserved.`
+        : `[Bootstrap] Existing Administrator (${adminUser.username}) preserved (password unchanged). Set ADMIN_FORCE_PASSWORD_RESET=true to reset it.`
+    );
   }
 
   // 6. Institutional Master Lookups: Standard Feeder Schools (if empty)

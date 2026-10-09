@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
 
 export interface IClearedSubject {
   subjectCode: string;
@@ -13,8 +13,8 @@ export interface IArrearSubjectDetail {
   subjectName: string;
 }
 
-export interface IAcademicRecord extends Document {
-  student: mongoose.Types.ObjectId;
+export interface IAcademicRecord extends LocalDocument {
+  student: LocalId;
   semesterNumber: number;
   cgpa: number;
   sgpa: number;
@@ -36,7 +36,7 @@ export interface IAcademicRecord extends Document {
 const AcademicRecordSchema = new Schema<IAcademicRecord>(
   {
     student: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Student',
       required: true,
       index: true,
@@ -98,4 +98,4 @@ const AcademicRecordSchema = new Schema<IAcademicRecord>(
 // Compound unique index ensuring one record per student per semester
 AcademicRecordSchema.index({ student: 1, semesterNumber: 1 }, { unique: true });
 
-export const AcademicRecord = mongoose.model<IAcademicRecord>('AcademicRecord', AcademicRecordSchema);
+export const AcademicRecord = defineModel<IAcademicRecord>('AcademicRecord', AcademicRecordSchema);

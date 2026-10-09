@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
 
 export const COUNSELLING_5_CATEGORIES = [
   'Academic Development',
@@ -10,15 +10,43 @@ export const COUNSELLING_5_CATEGORIES = [
 
 export type CounsellingCategory = (typeof COUNSELLING_5_CATEGORIES)[number];
 
-export interface ICounsellingRecord extends Document {
-  student: mongoose.Types.ObjectId;
-  studentId: mongoose.Types.ObjectId;
-  mentor: mongoose.Types.ObjectId;
-  mentorId: mongoose.Types.ObjectId;
+/**
+ * WHO the mentor held the discussion with. These are NOT mutually exclusive:
+ * `['student']` = student only, `['parent']` = parent only, and
+ * `['student', 'parent']` = both. At least one participant is required by the
+ * controller before a record can be saved.
+ */
+export const DISCUSSION_WITH_PARTICIPANTS = ['student', 'parent'] as const;
+export type DiscussionWith = (typeof DISCUSSION_WITH_PARTICIPANTS)[number];
+
+/**
+ * Which mentoring surface a record belongs to.
+ * `INDIVIDUAL`      – a one-to-one student and/or parent discussion.
+ * `SATURDAY_COMMON` – evidence from the common Saturday mentoring meeting.
+ *                     Both kinds coexist on a student; the Saturday record never
+ *                     replaces the individual discussion record.
+ */
+export const RECORD_KINDS = ['INDIVIDUAL', 'SATURDAY_COMMON'] as const;
+export type MentoringRecordKind = (typeof RECORD_KINDS)[number];
+
+/** A reference to one physical evidence photo owned by MentoringEvidence. */
+export interface MentoringEvidenceRef {
+  evidenceId: string;
+  addedAt: string;
+  addedBy?: string;
+}
+
+export interface ICounsellingRecord extends LocalDocument {
+  student: LocalId;
+  studentId: LocalId;
+  mentor: LocalId;
+  mentorId: LocalId;
   date: string; // YYYY-MM-DD
   sessionDate: string; // YYYY-MM-DD
   categories: CounsellingCategory[];
   category?: string;
+  discussionWith: DiscussionWith[];
+  recordKind: MentoringRecordKind;
   concernReason?: string;
   discussionObservation?: string;
   challengeObserved: string;
@@ -33,6 +61,10 @@ export interface ICounsellingRecord extends Document {
   aiGenerated?: boolean;
   studentAcknowledgementStatus?: string;
   mentorSignatureStatus?: string;
+  /** References to physical evidence photos. The bytes live once, in storage. */
+  evidence: MentoringEvidenceRef[];
+  /** Groups every record created by ONE Saturday common meeting submission. */
+  evidenceGroupId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -40,22 +72,22 @@ export interface ICounsellingRecord extends Document {
 const CounsellingRecordSchema = new Schema<ICounsellingRecord>(
   {
     student: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Student',
       index: true,
     },
     studentId: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Student',
       index: true,
     },
     mentor: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Faculty',
       index: true,
     },
     mentorId: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Faculty',
       index: true,
     },
@@ -83,6 +115,22 @@ const CounsellingRecordSchema = new Schema<ICounsellingRecord>(
     category: {
       type: String,
       default: 'Academic Development',
+    },
+    discussionWith: {
+      // Deliberately an array: "discussed with student AND parent" is a valid,
+      // distinct outcome, not a third exclusive option.
+      type: [String],
+      enum: [...DISCUSSION_WITH_PARTICIPANTS],
+      // A function default so every record gets its OWN array. A literal []
+      // default would be shared by reference across every saved record.
+      default: () => [],
+      index: true,
+    },
+    recordKind: {
+      type: String,
+      enum: [...RECORD_KINDS],
+      default: 'INDIVIDUAL',
+      index: true,
     },
     concernReason: {
       type: String,
@@ -140,6 +188,22 @@ const CounsellingRecordSchema = new Schema<ICounsellingRecord>(
       type: String,
       default: 'SIGNED',
     },
+    // References only. A Saturday meeting photo is one physical file referenced
+    // by every participating student's record — never a per-student copy.
+    evidence: {
+      type: [
+        {
+          evidenceId: { type: String, required: true },
+          addedAt: { type: String, default: '' },
+          addedBy: { type: String, default: '' },
+        },
+      ],
+      default: () => [],
+    },
+    evidenceGroupId: {
+      type: String,
+      index: true,
+    },
   },
   {
     timestamps: true,
@@ -154,6 +218,25 @@ CounsellingRecordSchema.pre('save', function () {
   if (this.mentorId && !this.mentor) this.mentor = this.mentorId;
   if (this.sessionDate && !this.date) this.date = this.sessionDate;
   if (this.date && !this.sessionDate) this.sessionDate = this.date;
+
+  // Normalise (never invent) the discussion participants: trim, lowercase,
+  // de-duplicate and drop anything outside the two permitted participants.
+  // Validation of "at least one participant" lives in the controller so the
+  // mentor gets an actionable message instead of a schema error.
+  if (Array.isArray(this.discussionWith)) {
+    this.discussionWith = Array.from(
+      new Set(
+        this.discussionWith
+          .map((p: any) => String(p).trim().toLowerCase())
+          .filter((p: string) => (DISCUSSION_WITH_PARTICIPANTS as readonly string[]).includes(p))
+      )
+    ) as DiscussionWith[];
+  } else {
+    this.discussionWith = [];
+  }
+
+  if (!this.recordKind) this.recordKind = 'INDIVIDUAL';
+  if (!Array.isArray(this.evidence)) this.evidence = [];
 
   if (Array.isArray(this.categories) && this.categories.length > 0) {
     this.category = this.categories.join(', ');
@@ -184,4 +267,4 @@ CounsellingRecordSchema.pre('save', function () {
   }
 });
 
-export const CounsellingRecord = mongoose.model<ICounsellingRecord>('CounsellingRecord', CounsellingRecordSchema);
+export const CounsellingRecord = defineModel<ICounsellingRecord>('CounsellingRecord', CounsellingRecordSchema);

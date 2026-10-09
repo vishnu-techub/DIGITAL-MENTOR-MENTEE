@@ -1,9 +1,9 @@
 /**
  * Grammar & Spelling Assistant - full-stack runtime verification.
  * ---------------------------------------------------------------------------
- * Boots the REAL production entrypoint (src/index.ts) against a real mongod
- * process and drives the writing assistant over HTTP as a real mentor, then
- * reads back the actual MongoDB documents.
+ * Boots the REAL production entrypoint (src/index.ts) against a real local file
+ * store and drives the writing assistant over HTTP as a real mentor, then
+ * reads back the actual persisted records.
  *
  * Nothing is stubbed, and AI_API_KEY is deliberately absent so the assertions
  * hold on the degraded path a provider outage would take.
@@ -12,27 +12,20 @@
  * (nothing written until the user asks), Keep Original semantics, AI failure,
  * official-value preservation, RBAC, and that PDF generation is unaffected.
  *
+ * TEMPORARY LOCAL FILE STORAGE. Replace with a persistent database/storage
+ * implementation before production deployment.
+ *
  * Run: npx tsx src/tests/grammar-api.test.ts
  */
-import path from 'node:path';
-import fs from 'node:fs';
 import bcrypt from 'bcryptjs';
+import { isValidId, toLocalId, type LocalId } from '../services/localId.js';
+import { useTemporaryLocalStore } from './helpers/local-test-store.js';
 
-// Reuse the mongod binary already on this machine (no network needed).
-const BIN_DIR = path.join(process.env.USERPROFILE || '', '.cache', 'mongodb-binaries');
-if (fs.existsSync(BIN_DIR)) {
-  process.env.MONGOMS_DOWNLOAD_DIR = BIN_DIR;
-  process.env.MONGOMS_SYSTEM_BINARY = path.join(BIN_DIR, 'mongod-x64-win32-8.2.6.exe');
-}
-
-// mongod refuses to create indexes when its data directory has < 500 MB free,
-// so keep the data directory on a drive with real headroom.
-const WORK = 'A:\\mini projects\\New folder\\.runtime-verify';
-const DB_PATH = path.join(WORK, 'mongo-data');
-fs.mkdirSync(DB_PATH, { recursive: true });
-process.env.TMPDIR = WORK;
-process.env.TMP = WORK;
-process.env.TEMP = WORK;
+// The store resolves its directory at import time, so this must come first.
+const store = useTemporaryLocalStore('grammar-api');
+process.env.TMPDIR = store.dataDir;
+process.env.TMP = store.dataDir;
+process.env.TEMP = store.dataDir;
 
 const PORT = 5097;
 process.env.PORT = String(PORT);
@@ -122,15 +115,8 @@ async function loginAs(role: string, username: string, password: string): Promis
 }
 
 async function main() {
-  const { MongoMemoryServer } = await import('mongodb-memory-server');
-  const mongo = await MongoMemoryServer.create({ instance: { dbPath: DB_PATH } });
-  process.env.MONGODB_URI = mongo.getUri();
-
   const { connectDB } = await import('../config/database.js');
   await connectDB();
-  // The mongod data directory is reused between runs, so start from a clean db.
-  const mongooseMod = await import('mongoose');
-  await mongooseMod.default.connection.dropDatabase();
 
 // Seed one mentor, one HOD and one student, exactly as production does.
   const { Faculty, Department, Batch, Student, User, MentorAssignment, StudentDocument, CounsellingRecord, StudentProgress } =
@@ -305,6 +291,7 @@ async function main() {
         studentId: student._id,
         counsellingDate: '2026-09-26',
         categories: ['Academic Development'],
+        discussionWith: ['student'],
         concernReason: corrected,
         discussionObservation: corrected,
         actionPlan: corrected,
@@ -337,6 +324,7 @@ async function main() {
         studentId: student._id,
         counsellingDate: '2026-09-27',
         categories: ['Academic Development'],
+        discussionWith: ['student', 'parent'],
         concernReason: keptOriginal,
         discussionObservation: keptOriginal,
         actionPlan: keptOriginal,
@@ -439,8 +427,7 @@ async function main() {
     check('PDF generation wrote no new record', counsellingAfterPdf === 2, `count=${counsellingAfterPdf}`);
   }
 
-  await mongoose_disconnect();
-  await mongo.stop();
+  await store.teardown();
 
   console.log(`\n=== ${pass} passed, ${fail} failed ===\n`);
   if (fail > 0) {
@@ -449,11 +436,6 @@ async function main() {
     process.exit(1);
   }
   process.exit(0);
-}
-
-async function mongoose_disconnect() {
-  const mongoose = await import('mongoose');
-  await mongoose.default.disconnect();
 }
 
 main().catch((err) => {

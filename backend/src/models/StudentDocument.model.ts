@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
 
 export type DocumentCategory =
   | 'Event Certificate'
@@ -30,13 +30,13 @@ export type VerificationStatus =
 
 export type DocumentType = 'student_details_form' | 'certificate' | 'other';
 
-export interface IStudentDocument extends Document {
-  studentId: mongoose.Types.ObjectId;
+export interface IStudentDocument extends LocalDocument {
+  studentId: LocalId;
   documentType: DocumentType | string;
   isPrimary: boolean;
   fileName: string;
   fileUrl: string;
-  uploadedBy?: mongoose.Types.ObjectId;
+  uploadedBy?: LocalId;
   title: string;
   category: DocumentCategory | string;
   eventName?: string;
@@ -47,7 +47,7 @@ export interface IStudentDocument extends Document {
   fileSize: number;
   verificationStatus: VerificationStatus;
   rejectionReason?: string;
-  rejectedBy?: mongoose.Types.ObjectId;
+  rejectedBy?: LocalId;
   rejectedDate?: Date;
   uploadedAt: Date;
   updatedAt: Date;
@@ -56,7 +56,7 @@ export interface IStudentDocument extends Document {
 const StudentDocumentSchema = new Schema<IStudentDocument>(
   {
     studentId: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Student',
       required: [true, 'Permanent studentId is mandatory for document storage'],
       index: true,
@@ -83,7 +83,7 @@ const StudentDocumentSchema = new Schema<IStudentDocument>(
       trim: true,
     },
     uploadedBy: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'User',
       index: true,
     },
@@ -140,7 +140,7 @@ const StudentDocumentSchema = new Schema<IStudentDocument>(
       default: '',
     },
     rejectedBy: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'User',
     },
     rejectedDate: {
@@ -156,7 +156,7 @@ const StudentDocumentSchema = new Schema<IStudentDocument>(
 StudentDocumentSchema.index({ studentId: 1, isPrimary: -1, uploadedAt: -1 });
 StudentDocumentSchema.index({ studentId: 1, verificationStatus: 1 });
 
-export const StudentDocument = mongoose.model<IStudentDocument>(
+export const StudentDocument = defineModel<IStudentDocument>(
   'StudentDocument',
   StudentDocumentSchema
 );

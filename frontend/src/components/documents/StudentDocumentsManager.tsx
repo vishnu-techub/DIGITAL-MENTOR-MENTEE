@@ -4,6 +4,7 @@ import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
 import { Modal } from '../common/Modal';
 import { EmptyState } from '../common/EmptyState';
+import { PageHeader } from '../common/PageHeader';
 import { RecordStatusBadge, readPermissions } from '../../lib/recordStatus';
 import {
   FileText,
@@ -442,75 +443,49 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
   return (
     <div style={{ width: '100%', boxSizing: 'border-box' }}>
       {/* Header Bar */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: '1rem',
-          marginBottom: '1.25rem',
-          paddingBottom: '1rem',
-          borderBottom: '1px solid #E2E8F0',
-        }}
-      >
-        <div>
-          <h2
-            style={{
-              fontSize: '1.25rem',
-              fontWeight: 800,
-              color: '#0B2545',
-              margin: 0,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-            }}
-          >
-            <FileText size={22} style={{ color: '#C59B27' }} />
-            {isStudent ? 'My Documents' : 'Student Documents'}
-          </h2>
-          <p style={{ fontSize: '0.825rem', color: '#64748B', margin: '4px 0 0 0' }}>
-            Permanent student dossier: Student Details Form followed by all verified certificates and documents.
-          </p>
-        </div>
+      <PageHeader
+        eyebrow="Student"
+        title={isStudent ? 'My Documents' : 'Student Documents'}
+        subtitle="Permanent student dossier: Student Details Form followed by all verified certificates and documents."
+        actions={
+          <>
+            {isAdmin && documents.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-danger"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontWeight: 700,
+                  padding: '0.55rem 1.15rem',
+                  borderRadius: '8px',
+                }}
+                onClick={() => setShowDeleteAllModal(true)}
+              >
+                <Trash2 size={16} /> Delete All Documents
+              </button>
+            )}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {isAdmin && documents.length > 0 && (
-            <button
-              type="button"
-              className="btn btn-danger"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                fontWeight: 700,
-                padding: '0.55rem 1.15rem',
-                borderRadius: '8px',
-              }}
-              onClick={() => setShowDeleteAllModal(true)}
-            >
-              <Trash2 size={16} /> Delete All Documents
-            </button>
-          )}
-
-          {!readOnly && (
-            <button
-              className="btn btn-primary"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '8px',
-                fontWeight: 700,
-                padding: '0.55rem 1.15rem',
-                borderRadius: '8px',
-              }}
-              onClick={() => setShowUploadModal(true)}
-            >
-              <Upload size={16} /> Upload Certificate
-            </button>
-          )}
-        </div>
-      </div>
+            {!readOnly && (
+              <button
+                className="btn btn-primary"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  fontWeight: 700,
+                  padding: '0.55rem 1.15rem',
+                  borderRadius: '8px',
+                }}
+                onClick={() => setShowUploadModal(true)}
+              >
+                <Upload size={16} /> Upload Certificate
+              </button>
+            )}
+          </>
+        }
+      />
 
       {/* Filter Tabs */}
       <div

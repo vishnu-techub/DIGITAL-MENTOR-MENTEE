@@ -1,28 +1,40 @@
 import assert from 'assert';
 import bcrypt from 'bcryptjs';
 import ExcelJS from 'exceljs';
-import mongoose from 'mongoose';
-import { connectDB, closeDB } from '../config/database.js';
-import { ensureSystemBootstrap } from '../database/bootstrap.js';
-import {
-  User,
-  Student,
-  Faculty,
-  Department,
-  Batch,
-  AcademicRecord,
-  MentorAssignment,
-  CounsellingRecord,
-  StudentDocument,
-  MonthlyProgress,
-} from '../models/index.js';
-import { generateMentorMenteesExcel } from '../modules/mentorship/mentor-export.service.js';
+import { useTemporaryLocalStore } from './helpers/local-test-store.js';
+
+// TEMPORARY LOCAL FILE STORAGE. Replace with a persistent database/storage
+// implementation before production deployment.
+//
+// This suite creates and mutates users, mentors, students and records, so it runs
+// against a THROWAWAY data directory rather than the development store in
+// `backend/data/`. Application modules are imported DYNAMICALLY below, because
+// static imports are hoisted and would resolve the data directory before this
+// line runs.
+const store = useTemporaryLocalStore('overall-mentee-export');
 
 async function runOverallMenteeExportTest() {
   console.log('================================================================');
   console.log('KSRCE OVERALL MENTEE DATA EXPORT TEST');
   console.log('VERIFYING INSTITUTIONAL EXCEL GENERATION & REASSIGNMENT SECURITY');
   console.log('================================================================\n');
+
+  const { connectDB, closeDB } = await import('../config/database.js');
+  const { ensureSystemBootstrap } = await import('../database/bootstrap.js');
+  const {
+    User,
+    Student,
+    Faculty,
+    Department,
+    Batch,
+    AcademicRecord,
+    MentorAssignment,
+    CounsellingRecord,
+    StudentDocument,
+    MonthlyProgress,
+  } = await import('../models/index.js');
+  const { generateMentorMenteesExcel } = await import('../modules/mentorship/mentor-export.service.js');
+  const { isValidId, toLocalId } = await import('../services/localId.js');
 
   await connectDB();
   await ensureSystemBootstrap();
@@ -117,6 +129,9 @@ async function runOverallMenteeExportTest() {
       section: 'A',
       residentialType: 'DAY_SCHOLAR',
       mobileNumber: '9876543210',
+      // The export reads the contact email from the STUDENT document (the
+      // profile wizard's field), not from the linked User account.
+      email: `${reg1}@ksrce.ac.in`,
       isActive: true,
       profileCompleted: true,
     });
@@ -149,6 +164,7 @@ async function runOverallMenteeExportTest() {
       section: 'B',
       residentialType: 'HOSTELLER',
       mobileNumber: '9876543211',
+      email: `${reg2}@ksrce.ac.in`,
       isActive: true,
       profileCompleted: true,
     });
@@ -305,17 +321,25 @@ async function runOverallMenteeExportTest() {
   assert.strictEqual(ws1.getCell('A3').value, 'MENTOR MENTEE LIST - DOMAIN WISE');
   assert(String(ws1.getCell('A4').value).includes('ACADEMIC YEAR: 2025-2026'));
 
-  // Verify Columns in exact order (Row 6)
+  // Verify Columns in exact order (Row 6).
+  // This list must track the `columns` array in `mentor-export.service.ts`.
+  // It previously described an 18-column layout that predated the EMAIL,
+  // DEPARTMENT, CGPA and SGPA columns, and it asserted the legacy arrears
+  // vocabulary "ALL CLEAR" / "2 ARREARS" that the export no longer emits.
   const expectedCols = [
     'S.NO',
     'MENTOR NAME',
     'S.NO',
     'REG NUMBER',
     'STUDENT NAME (MENTEE)',
+    'EMAIL',
+    'DEPARTMENT',
     'CLASS & SECTION',
+    'CGPA',
+    'SGPA',
+    'ARREAR STATUS',
     'NPTEL COMPLETED',
     'GLOBAL CERTIFICATION',
-    'ALL CLEAR',
     'FINAL YEAR PLACED',
     'HACKATHON PARTICIPATION',
     'SYMPOSIUM PARTICIPATION',
@@ -324,6 +348,7 @@ async function runOverallMenteeExportTest() {
     'EXTRA CURRICULAR',
     'AWARD',
   ];
+  assert.strictEqual(expectedCols.length, 20, 'the export is a 20-column A:T sheet');
 
   expectedCols.forEach((colName, idx) => {
     const val = ws1.getRow(6).getCell(idx + 1).value;
@@ -337,22 +362,26 @@ async function runOverallMenteeExportTest() {
   assert.strictEqual(row7.getCell(3).value, 1, 'Col 3 Student S.No should be 1');
   assert.strictEqual(row7.getCell(4).value, reg1, 'Col 4 Reg Number mismatch');
   assert.strictEqual(row7.getCell(5).value, 'Aravind Kumar K', 'Col 5 Student Name mismatch');
-  assert.strictEqual(row7.getCell(6).value, 'III IT A', 'Col 6 Class & Section mismatch');
-  assert(String(row7.getCell(7).value).includes('Cloud Computing'), 'Col 7 NPTEL should show Cloud Computing');
-  assert(String(row7.getCell(8).value).includes('AWS Certified'), 'Col 8 Global Cert should show AWS');
-  assert.strictEqual(row7.getCell(9).value, 'ALL CLEAR', 'Col 9 should be "ALL CLEAR" for 0 arrears');
+  assert(String(row7.getCell(6).value).includes('@'), 'Col 6 Email mismatch');
+  assert.strictEqual(row7.getCell(7).value, 'Information Technology', 'Col 7 Department mismatch');
+  assert.strictEqual(row7.getCell(8).value, 'III IT A', 'Col 8 Class & Section mismatch');
+  assert.strictEqual(row7.getCell(9).value, 8.6, 'Col 9 CGPA should be the latest stored semester (sem 3)');
+  assert.strictEqual(row7.getCell(10).value, 8.4, 'Col 10 SGPA should be the latest stored semester (sem 3)');
+  assert.strictEqual(row7.getCell(11).value, 'Clear', 'Col 11 should be "Clear" for 0 active arrears');
+  assert(String(row7.getCell(12).value).includes('Cloud Computing'), 'Col 12 NPTEL should show Cloud Computing');
+  assert(String(row7.getCell(13).value).includes('AWS Certified'), 'Col 13 Global Cert should show AWS');
 
   // Verify Student 2 Data Row (Row 8)
   const row8 = ws1.getRow(8);
   assert.strictEqual(row8.getCell(4).value, reg2, 'Col 4 Reg Number mismatch for Student 2');
   assert.strictEqual(row8.getCell(5).value, 'Bhavani Shankar R', 'Col 5 Student Name mismatch for Student 2');
-  assert.strictEqual(row8.getCell(6).value, 'IV IT B', 'Col 6 Class & Section mismatch for Student 2');
-  assert.strictEqual(row8.getCell(9).value, '2 ARREARS', 'Col 9 should be "2 ARREARS" for 2 active arrears');
-  assert(String(row8.getCell(10).value).includes('Placed at TCS'), 'Col 10 Final Year Placed mismatch');
-  assert(String(row8.getCell(11).value).includes('Smart India Hackathon'), 'Col 11 Hackathon mismatch');
-  assert(String(row8.getCell(12).value).includes('National Level Symposium'), 'Col 12 Symposium mismatch');
-  assert(String(row8.getCell(13).value).includes('National Tech Conclave, Bengaluru'), 'Col 13 Other State mismatch');
-  assert(String(row8.getCell(16).value).includes('First Prize'), 'Col 16 Award mismatch');
+  assert.strictEqual(row8.getCell(8).value, 'IV IT B', 'Col 8 Class & Section mismatch for Student 2');
+  assert.strictEqual(row8.getCell(11).value, 'Active Arrear', 'Col 11 should be "Active Arrear" for 2 active arrears');
+  assert(String(row8.getCell(14).value).includes('Placed at TCS'), 'Col 14 Final Year Placed mismatch');
+  assert(String(row8.getCell(15).value).includes('Smart India Hackathon'), 'Col 15 Hackathon mismatch');
+  assert(String(row8.getCell(16).value).includes('National Level Symposium'), 'Col 16 Symposium mismatch');
+  assert(String(row8.getCell(17).value).includes('National Tech Conclave, Bengaluru'), 'Col 17 Other State mismatch');
+  assert(String(row8.getCell(20).value).includes('First Prize'), 'Col 20 Award mismatch');
 
   console.log('✓ Sheet 1 structure, column headers, and data mappings verified.');
 
@@ -427,6 +456,7 @@ async function runOverallMenteeExportTest() {
   await Faculty.deleteMany({ _id: { $in: [facultyMentorA._id, facultyMentorB._id] } });
 
   await closeDB();
+  await store.teardown();
   console.log('\n================================================================');
   console.log('ALL OVERALL MENTEE EXPORT TESTS PASSED SUCCESSFULLY! (100% GREEN)');
   console.log('================================================================\n');

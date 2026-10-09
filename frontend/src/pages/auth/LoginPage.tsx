@@ -1,7 +1,19 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { usePwa } from '../../context/PwaContext';
-import { Shield, User, ArrowRight, Lock, Eye, EyeOff, Download } from 'lucide-react';
+import {
+  ShieldCheck,
+  ArrowRight,
+  Lock,
+  Eye,
+  EyeOff,
+  Download,
+  UserRound,
+  Users,
+  GraduationCap,
+  Briefcase,
+  BarChart3,
+} from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
   const { login } = useAuth();
@@ -27,120 +39,85 @@ export const LoginPage: React.FC = () => {
   };
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: 'linear-gradient(135deg, #071526 0%, #0B2545 50%, #13315C 100%)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '1.5rem',
-      }}
-    >
-      <div
-        style={{
-          maxWidth: '460px',
-          width: '100%',
-          backgroundColor: '#ffffff',
-          borderRadius: '20px',
-          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.45)',
-          overflow: 'hidden',
-          border: '1px solid rgba(255, 255, 255, 0.15)',
-        }}
-      >
-        {/* Institutional Crest Header */}
-        <div
-          style={{
-            backgroundColor: '#0B2545',
-            padding: '2.25rem 1.5rem 1.75rem',
-            textAlign: 'center',
-            color: '#ffffff',
-            borderBottom: '4px solid #C59B27',
-          }}
-        >
-          <img
-            src="/ksrce-logo.png"
-            alt="K.S.R. College of Engineering"
-            style={{
-              width: '84px',
-              height: '84px',
-              objectFit: 'contain',
-              backgroundColor: '#ffffff',
-              borderRadius: '50%',
-              margin: '0 auto 0.85rem',
-              display: 'block',
-              border: '3px solid #C59B27',
-              padding: '4px',
-              boxShadow: '0 6px 16px rgba(0,0,0,0.3)',
-            }}
-          />
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 800, letterSpacing: '0.3px', margin: 0 }}>
-            K.S.R. COLLEGE OF ENGINEERING
-          </h2>
-          <p style={{ fontSize: '0.78rem', color: '#D4AF37', fontWeight: 600, marginTop: '4px' }}>
-            Autonomous • Affiliated to Anna University • Tiruchengode
-          </p>
-          <div
-            style={{
-              display: 'inline-block',
-              marginTop: '10px',
-              padding: '4px 14px',
-              backgroundColor: 'rgba(255, 255, 255, 0.12)',
-              borderRadius: '9999px',
-              fontSize: '0.75rem',
-              fontWeight: 700,
-              letterSpacing: '0.6px',
-            }}
-          >
-            DIGITAL MENTOR–MENTEE PORTAL
+    <div className="login-page">
+      {/* Institutional brand panel (desktop) */}
+      <section className="login-brand" aria-hidden="false">
+        <div className="login-crest">
+          <img src="/ksrce-logo.png" alt="K.S.R. College of Engineering crest" />
+          <div>
+            <div className="login-crest-name">K.S.R. COLLEGE OF ENGINEERING</div>
+            <div className="login-crest-sub">Autonomous • Tiruchengode</div>
           </div>
         </div>
 
-        <div style={{ padding: '2rem' }}>
+        <div>
+          <h1 className="login-hero-title">
+            Digital <span>Mentor–Mentee</span> Management System
+          </h1>
+          <p className="login-hero-text">
+            One secure campus platform for mentoring, counselling, academics, placements and
+            achievement records — across every department.
+          </p>
+          <div className="login-hero-points">
+            <div className="login-hero-point">
+              <Users size={17} /> Mentor &amp; mentee assignment with full history
+            </div>
+            <div className="login-hero-point">
+              <GraduationCap size={17} /> Academic ledger, internal marks &amp; documents
+            </div>
+            <div className="login-hero-point">
+              <Briefcase size={17} /> Placement monitoring and achievement leaderboard
+            </div>
+            <div className="login-hero-point">
+              <BarChart3 size={17} /> Department and institution-wide analytics
+            </div>
+          </div>
+        </div>
+
+        <div className="login-legal">
+          Permanent Academic Records System • Secured Institutional Access
+        </div>
+      </section>
+
+      {/* Sign-in panel */}
+      <section className="login-panel">
+        <div className="login-card">
+          <div className="login-card-head">
+            <img
+              src="/ksrce-logo.png"
+              alt="K.S.R. College of Engineering"
+              className="login-card-logo"
+            />
+            <h2 className="login-title">Sign in to your portal</h2>
+            <p className="login-sub">
+              KSRCE Digital Mentor–Mentee Management System
+            </p>
+          </div>
+
           {error && (
-            <div
-              style={{
-                backgroundColor: '#FEE2E2',
-                color: '#DC2626',
-                padding: '0.75rem 1rem',
-                borderRadius: '8px',
-                fontSize: '0.85rem',
-                fontWeight: 600,
-                marginBottom: '1.25rem',
-                border: '1px solid #FCA5A5',
-              }}
-            >
-              {error}
+            <div className="login-alert" role="alert">
+              <ShieldCheck size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>{error}</span>
             </div>
           )}
 
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.6rem',
-              padding: '0.65rem 0.85rem',
-              backgroundColor: '#EFF6FF',
-              borderRadius: '8px',
-              border: '1px solid #BFDBFE',
-              marginBottom: '1.25rem',
-            }}
-          >
-            <Shield size={16} color="#1D4ED8" style={{ flexShrink: 0 }} />
-            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#1E40AF' }}>
+          <div className="alert alert-info" style={{ marginBottom: '1.25rem', fontSize: 'var(--text-sm)' }}>
+            <ShieldCheck size={16} />
+            <span style={{ fontWeight: 600 }}>
               Institutional Portal Access • Role-Based Authentication
             </span>
           </div>
 
-          <form onSubmit={handleSubmit}>
+          <form onSubmit={handleSubmit} noValidate>
             <div className="form-group">
-              <label className="form-label">
+              <label className="form-label" htmlFor="login-username">
                 <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                  <User size={14} color="#64748B" /> Username or Register Number
+                  <UserRound size={14} color="#64748B" /> Username or Register Number
                 </span>
                 <span className="required-star">*</span>
               </label>
               <input
+                id="login-username"
                 type="text"
                 className="form-control"
                 value={username}
@@ -148,11 +125,12 @@ export const LoginPage: React.FC = () => {
                 placeholder="e.g. Ksrce@admin or 731522104001"
                 required
                 autoComplete="username"
+                aria-label="Username or register number"
               />
             </div>
 
             <div className="form-group">
-              <label className="form-label">
+              <label className="form-label" htmlFor="login-password">
                 <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                   <Lock size={14} color="#64748B" /> Password
                 </span>
@@ -160,6 +138,7 @@ export const LoginPage: React.FC = () => {
               </label>
               <div style={{ position: 'relative' }}>
                 <input
+                  id="login-password"
                   type={showPassword ? 'text' : 'password'}
                   className="form-control"
                   style={{ paddingRight: '2.5rem' }}
@@ -168,6 +147,7 @@ export const LoginPage: React.FC = () => {
                   placeholder="Enter your account password"
                   required
                   autoComplete="current-password"
+                  aria-label="Password"
                 />
                 <button
                   type="button"
@@ -184,7 +164,7 @@ export const LoginPage: React.FC = () => {
                     alignItems: 'center',
                     justifyContent: 'center',
                     cursor: 'pointer',
-                    padding: '2px',
+                    padding: '4px',
                   }}
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
@@ -195,11 +175,11 @@ export const LoginPage: React.FC = () => {
 
             <button
               type="submit"
-              className="btn btn-primary"
-              style={{ width: '100%', marginTop: '0.75rem', padding: '0.75rem', fontSize: '0.9rem' }}
+              className={`btn btn-primary btn-block ${loading ? 'btn-loading' : ''}`}
+              style={{ marginTop: '0.75rem', fontSize: 'var(--text-md)' }}
               disabled={loading}
             >
-              {loading ? 'Authenticating...' : 'Sign In to Portal'} <ArrowRight size={16} />
+              {loading ? 'Authenticating…' : 'Sign In to Portal'} {!loading && <ArrowRight size={16} />}
             </button>
           </form>
 
@@ -212,30 +192,29 @@ export const LoginPage: React.FC = () => {
                   background: 'linear-gradient(135deg, #0B2545 0%, #133E68 100%)',
                   color: '#ffffff',
                   border: '1px solid rgba(255, 215, 0, 0.45)',
-                  borderRadius: '10px',
+                  borderRadius: 'var(--radius-md)',
                   padding: '0.55rem 1rem',
-                  fontSize: '0.8rem',
+                  fontSize: 'var(--text-sm)',
                   fontWeight: 700,
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '0.45rem',
                   cursor: 'pointer',
                   boxShadow: '0 4px 12px rgba(11, 37, 69, 0.15)',
-                  transition: 'transform 0.15s ease',
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.transform = 'translateY(-1px)')}
-                onMouseLeave={(e) => (e.currentTarget.style.transform = 'translateY(0)')}
               >
                 <Download size={14} color="#FDE047" /> Download / Install KSRCE Web App
               </button>
             </div>
           )}
 
-          <div style={{ marginTop: '1.5rem', textAlign: 'center', fontSize: '0.75rem', color: '#94A3B8' }}>
-            Permanent Academic Records System • Secured Institutional Access
+          <div className="login-foot">
+            Permanent Academic Records System
+            <br />
+            Secured Institutional Access • K.S.R. College of Engineering
           </div>
         </div>
-      </div>
+      </section>
     </div>
   );
 };

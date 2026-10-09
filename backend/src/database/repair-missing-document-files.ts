@@ -41,7 +41,6 @@
  */
 
 import path from 'path';
-import mongoose from 'mongoose';
 import { connectDB, disconnectDB } from '../config/database.js';
 import { StudentDocument } from '../models/index.js';
 import {
@@ -51,6 +50,7 @@ import {
   locateStoredUpload,
   installStoredUpload,
 } from '../config/storage.js';
+import { isValidId, toLocalId, type LocalId } from '../services/localId.js';
 
 const argv = process.argv.slice(2);
 const apply = argv.includes('--apply');
@@ -165,7 +165,7 @@ async function main() {
 main().catch(async (err: any) => {
   console.error('repair-missing-document-files failed:', err?.stack || err?.message);
   try {
-    await mongoose.disconnect();
+    await disconnectDB();
   } catch {
     /* noop */
   }

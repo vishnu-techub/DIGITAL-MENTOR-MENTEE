@@ -1,7 +1,7 @@
 /**
  * STUDENT DASHBOARD 500 REPRODUCTION
  * ---------------------------------------------------------------------------
- * Boots the REAL production entrypoint against a real mongod process and
+ * Boots the REAL production entrypoint against a real local file store and
  * replays the EXACT two requests the Student Dashboard issues on load:
  *
  *   1. GET /api/students/{studentId}          (api.students.getById)
@@ -13,25 +13,18 @@
  * Server-side `console.error` output is captured so the real exception/stack
  * that produced the 500 is reported instead of guessed at.
  *
+ * TEMPORARY LOCAL FILE STORAGE. Replace with a persistent database/storage
+ * implementation before production deployment.
+ *
  * Run: npx tsx src/tests/student-dashboard-500.repro.ts
  */
-import path from 'node:path';
-import fs from 'node:fs';
-import bcrypt from 'bcryptjs';
+import { useTemporaryLocalStore } from './helpers/local-test-store.js';
 
-// Reuse the mongod binary already present on this machine (no network needed).
-const BIN_DIR = path.join(process.env.USERPROFILE || '', '.cache', 'mongodb-binaries');
-if (fs.existsSync(BIN_DIR)) {
-  process.env.MONGOMS_DOWNLOAD_DIR = BIN_DIR;
-  process.env.MONGOMS_SYSTEM_BINARY = path.join(BIN_DIR, 'mongod-x64-win32-8.2.6.exe');
-}
-
-const WORK = 'A:\\mini projects\\New folder\\.runtime-verify';
-const DB_PATH = path.join(WORK, 'mongo-repro-data');
-fs.mkdirSync(DB_PATH, { recursive: true });
-process.env.TMPDIR = WORK;
-process.env.TMP = WORK;
-process.env.TEMP = WORK;
+// The store resolves its directory at import time, so this must come first.
+const store = useTemporaryLocalStore('dashboard-repro');
+process.env.TMPDIR = store.dataDir;
+process.env.TMP = store.dataDir;
+process.env.TEMP = store.dataDir;
 
 const PORT = 5131;
 process.env.PORT = String(PORT);
@@ -107,16 +100,7 @@ const scenarios: {
 }[] = [];
 
 async function main() {
-  const { MongoMemoryServer } = await import('mongodb-memory-server');
-  for (const e of fs.readdirSync(DB_PATH)) {
-    fs.rmSync(path.join(DB_PATH, e), { recursive: true, force: true });
-  }
-  const mem = await MongoMemoryServer.create({
-    binary: { version: '8.2.6' },
-    instance: { dbPath: DB_PATH, storageEngine: 'wiredTiger' },
-  });
-  process.env.MONGODB_URI = mem.getUri('ksrce_dashboard_repro');
-  realConsoleLog(`\n### mongod at ${process.env.MONGODB_URI}`);
+  realConsoleLog(`\n### Local file store ready at ${store.dataDir}`);
 
   console.error = capture('[server:error]');
   console.warn = capture('[server:warn]');
@@ -127,6 +111,7 @@ async function main() {
 
   const { User, Student, Department, Batch, Faculty, MentorAssignment, AcademicRecord, CounsellingRecord, Meeting, StudentDocument } =
     await import('../models/index.js');
+  const bcrypt = (await import('bcryptjs')).default;
 
   const cse: any = await Department.findOne({ code: 'CSE' });
   const batch: any = await Batch.findOne({ name: '2023-2027' });
@@ -228,7 +213,7 @@ async function main() {
   }
 
   realConsoleLog(`=== ${failures === 0 ? 'ALL SCENARIOS OK' : failures + ' SCENARIO(S) FAILED'} ===`);
-  await mem.stop();
+  await store.teardown();
   process.exit(failures === 0 ? 0 : 1);
 }
 

@@ -3,7 +3,7 @@ import { ensureSystemBootstrap } from './bootstrap.js';
 /**
  * Legacy Seed Script - Replaced by Clean Institutional Bootstrap
  * Demo data seeding is permanently disabled.
- * MongoDB is the sole real-world source of truth.
+ * The local file store is the sole source of truth for this deployment.
  */
 export async function seedDatabase(): Promise<void> {
   console.log('[Notice] Demo seed script is disabled. Performing clean institutional bootstrap instead.');

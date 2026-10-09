@@ -1,30 +1,30 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
 
 export type EditRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
-export interface IStudentEditRequest extends Document {
-  student: mongoose.Types.ObjectId;
+export interface IStudentEditRequest extends LocalDocument {
+  student: LocalId;
   registerNumber: string;
   studentName: string;
   requestedFields: {
     fullName?: string;
     registerNumber?: string;
-    department?: mongoose.Types.ObjectId;
+    department?: LocalId;
     departmentName?: string;
-    batch?: mongoose.Types.ObjectId;
+    batch?: LocalId;
     batchName?: string;
   };
   currentValues: {
     fullName?: string;
     registerNumber?: string;
-    department?: mongoose.Types.ObjectId;
+    department?: LocalId;
     departmentName?: string;
-    batch?: mongoose.Types.ObjectId;
+    batch?: LocalId;
     batchName?: string;
   };
   reason: string;
   status: EditRequestStatus;
-  reviewedBy?: mongoose.Types.ObjectId;
+  reviewedBy?: LocalId;
   reviewerName?: string;
   adminComments?: string;
   reviewedAt?: Date;
@@ -35,7 +35,7 @@ export interface IStudentEditRequest extends Document {
 const StudentEditRequestSchema = new Schema<IStudentEditRequest>(
   {
     student: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Student',
       required: true,
       index: true,
@@ -54,17 +54,17 @@ const StudentEditRequestSchema = new Schema<IStudentEditRequest>(
     requestedFields: {
       fullName: { type: String, trim: true },
       registerNumber: { type: String, trim: true },
-      department: { type: Schema.Types.ObjectId, ref: 'Department' },
+      department: { type: 'ObjectId', ref: 'Department' },
       departmentName: { type: String, trim: true },
-      batch: { type: Schema.Types.ObjectId, ref: 'Batch' },
+      batch: { type: 'ObjectId', ref: 'Batch' },
       batchName: { type: String, trim: true },
     },
     currentValues: {
       fullName: { type: String, trim: true },
       registerNumber: { type: String, trim: true },
-      department: { type: Schema.Types.ObjectId, ref: 'Department' },
+      department: { type: 'ObjectId', ref: 'Department' },
       departmentName: { type: String, trim: true },
-      batch: { type: Schema.Types.ObjectId, ref: 'Batch' },
+      batch: { type: 'ObjectId', ref: 'Batch' },
       batchName: { type: String, trim: true },
     },
     reason: {
@@ -79,7 +79,7 @@ const StudentEditRequestSchema = new Schema<IStudentEditRequest>(
       index: true,
     },
     reviewedBy: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'User',
     },
     reviewerName: {
@@ -104,5 +104,4 @@ StudentEditRequestSchema.index({ student: 1, status: 1 });
 StudentEditRequestSchema.index({ createdAt: -1 });
 
 export const StudentEditRequest =
-  mongoose.models.StudentEditRequest ||
-  mongoose.model<IStudentEditRequest>('StudentEditRequest', StudentEditRequestSchema);
+  getModel<IStudentEditRequest>('StudentEditRequest', StudentEditRequestSchema);

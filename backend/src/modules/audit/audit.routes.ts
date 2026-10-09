@@ -7,6 +7,9 @@ import { ROLES } from '../../config/constants.js';
 const router = Router();
 
 router.use(authenticate);
-router.get('/', authorize(ROLES.ADMIN, ROLES.HOD), getAuditLogs);
+// The institutional audit trail records privileged actions (usernames, IP
+// addresses) across every department, so it is Administrator-only. HODs have
+// their own department-scoped surfaces and must not read the full trail.
+router.get('/', authorize(ROLES.ADMIN), getAuditLogs);
 
 export default router;

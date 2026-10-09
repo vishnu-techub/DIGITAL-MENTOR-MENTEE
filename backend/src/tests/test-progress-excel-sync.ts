@@ -1,7 +1,6 @@
 import assert from 'assert';
 import bcrypt from 'bcryptjs';
 import ExcelJS from 'exceljs';
-import mongoose from 'mongoose';
 import { connectDB, closeDB } from '../config/database.js';
 import { ensureSystemBootstrap } from '../database/bootstrap.js';
 import {
@@ -14,6 +13,7 @@ import {
   StudentProgress,
 } from '../models/index.js';
 import { generateMentorMenteesExcel } from '../modules/mentorship/mentor-export.service.js';
+import { isValidId, toLocalId, type LocalId } from '../services/localId.js';
 
 async function runProgressExcelSyncTest() {
   console.log('================================================================');
@@ -158,8 +158,8 @@ async function runProgressExcelSyncTest() {
     status: 'Pending',
   } as any);
 
-  assert(hackathonRecord._id, 'Hackathon record must be created in MongoDB');
-  console.log('✓ Hackathon record saved in MongoDB collection student_progress.');
+  assert(hackathonRecord._id, 'Hackathon record must be created in the file store');
+  console.log('✓ Hackathon record saved in the file store collection student_progress.');
 
   // Verify Mentor A exports Excel and Hackathon appears in HACKATHON PARTICIPATION
   console.log('Testing Mentor A Excel Export...');
@@ -385,10 +385,10 @@ async function runProgressExcelSyncTest() {
     changeReason: 'Departmental Mentor Load Balancing',
   });
 
-  // Verify records still exist in MongoDB
+  // Verify records still exist in the file store
   const remainingRecords = await StudentProgress.find({ registerNumber: regNo });
-  assert.strictEqual(remainingRecords.length, 6, 'All 6 progress records must remain in MongoDB after reassignment');
-  console.log(`✓ Verified: MongoDB still contains all ${remainingRecords.length} records. Nothing deleted.`);
+  assert.strictEqual(remainingRecords.length, 6, 'All 6 progress records must remain in the file store after reassignment');
+  console.log(`✓ Verified: the local file store still contains all ${remainingRecords.length} records. Nothing deleted.`);
 
   // Verify Old Mentor A's export no longer contains the student
   const exportResA = await generateMentorMenteesExcel(facultyMentorA._id.toString());

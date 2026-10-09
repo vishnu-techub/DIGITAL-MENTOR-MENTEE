@@ -1,11 +1,12 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
+import type { MentoringEvidenceRef } from './CounsellingRecord.model.js';
 
 export type AttendanceStatus = 'PRESENT' | 'ABSENT' | 'ON_DUTY';
 export type MeetingStatus = 'SCHEDULED' | 'COMPLETED' | 'PENDING' | 'PENDING_UPDATE';
 
-export interface IMeeting extends Document {
-  student: mongoose.Types.ObjectId;
-  mentor: mongoose.Types.ObjectId;
+export interface IMeeting extends LocalDocument {
+  student: LocalId;
+  mentor: LocalId;
   meetingDate: string; // YYYY-MM-DD
   meetingTime: string;
   location: string;
@@ -18,6 +19,14 @@ export interface IMeeting extends Document {
   followUpRequired: boolean;
   followUpDate?: string;
   mentorRemarks?: string;
+  /**
+   * References to physical photos captured at the COMMON Saturday mentoring
+   * meeting. One physical file is shared by every participant, so this holds
+   * ids only — the bytes exist once in the canonical uploads directory.
+   */
+  evidence: MentoringEvidenceRef[];
+  /** Ties every meeting row created/updated by one Saturday evidence upload. */
+  evidenceGroupId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -25,13 +34,13 @@ export interface IMeeting extends Document {
 const MeetingSchema = new Schema<IMeeting>(
   {
     student: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Student',
       required: true,
       index: true,
     },
     mentor: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Faculty',
       required: true,
       index: true,
@@ -98,13 +107,31 @@ const MeetingSchema = new Schema<IMeeting>(
       type: String,
       default: 'Satisfactory',
     },
+    evidence: {
+      type: [
+        {
+          evidenceId: { type: String, required: true },
+          addedAt: { type: String, default: '' },
+          addedBy: { type: String, default: '' },
+        },
+      ],
+      default: () => [],
+    },
+    evidenceGroupId: {
+      type: String,
+      index: true,
+    },
   },
   {
     timestamps: true,
   }
 );
 
+MeetingSchema.pre('save', function () {
+  if (!Array.isArray(this.evidence)) this.evidence = [];
+});
+
 // Compound Index
 MeetingSchema.index({ meetingDate: -1, student: 1 });
 
-export const Meeting = mongoose.model<IMeeting>('Meeting', MeetingSchema);
+export const Meeting = defineModel<IMeeting>('Meeting', MeetingSchema);

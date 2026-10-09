@@ -1,15 +1,15 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
 
 export type AssignmentStatus = 'ACTIVE' | 'COMPLETED' | 'TRANSFERRED';
 
-export interface IMentorAssignment extends Document {
-  student: mongoose.Types.ObjectId;
-  mentor: mongoose.Types.ObjectId;
-  department: mongoose.Types.ObjectId;
+export interface IMentorAssignment extends LocalDocument {
+  student: LocalId;
+  mentor: LocalId;
+  department: LocalId;
   assignedFrom: Date | string;
   assignedUntil?: Date | string;
   status: AssignmentStatus;
-  assignedBy: mongoose.Types.ObjectId;
+  assignedBy: LocalId;
   changeReason?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -18,19 +18,19 @@ export interface IMentorAssignment extends Document {
 const MentorAssignmentSchema = new Schema<IMentorAssignment>(
   {
     student: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Student',
       required: true,
       index: true,
     },
     mentor: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Faculty',
       required: true,
       index: true,
     },
     department: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Department',
       required: true,
       index: true,
@@ -50,7 +50,7 @@ const MentorAssignmentSchema = new Schema<IMentorAssignment>(
       index: true,
     },
     assignedBy: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'User',
       required: true,
     },
@@ -70,4 +70,4 @@ MentorAssignmentSchema.index({ student: 1, status: 1 });
 MentorAssignmentSchema.index({ mentor: 1, status: 1 });
 MentorAssignmentSchema.index({ assignedFrom: -1 });
 
-export const MentorAssignment = mongoose.model<IMentorAssignment>('MentorAssignment', MentorAssignmentSchema);
+export const MentorAssignment = defineModel<IMentorAssignment>('MentorAssignment', MentorAssignmentSchema);

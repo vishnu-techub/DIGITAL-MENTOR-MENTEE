@@ -1,12 +1,15 @@
 /**
  * FULL-STACK RUNTIME VERIFICATION
  * ---------------------------------------------------------------------------
- * Boots the REAL production entrypoint (src/index.ts) against a real mongod
- * process, then drives every requirement over HTTP as real users of each role.
+ * Boots the REAL production entrypoint (src/index.ts) against a real local file
+ * store, then drives every requirement over HTTP as real users of each role.
  *
  * Nothing is stubbed. Every assertion reads the actual HTTP response AND the
- * actual MongoDB document, so a "PASS" can only be reported when the full
- * chain Frontend payload -> Express -> Mongoose -> MongoDB -> Response works.
+ * actual persisted record, so a "PASS" can only be reported when the full
+ * chain Frontend payload -> Express -> local file store -> Response works.
+ *
+ * TEMPORARY LOCAL FILE STORAGE. Replace with a persistent database/storage
+ * implementation before production deployment.
  *
  * Run: npx tsx src/tests/runtime-verification.test.ts
  */
@@ -14,23 +17,14 @@ import path from 'node:path';
 import fs from 'node:fs';
 import bcrypt from 'bcryptjs';
 import { calculateArrearStatistics } from '../utils/arrears.util';
+import { isValidId, toLocalId, newLocalId, type LocalId } from '../services/localId.js';
+import { useTemporaryLocalStore } from './helpers/local-test-store.js';
 
-// Reuse the mongod binary already present on this machine (no network needed).
-const BIN_DIR = path.join(process.env.USERPROFILE || '', '.cache', 'mongodb-binaries');
-if (fs.existsSync(BIN_DIR)) {
-  process.env.MONGOMS_DOWNLOAD_DIR = BIN_DIR;
-  process.env.MONGOMS_SYSTEM_BINARY = path.join(BIN_DIR, 'mongod-x64-win32-8.2.6.exe');
-}
-
-// The system drive (C:) has very little free space, and MongoDB refuses to
-// create indexes when its data directory has < 500 MB available. Put the
-// mongod data directory (and its temp files) on a drive with real headroom.
-const WORK = 'A:\\mini projects\\New folder\\.runtime-verify';
-const DB_PATH = path.join(WORK, 'mongo-data');
-fs.mkdirSync(DB_PATH, { recursive: true });
-process.env.TMPDIR = WORK;
-process.env.TMP = WORK;
-process.env.TEMP = WORK;
+// The store resolves its directory at import time, so this must come first.
+const store = useTemporaryLocalStore('runtime-verify');
+process.env.TEMP = store.dataDir;
+process.env.TMP = store.dataDir;
+process.env.TMPDIR = store.dataDir;
 
 const PORT = 5099;
 process.env.PORT = String(PORT);
@@ -142,25 +136,15 @@ async function loginAs(role: string, username: string, password: string) {
 
 // ────────────────────────────────────────────────────────────────────────────
 async function main() {
-  const { MongoMemoryServer } = await import('mongodb-memory-server');
-  for (const entry of fs.readdirSync(DB_PATH)) {
-    fs.rmSync(path.join(DB_PATH, entry), { recursive: true, force: true });
-  }
-  const mem = await MongoMemoryServer.create({
-    binary: { version: '8.2.6' },
-    instance: { dbPath: DB_PATH, storageEngine: 'wiredTiger' },
-  });
-  process.env.MONGODB_URI = mem.getUri('ksrce_runtime_verify');
-  console.log(`\n### Real mongod started at ${process.env.MONGODB_URI}\n`);
+  console.log(`\n### Local file store ready at ${store.dataDir}\n`);
 
-  // Boot the REAL app (this connects mongoose + runs ensureSystemBootstrap)
+  // Boot the REAL app (this opens the local store + runs ensureSystemBootstrap)
   await import('../index.js');
   await waitForHealth();
   console.log('### Real server listening on ' + BASE + '\n');
 
   const { User, Student, Faculty, Department, Batch, MentorAssignment, AcademicRecord, Notification, StudentEditRequest, StudentDocument, School, AuditLog, AcademicEditRequest, CounsellingRecord, StudentProgress } =
     await import('../models/index.js');
-  const { default: mongoose } = await import('mongoose');
 
   // ── SEED (setup only; not part of the system under test) ──────────────────
   // `ensureSystemBootstrap` already created the canonical departments/batches,
@@ -342,7 +326,7 @@ async function main() {
     const after = await Student.findById(stuA._id).lean();
     assert(after!.fullName === 'Bhavana Sri', `fullName was mutated to ${after!.fullName}`);
     return { status: 'PASS',
-      evidence: `PUT /students/:id with grade fields -> ${put.status}; complete-profile with semesters -> ${prof.status}; Mongo fullName still "${after!.fullName}"`,
+      evidence: `PUT /students/:id with grade fields -> ${put.status}; complete-profile with semesters -> ${prof.status}; stored fullName still "${after!.fullName}"`,
       fix: 'allowlist guard in student.controller.updateStudent + submitStudentProfile grade block' };
   });
 
@@ -362,7 +346,7 @@ async function main() {
     assert(doc!.mobileNumber === '9001112223', `mobile = ${doc!.mobileNumber}`);
     assert(user!.email === 'bhavana.new@ksrce.test', `User.email not synced: ${user!.email}`);
     return { status: 'PASS',
-      evidence: `year-section -> 200 (Mongo year=${doc!.year} section=${doc!.section}); personal -> 200 (mobile=${doc!.mobileNumber}); User.email synced to ${user!.email}`,
+      evidence: `year-section -> 200 (stored year=${doc!.year} section=${doc!.section}); personal -> 200 (mobile=${doc!.mobileNumber}); User.email synced to ${user!.email}`,
       fix: 'updateStudentYearSection + allowlist + User.email sync' };
   });
 
@@ -429,7 +413,7 @@ async function main() {
     }
 
     // Institutional Identity must still be refused for a student, and must not
-    // reach MongoDB even if the request also carries legal fields.
+    // reach the local file store even if the request also carries legal fields.
     const identity = await http('PUT', `/api/students/${stuA._id}`, {
       token: tokens.student,
       body: {
@@ -507,7 +491,7 @@ async function main() {
     });
 
     return { status: 'PASS',
-      evidence: `full My Profile payload -> 200 (Mongo admissionType=${after!.school?.admissionType}, scholarshipDetails="${after!.school?.scholarshipDetails}", year=${after!.year}/${after!.section}, father=${after!.parent?.fatherName}); LATERAL_ENTRY nested save -> 200 (college="${latDoc!.school?.lateralEntry?.previousCollegeName}"); fullName/registerNumber/department/batch write -> 403; cgpa/sgpa -> 403; Mongo fullName still "${final!.fullName}"`,
+      evidence: `full My Profile payload -> 200 (stored admissionType=${after!.school?.admissionType}, scholarshipDetails="${after!.school?.scholarshipDetails}", year=${after!.year}/${after!.section}, father=${after!.parent?.fatherName}); LATERAL_ENTRY nested save -> 200 (college="${latDoc!.school?.lateralEntry?.previousCollegeName}"); fullName/registerNumber/department/batch write -> 403; cgpa/sgpa -> 403; stored fullName still "${final!.fullName}"`,
       fix: 'student allow-list in student.controller.updateStudent now includes admissionType/lateralEntry/scholarshipDetails; identity + grades still rejected' };
   });
 
@@ -534,7 +518,7 @@ async function main() {
     assert(notif[0].relatedEntityId === (list[0]._id || list[0].id || list[0].requestId),
       `notice points at ${notif[0].relatedEntityId}, request is ${list[0]._id || list[0].id || list[0].requestId}`);
     return { status: 'PASS',
-      evidence: `create -> ${r.status}; duplicate -> ${dup.status}; GET .../my -> 1 PENDING; mentor has ${notif.length} ACADEMIC_EDIT_REQUEST notice in Mongo pointing at the request`,
+      evidence: `create -> ${r.status}; duplicate -> ${dup.status}; GET .../my -> 1 PENDING; mentor has ${notif.length} ACADEMIC_EDIT_REQUEST notice on disk pointing at the request`,
       fix: 'AcademicEditRequest model + partial unique index on (student, semesterNumber, PENDING) + mentor notification' };
   });
 
@@ -555,26 +539,26 @@ async function main() {
     const count = await AcademicRecord.countDocuments({ student: stuA._id, semesterNumber: { $in: [5, 6, 7] } });
     assert(count === 0, `invalid requests created ${count} records`);
     return { status: 'PASS',
-      evidence: `cgpa=10.5 -> ${hi.status}; cgpa=-1 -> ${neg.status}; sgpa=12 -> ${bad.status}; 0 Mongo records created`,
+      evidence: `cgpa=10.5 -> ${hi.status}; cgpa=-1 -> ${neg.status}; sgpa=12 -> ${bad.status}; 0 stored records created`,
       fix: 'parseGrade in validation.util.ts enforces 0..10 on both fields' };
   });
 
   // 8. Approval updates the real AcademicRecord
-  await check('Assigned mentor approval writes CGPA/SGPA to MongoDB', async () => {
+  await check('Assigned mentor approval writes CGPA/SGPA to the local file store', async () => {
     const reqDoc = await AcademicEditRequest.findOne({ student: stuA._id, semesterNumber: 3, status: 'PENDING' });
-    assert(reqDoc, 'no pending request in Mongo');
+    assert(reqDoc, 'no pending request on disk');
     const before = await AcademicRecord.findOne({ student: stuA._id, semesterNumber: 3 }).lean();
     const r = await http('PATCH', `/api/students/academic-edit-request/${reqDoc!._id}/approve`, {
       token: tokens.mentor, body: { reviewNotes: 'Verified against the published re-evaluation result.' },
     });
     assert(r.status === 200, `approve -> ${r.status}: ${JSON.stringify(r.body)}`);
     const after = await AcademicRecord.findOne({ student: stuA._id, semesterNumber: 3 }).lean();
-    assert(after!.cgpa === 7.65, `Mongo cgpa = ${after!.cgpa}`);
-    assert(after!.sgpa === 7.8, `Mongo sgpa = ${after!.sgpa}`);
+    assert(after!.cgpa === 7.65, `stored cgpa = ${after!.cgpa}`);
+    assert(after!.sgpa === 7.8, `stored sgpa = ${after!.sgpa}`);
     const updated = await AcademicEditRequest.findById(reqDoc!._id).lean();
     assert(updated!.status === 'APPROVED', `request status = ${updated!.status}`);
     return { status: 'PASS',
-      evidence: `approve -> 200; Mongo AcademicRecord sem3 cgpa ${before!.cgpa} -> ${after!.cgpa}, sgpa ${before!.sgpa} -> ${after!.sgpa}; request -> ${updated!.status}; reviewedBy set`,
+      evidence: `approve -> 200; stored AcademicRecord sem3 cgpa ${before!.cgpa} -> ${after!.cgpa}, sgpa ${before!.sgpa} -> ${after!.sgpa}; request -> ${updated!.status}; reviewedBy set`,
       fix: 'approveAcademicEditRequest re-validates then writes AcademicRecord' };
   });
 
@@ -597,7 +581,7 @@ async function main() {
     const after = (await AcademicRecord.findOne({ student: stuA._id, semesterNumber: 4 }).lean())!;
     assert(after.cgpa === before.cgpa && after.sgpa === before.sgpa, `cgpa changed ${before.cgpa} -> ${after.cgpa}`);
     return { status: 'PASS',
-      evidence: `reject w/o reason -> ${noReason.status}; reject -> ${r.status}; Mongo sem4 cgpa unchanged at ${after.cgpa}, sgpa ${after.sgpa}`,
+      evidence: `reject w/o reason -> ${noReason.status}; reject -> ${r.status}; stored sem4 cgpa unchanged at ${after.cgpa}, sgpa ${after.sgpa}`,
       fix: 'rejectAcademicEditRequest validates reason and never touches AcademicRecord' };
   });
 
@@ -619,7 +603,7 @@ async function main() {
     const rec = await AcademicRecord.findOne({ student: stuB._id, semesterNumber: 1 }).lean();
     assert(rec!.cgpa === 7.0, `cgpa = ${rec!.cgpa}`);
     return { status: 'PASS',
-      evidence: `CSE mentor approving ECE student's request -> ${wrong.status}; ECE mentor (assigned) -> ${right.status}; Mongo sem1 cgpa = ${rec!.cgpa}`,
+      evidence: `CSE mentor approving ECE student's request -> ${wrong.status}; ECE mentor (assigned) -> ${right.status}; stored sem1 cgpa = ${rec!.cgpa}`,
       fix: 'loadReviewableRequest enforces active assignment / HOD department / admin' };
   });
 
@@ -636,13 +620,13 @@ async function main() {
     const stillPending = await AcademicEditRequest.findById(reqDoc!._id).lean();
     assert(stillPending!.status === 'PENDING', `status became ${stillPending!.status}`);
     return { status: 'PASS',
-      evidence: `student self-approve -> ${r.status}; Mongo status still ${stillPending!.status}`,
+      evidence: `student self-approve -> ${r.status}; stored status still ${stillPending!.status}`,
       fix: 'route guarded by authorize(FACULTY, HOD, ADMIN)' };
   });
 
   // 12. Supporting document ownership
   await check('Academic correction supporting doc must be owned by the student', async () => {
-    const fakeId = new mongoose.Types.ObjectId().toString();
+    const fakeId = newLocalId();
     const notMine = await http('POST', '/api/students/academic-edit-request', {
       token: tokens.student,
       body: { semesterNumber: 7, requestedCgpa: 8.4, requestedSgpa: 8.5, reason: 'Using someone else document id.', supportingDocumentId: fakeId },
@@ -667,7 +651,7 @@ async function main() {
     const storedIds = stored!.supportingDocument ? [String(stored!.supportingDocument)] : [];
     assert(storedIds.includes(ownId), `stored supporting docs = ${JSON.stringify(storedIds)}`);
     return { status: 'PASS',
-      evidence: `request citing a non-owned document -> ${notMine.status} (${notMine.body?.message}); request citing own StudentDocument -> ${mine.status}, persisted on the request in Mongo`,
+      evidence: `request citing a non-owned document -> ${notMine.status} (${notMine.body?.message}); request citing own StudentDocument -> ${mine.status}, persisted on the request on disk`,
       fix: 'supporting docs resolved through StudentDocument filtered by student+session' };
   });
 
@@ -679,7 +663,7 @@ async function main() {
     });
     assert(create.status === 201 || create.status === 200, `create -> ${create.status}: ${JSON.stringify(create.body)}`);
     const pend = await StudentEditRequest.findOne({ student: stuA._id, status: 'PENDING' });
-    assert(pend, 'no PENDING identity request in Mongo');
+    assert(pend, 'no PENDING identity request on disk');
     const beforeAssign = await MentorAssignment.findById(assignA._id).lean();
     const beforeDept = beforeAssign!.department?.toString();
 
@@ -714,24 +698,59 @@ async function main() {
       fix: 'authorize(ROLES.ADMIN) on the route' };
   });
 
-  // 15. Reference data available to any authenticated user (dropdowns)
-  await check('Departments/Batches readable by student for identity dropdowns', async () => {
-    const d = await http('GET', '/api/admin/departments', { token: tokens.student });
-    const b = await http('GET', '/api/admin/batches', { token: tokens.student });
-    assert(d.status === 200, `departments -> ${d.status}`);
-    assert(b.status === 200, `batches -> ${b.status}`);
-    const depts = Array.isArray(d.body.data) ? d.body.data : d.body.data.departments;
-    assert(depts.length >= 4, `expected the bootstrap departments, got ${depts?.length}`);
-    const withCode = depts.filter((x: any) => x.code).length;
-    const batches = Array.isArray(b.body.data) ? b.body.data : b.body.data.batches;
-    assert(batches.length >= 4, `expected the bootstrap batches, got ${batches?.length}`);
+  // 15. Reference data for identity dropdowns, ADMIN routes locked down
+  //
+  // The student identity-request dropdowns used to read the ADMIN-only
+  // `/api/admin/departments` + `/api/admin/batches`, which forced those routes to
+  // stay open to every logged-in role — an Admin surface a Student could call.
+  // They now read `/api/reference/*` (authenticated, minimal fields), and the
+  // Admin routes are correctly ADMIN-only.
+  await check('Reference dropdowns are readable by any role and the Admin equivalents are ADMIN-only', async () => {
+    const roles = ['student', 'mentor', 'hod', 'admin'] as const;
+    const seen: string[] = [];
+
+    for (const role of roles) {
+      const d = await http('GET', '/api/reference/departments', { token: tokens[role] });
+      const b = await http('GET', '/api/reference/batches', { token: tokens[role] });
+      assert(d.status === 200, `${role} GET /api/reference/departments -> ${d.status}`);
+      assert(b.status === 200, `${role} GET /api/reference/batches -> ${b.status}`);
+
+      const depts = Array.isArray(d.body.data) ? d.body.data : d.body.data?.departments;
+      const batches = Array.isArray(b.body.data) ? b.body.data : b.body.data?.batches;
+      assert(depts.length >= 4, `expected the bootstrap departments, got ${depts?.length}`);
+      assert(batches.length >= 4, `expected the bootstrap batches, got ${batches?.length}`);
+      assert(depts.filter((x: any) => x.code).length >= 4, 'every department must carry a code for the dropdown');
+      seen.push(`${role}:${depts.length}d/${batches.length}b`);
+    }
+
+    // Anonymous must still be rejected — the module is authenticated, not public.
+    const anon = await http('GET', '/api/reference/departments');
+    assert(anon.status === 401, `anonymous -> expected 401 got ${anon.status}`);
+
+    // The Admin-only lists must now refuse every non-admin role.
+    const adminOnly: [string, string][] = [
+      ['/api/admin/departments', 'departments'],
+      ['/api/admin/batches', 'batches'],
+      ['/api/admin/settings', 'settings'],
+    ];
+    const locked: string[] = [];
+    for (const [ep, label] of adminOnly) {
+      for (const role of ['student', 'mentor', 'hod'] as const) {
+        const r = await http('GET', ep, { token: tokens[role] });
+        assert(r.status === 403, `${role} GET ${label} expected 403 got ${r.status}`);
+      }
+      const ok = await http('GET', ep, { token: tokens.admin });
+      assert(ok.status === 200, `admin GET ${label} expected 200 got ${ok.status}`);
+      locked.push(label);
+    }
+
     return { status: 'PASS',
-      evidence: `student GET /api/admin/departments -> 200 (${depts.length} departments, ${withCode} with codes for the dropdown); /batches -> 200 (${batches.length})`,
-      fix: 'reference reads intentionally require only authentication' };
+      evidence: `/api/reference/{departments,batches} -> 200 for ${seen.join(' ')}; anonymous -> 401; ${locked.join(', ')} -> 403 for student/mentor/hod and 200 for admin`,
+      fix: 'identity dropdowns read /api/reference/*; /api/admin/{departments,batches,settings} carry authorize(ROLES.ADMIN)' };
   });
 
-  // 16. Meetings driven by the stored MongoDB date
-  await check('Meeting date/labels come from MongoDB, not a computed Saturday', async () => {
+  // 16. Meetings driven by the stored the local file store date
+  await check('Meeting date/labels come from the stored record, not a computed Saturday', async () => {
     // Walk forward to a day that is definitely NOT a Saturday, so a fabricated
     // "Saturday" label would be caught.
     const probe = new Date();
@@ -834,7 +853,7 @@ async function main() {
     const doc = await Notification.findById(unread[0]._id || unread[0].id).lean();
     assert(doc!.isRead === true, 'isRead not persisted');
     return { status: 'PASS',
-      evidence: `student GET /api/notifications -> ${data.length} notifications (${unread.length} unread); PATCH read -> 200; Mongo isRead=${doc!.isRead}`,
+      evidence: `student GET /api/notifications -> ${data.length} notifications (${unread.length} unread); PATCH read -> 200; stored isRead=${doc!.isRead}`,
       fix: 'notifications emitted on academic request create/approve/reject and identity request create/review' };
   });
 
@@ -1216,7 +1235,7 @@ async function main() {
     );
     const literals = literalsRaw.join(' ');
     const diploma = 'DIPLOMA IN COMPUTER ENGINEERING';
-    // Derive the expectation from MongoDB instead of hardcoding, because earlier
+    // Derive the expectation from the stored record instead of hardcoding, because earlier
     // scenarios legitimately republished this student's semester-1 grades.
     // The seed publishes CGPA with no SGPA, so the PDF must print the CGPA
     // exactly ONCE and must not mirror it into the SGPA column.
@@ -1242,7 +1261,7 @@ async function main() {
       .slice(0, 40);
     return {
       status: literals.includes(diploma) && cgpaInPdf && !sgpaMirrorsCgpa ? 'PASS' : 'PARTIAL',
-      evidence: `GET /api/pdf/student/:id -> 200 ${buf.length} B ${r.contentType}, %PDF header ok; inflated ${literalsRaw.length} literal text runs contain the lateral diploma "${diploma}"=${literals.includes(diploma)}; Mongo sem1 cgpa=${rec!.cgpa} (sgpa=${rec!.sgpa ?? 'none'}) and the PDF prints the stored CGPA "${expectedCgpa}" ${occurrences}x (CGPA cell present=${cgpaInPdf}); SGPA mirrored from CGPA=${sgpaMirrorsCgpa} and calculateArrearStatistics({cgpa:8.5}) -> sgpa=${unitSem1.sgpa}, so an unrecorded SGPA is never fabricated; grade-related runs=${JSON.stringify(gradeRuns)}`,
+      evidence: `GET /api/pdf/student/:id -> 200 ${buf.length} B ${r.contentType}, %PDF header ok; inflated ${literalsRaw.length} literal text runs contain the lateral diploma "${diploma}"=${literals.includes(diploma)}; stored sem1 cgpa=${rec!.cgpa} (sgpa=${rec!.sgpa ?? 'none'}) and the PDF prints the stored CGPA "${expectedCgpa}" ${occurrences}x (CGPA cell present=${cgpaInPdf}); SGPA mirrored from CGPA=${sgpaMirrorsCgpa} and calculateArrearStatistics({cgpa:8.5}) -> sgpa=${unitSem1.sgpa}, so an unrecorded SGPA is never fabricated; grade-related runs=${JSON.stringify(gradeRuns)}`,
       fix: 'pdf.service reads academic_record.cgpa/sgpa via the shared arrears.util source of truth (which no longer falls back SGPA->CGPA) and school.lateralEntry.previousCourseDiploma',
     };
   });
@@ -1318,7 +1337,7 @@ async function main() {
     const hasCounselling = m.counselling_count !== undefined;
     // Student A has one active arrear (sem 3, 24CS301) and no counselling yet.
     const arrearsCorrect = m.total_arrears === 1;
-    // Give the mentee a counselling session and prove the count follows MongoDB.
+    // Give the mentee a counselling session and prove the count follows the local file store.
     const todayIso = new Date().toISOString().slice(0, 10);
     await CounsellingRecord.create({
       student: stuA._id, studentId: stuA._id, mentor: mentor._id,
@@ -1330,7 +1349,7 @@ async function main() {
     const m2 = list2.find((x: any) => x.student_id === stuA._id.toString());
     return { status: hasYear && hasArrear && hasCounselling && arrearsCorrect && m2.counselling_count === 1 ? 'PASS' : 'PARTIAL',
       evidence: `GET /api/admin/mentors/:id/mentees -> ${list.length} mentees; year_of_study=${m.year_of_study} (stored, not computed); total_arrears=${m.total_arrears} (matches the AcademicRecord); arrears_status_label="${m.arrear_status_label}"; counselling_count ${m.counselling_count} -> ${m2.counselling_count} after inserting a CounsellingRecord`,
-      fix: 'getMenteesByMentor switched from non-existent s.semesters to AcademicRecord + student.year, and now reports counselling_count from MongoDB' };
+      fix: 'getMenteesByMentor switched from non-existent s.semesters to AcademicRecord + student.year, and now reports counselling_count from the stored record' };
   });
 
   // 27. Mentor assignment + history
@@ -1376,13 +1395,13 @@ async function main() {
     for (const ep of endpoints) {
       const r = await http('GET', ep, { token: tokens.admin });
       const text = JSON.stringify(r.body);
-      for (const needle of ['passwordHash', 'JWT_SECRET', 'MONGODB_URI', 'password"']) {
+      for (const needle of ['passwordHash', 'JWT_SECRET', 'DATA_DIR', 'password"']) {
         if (text.includes(needle)) leaks.push(`${ep} -> ${needle}`);
       }
     }
     return { status: leaks.length === 0 ? 'PASS' : 'FAIL',
       evidence: leaks.length === 0
-        ? `scanned ${endpoints.length} endpoints for passwordHash/JWT_SECRET/MONGODB_URI: none present`
+        ? `scanned ${endpoints.length} endpoints for passwordHash/JWT_SECRET/DATA_DIR: none present`
         : `LEAKS: ${leaks.join(', ')}`,
       fix: '' };
   });
@@ -1595,7 +1614,7 @@ async function main() {
 
     const { Meeting } = await import('../models/Meeting.model.js');
     const saved: any = await Meeting.findOne({ student: stuA._id, meetingDate: '2026-09-30' }).lean();
-    assert(saved, 'the meeting was not persisted to MongoDB');
+    assert(saved, 'the meeting was not persisted to the local file store');
     assert(saved.attendanceStatus === 'PRESENT', `attendance = ${saved.attendanceStatus}`);
     assert(saved.meetingTime === '10:30 AM', `time = ${saved.meetingTime}`);
     assert(saved.location === 'Faculty Cabin / Mentoring Room', `location = ${saved.location}`);
@@ -1630,8 +1649,7 @@ async function main() {
   console.log('FAILURES:');
   for (const r of rows.filter((x) => x.status !== 'PASS')) console.log(`  - [${r.status}] ${r.requirement}: ${r.evidence}`);
 
-  await mongoose.disconnect();
-  await mem.stop();
+  await store.teardown();
   process.exit(fail > 0 ? 1 : 0);
 }
 

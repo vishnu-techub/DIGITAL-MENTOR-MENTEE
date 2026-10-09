@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
 
 export interface ISibling {
   siblingName: string;
@@ -18,10 +18,10 @@ export interface IParentDetails {
 export interface ISchoolDetails {
   tenthMark?: number;
   tenthSchool?: string;
-  tenthSchoolId?: mongoose.Types.ObjectId;
+  tenthSchoolId?: LocalId;
   twelfthMark?: number;
   twelfthSchool?: string;
-  twelfthSchoolId?: mongoose.Types.ObjectId;
+  twelfthSchoolId?: LocalId;
   cutoffMark?: number;
   admissionType?: 'COUNSELLING' | 'MANAGEMENT' | 'LATERAL_ENTRY';
   scholarshipDetails?: string;
@@ -44,12 +44,12 @@ export interface IArrearHistoryItem {
   remarks?: string;
 }
 
-export interface IStudent extends Document {
-  user: mongoose.Types.ObjectId;
+export interface IStudent extends LocalDocument {
+  user: LocalId;
   registerNumber: string;
   fullName: string;
-  department: mongoose.Types.ObjectId;
-  batch: mongoose.Types.ObjectId;
+  department: LocalId;
+  batch: LocalId;
   dob?: string;
   bloodGroup?: string;
   residentialType: 'DAY_SCHOLAR' | 'HOSTELLER';
@@ -79,7 +79,7 @@ export interface IStudent extends Document {
 const StudentSchema = new Schema<IStudent>(
   {
     user: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'User',
       required: true,
       unique: true,
@@ -99,13 +99,13 @@ const StudentSchema = new Schema<IStudent>(
       trim: true,
     },
     department: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Department',
       required: true,
       index: true,
     },
     batch: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Batch',
       required: true,
       index: true,
@@ -167,10 +167,10 @@ const StudentSchema = new Schema<IStudent>(
     school: {
       tenthMark: { type: Number, default: 0 },
       tenthSchool: { type: String, trim: true, default: '' },
-      tenthSchoolId: { type: Schema.Types.ObjectId, ref: 'School', index: true },
+      tenthSchoolId: { type: 'ObjectId', ref: 'School', index: true },
       twelfthMark: { type: Number, default: 0 },
       twelfthSchool: { type: String, trim: true, default: '' },
-      twelfthSchoolId: { type: Schema.Types.ObjectId, ref: 'School', index: true },
+      twelfthSchoolId: { type: 'ObjectId', ref: 'School', index: true },
       cutoffMark: { type: Number, default: 0 },
       admissionType: {
         type: String,
@@ -227,4 +227,4 @@ const StudentSchema = new Schema<IStudent>(
 
 
 
-export const Student = mongoose.model<IStudent>('Student', StudentSchema);
+export const Student = defineModel<IStudent>('Student', StudentSchema);

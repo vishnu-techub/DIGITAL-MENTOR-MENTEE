@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
 import { useToast } from '../../context/ToastContext';
 import { Modal } from '../common/Modal';
+import { PageHeader } from '../common/PageHeader';
 import { RecordStatusBadge, readPermissions, readState, RECORD_STATES } from '../../lib/recordStatus';
 import { GrammarAssistField } from './GrammarAssistField';
 import {
@@ -153,6 +154,16 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <PageHeader
+        eyebrow="Mentee Progress"
+        title="Student Progress & Certificates"
+        subtitle={
+          studentName
+            ? `Certificate and achievement verification queue for ${studentName}.`
+            : 'Certificate and achievement verification queue.'
+        }
+      />
+
       {/* ============================================================
           1. STATS OVERVIEW CARDS (Per Section 5 of Prompt)
           ============================================================ */}
@@ -167,16 +178,16 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
           className="card"
           style={{
             padding: '1.15rem 1.25rem',
-            backgroundColor: '#F8FAFC',
-            border: '1px solid #E2E8F0',
+            backgroundColor: 'var(--color-slate-50)',
+            border: '1px solid var(--color-slate-200)',
             borderLeft: '4px solid #2563EB',
             borderRadius: '12px',
           }}
         >
-          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-slate-500)', textTransform: 'uppercase' }}>
             Event Certificates
           </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0B2545', marginTop: '4px' }}>
+          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--color-navy-800)', marginTop: '4px' }}>
             {summary.eventCertificates || 0}
           </div>
         </div>
@@ -185,16 +196,16 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
           className="card"
           style={{
             padding: '1.15rem 1.25rem',
-            backgroundColor: '#F8FAFC',
-            border: '1px solid #E2E8F0',
-            borderLeft: '4px solid #059669',
+            backgroundColor: 'var(--color-slate-50)',
+            border: '1px solid var(--color-slate-200)',
+            borderLeft: '4px solid var(--color-success-600)',
             borderRadius: '12px',
           }}
         >
-          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-slate-500)', textTransform: 'uppercase' }}>
             NPTEL Certificates
           </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0B2545', marginTop: '4px' }}>
+          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--color-navy-800)', marginTop: '4px' }}>
             {summary.nptelCertificates || 0}
           </div>
         </div>
@@ -203,16 +214,16 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
           className="card"
           style={{
             padding: '1.15rem 1.25rem',
-            backgroundColor: '#F8FAFC',
-            border: '1px solid #E2E8F0',
+            backgroundColor: 'var(--color-slate-50)',
+            border: '1px solid var(--color-slate-200)',
             borderLeft: '4px solid #7C3AED',
             borderRadius: '12px',
           }}
         >
-          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-slate-500)', textTransform: 'uppercase' }}>
             Global Certifications
           </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0B2545', marginTop: '4px' }}>
+          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--color-navy-800)', marginTop: '4px' }}>
             {summary.globalCertificates || 0}
           </div>
         </div>
@@ -221,16 +232,16 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
           className="card"
           style={{
             padding: '1.15rem 1.25rem',
-            backgroundColor: '#F8FAFC',
-            border: '1px solid #E2E8F0',
-            borderLeft: '4px solid #D97706',
+            backgroundColor: 'var(--color-slate-50)',
+            border: '1px solid var(--color-slate-200)',
+            borderLeft: '4px solid var(--color-warning-600)',
             borderRadius: '12px',
           }}
         >
-          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-slate-500)', textTransform: 'uppercase' }}>
             Hackathons
           </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0B2545', marginTop: '4px' }}>
+          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--color-navy-800)', marginTop: '4px' }}>
             {summary.hackathons || 0}
           </div>
         </div>
@@ -239,16 +250,16 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
           className="card"
           style={{
             padding: '1.15rem 1.25rem',
-            backgroundColor: '#F8FAFC',
-            border: '1px solid #E2E8F0',
-            borderLeft: '4px solid #0284C7',
+            backgroundColor: 'var(--color-slate-50)',
+            border: '1px solid var(--color-slate-200)',
+            borderLeft: '4px solid var(--color-info-600)',
             borderRadius: '12px',
           }}
         >
-          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-slate-500)', textTransform: 'uppercase' }}>
             Symposiums
           </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0B2545', marginTop: '4px' }}>
+          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--color-navy-800)', marginTop: '4px' }}>
             {summary.symposiums || 0}
           </div>
         </div>
@@ -257,16 +268,16 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
           className="card"
           style={{
             padding: '1.15rem 1.25rem',
-            backgroundColor: '#F8FAFC',
-            border: '1px solid #E2E8F0',
+            backgroundColor: 'var(--color-slate-50)',
+            border: '1px solid var(--color-slate-200)',
             borderLeft: '4px solid #E11D48',
             borderRadius: '12px',
           }}
         >
-          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-slate-500)', textTransform: 'uppercase' }}>
             Awards
           </div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0B2545', marginTop: '4px' }}>
+          <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--color-navy-800)', marginTop: '4px' }}>
             {summary.awards || 0}
           </div>
         </div>
@@ -281,7 +292,7 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
           padding: '1.25rem',
           backgroundColor: '#ffffff',
           borderRadius: '12px',
-          border: '1px solid #E2E8F0',
+          border: '1px solid var(--color-slate-200)',
         }}
       >
         <div
@@ -295,10 +306,10 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
           }}
         >
           <div>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--color-navy-800)', margin: 0 }}>
               Student Progress & Certificate Verifications
             </h3>
-            <p style={{ fontSize: '0.8rem', color: '#64748B', margin: '2px 0 0 0' }}>
+            <p style={{ fontSize: '0.8rem', color: 'var(--color-slate-500)', margin: '2px 0 0 0' }}>
               Every certificate uploaded under Student Documents and every achievement submitted under Student
               Progress is listed here as one review queue. Nothing is copied or duplicated: a certificate that exists
               in both places is shown once.
@@ -317,7 +328,7 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
 
         {/* Filter Badges */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
-          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#475569', marginRight: '0.5rem' }}>
+          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-slate-600)', marginRight: '0.5rem' }}>
             Filter Category:
           </span>
           <button
@@ -346,7 +357,7 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
         </div>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', marginTop: '0.75rem' }}>
-          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#475569', marginRight: '0.5rem' }}>
+          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-slate-600)', marginRight: '0.5rem' }}>
             Filter Status:
           </span>
           {['ALL', ...RECORD_STATES].map((status) => {
@@ -373,7 +384,7 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
           3. RECORDS LIST
           ============================================================ */}
       {loading ? (
-        <div style={{ padding: '3rem', textAlign: 'center', color: '#64748B' }}>
+        <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--color-slate-500)' }}>
           <div className="spinner" style={{ margin: '0 auto 1rem auto' }} />
           Loading mentee progress records...
         </div>
@@ -385,14 +396,14 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
             textAlign: 'center',
             backgroundColor: '#ffffff',
             borderRadius: '12px',
-            border: '1px dashed #CBD5E1',
+            border: '1px dashed var(--color-slate-300)',
           }}
         >
           <Award size={44} color="#94A3B8" style={{ margin: '0 auto 0.75rem auto' }} />
-          <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0B2545', margin: '0 0 0.5rem 0' }}>
+          <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--color-navy-800)', margin: '0 0 0.5rem 0' }}>
             No Progress Records Found
           </h4>
-          <p style={{ fontSize: '0.85rem', color: '#64748B', maxWidth: '420px', margin: '0 auto' }}>
+          <p style={{ fontSize: '0.85rem', color: 'var(--color-slate-500)', maxWidth: '420px', margin: '0 auto' }}>
             {selectedCategory !== 'ALL' || selectedStatus !== 'ALL'
               ? 'No achievements match the current filters. Try selecting All Categories or All Status.'
               : `${studentName || 'The mentee'} has not submitted any achievements or certificates yet.`}
@@ -420,7 +431,7 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                   padding: '1.35rem',
                   backgroundColor: '#ffffff',
                   borderRadius: '12px',
-                  border: '1px solid #E2E8F0',
+                  border: '1px solid var(--color-slate-200)',
                   boxShadow: '0 2px 6px rgba(11, 37, 69, 0.04)',
                   display: 'flex',
                   flexDirection: 'column',
@@ -428,8 +439,8 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                   borderTop: isVerified
                     ? '4px solid #16A34A'
                     : isRejected
-                    ? '4px solid #DC2626'
-                    : '4px solid #D97706',
+                    ? '4px solid var(--color-danger-600)'
+                    : '4px solid var(--color-warning-600)',
                 }}
               >
                 <div>
@@ -453,7 +464,7 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                         backgroundColor: '#EFF6FF',
                         padding: '3px 8px',
                         borderRadius: '6px',
-                        border: '1px solid #BFDBFE',
+                        border: '1px solid var(--color-navy-200)',
                       }}
                       title={
                         r.source === 'DOCUMENT'
@@ -472,7 +483,7 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                     style={{
                       fontSize: '1.1rem',
                       fontWeight: 800,
-                      color: '#0B2545',
+                      color: 'var(--color-navy-800)',
                       margin: '0 0 0.5rem 0',
                       lineHeight: 1.3,
                     }}
@@ -484,7 +495,7 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                   <div
                     style={{
                       fontSize: '0.82rem',
-                      color: '#475569',
+                      color: 'var(--color-slate-600)',
                       display: 'flex',
                       flexDirection: 'column',
                       gap: '0.35rem',
@@ -521,8 +532,8 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                             fontWeight: 700,
                             padding: '1px 7px',
                             borderRadius: '4px',
-                            backgroundColor: '#F1F5F9',
-                            color: '#334155',
+                            backgroundColor: 'var(--color-slate-100)',
+                            color: 'var(--color-slate-700)',
                           }}
                         >
                           Level: {r.level}
@@ -536,8 +547,8 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                     <div
                       style={{
                         fontSize: '0.8rem',
-                        color: '#64748B',
-                        backgroundColor: '#F8FAFC',
+                        color: 'var(--color-slate-500)',
+                        backgroundColor: 'var(--color-slate-50)',
                         padding: '0.6rem 0.75rem',
                         borderRadius: '6px',
                         marginBottom: '0.75rem',
@@ -553,7 +564,7 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                     <div
                       style={{
                         padding: '0.65rem 0.75rem',
-                        backgroundColor: '#FEF2F2',
+                        backgroundColor: 'var(--color-danger-50)',
                         border: '1px solid #FCA5A5',
                         borderRadius: '6px',
                         marginBottom: '0.75rem',
@@ -571,7 +582,7 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                 <div
                   style={{
                     paddingTop: '0.75rem',
-                    borderTop: '1px solid #F1F5F9',
+                    borderTop: '1px solid var(--color-slate-100)',
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
@@ -670,8 +681,8 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                               fontSize: '0.76rem',
                               padding: '0.35rem 0.7rem',
                               backgroundColor: '#EFF6FF',
-                              color: '#1D4ED8',
-                              borderColor: '#BFDBFE',
+                              color: 'var(--color-navy-500)',
+                              borderColor: 'var(--color-navy-200)',
                               fontWeight: 700,
                               display: 'inline-flex',
                               alignItems: 'center',
@@ -690,7 +701,7 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                           style={{
                             fontSize: '0.76rem',
                             padding: '0.35rem 0.7rem',
-                            backgroundColor: isRejected ? '#FEE2E2' : '#FFF1F2',
+                            backgroundColor: isRejected ? 'var(--color-danger-100)' : '#FFF1F2',
                             color: '#991B1B',
                             borderColor: '#FECDD3',
                             fontWeight: 700,
@@ -753,8 +764,8 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
                     verifyStatus === 'Verified'
                       ? '#16A34A'
                       : verifyStatus === 'Approved'
-                      ? '#1D4ED8'
-                      : '#DC2626',
+                      ? 'var(--color-navy-500)'
+                      : 'var(--color-danger-600)',
                   color: '#ffffff',
                   fontWeight: 700,
                 }}
@@ -771,7 +782,7 @@ export const MenteeProgressDashboard: React.FC<MenteeProgressDashboardProps> = (
           }
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <p style={{ fontSize: '0.85rem', color: '#475569', margin: 0 }}>
+            <p style={{ fontSize: '0.85rem', color: 'var(--color-slate-600)', margin: 0 }}>
               {verifyStatus === 'Verified' ? (
                 <>
                   Confirm <strong>"{verifyTarget.activityName}"</strong> under{' '}

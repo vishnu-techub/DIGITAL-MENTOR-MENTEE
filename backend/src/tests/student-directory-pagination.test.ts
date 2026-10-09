@@ -1,7 +1,7 @@
 /**
  * STUDENT DIRECTORY — FULL-DATASET REACHABILITY VERIFICATION
  * ---------------------------------------------------------------------------
- * Boots the REAL production entrypoint (src/index.ts) against a real mongod and
+ * Boots the REAL production entrypoint (src/index.ts) against the local file store and
  * drives GET /api/students over HTTP exactly as the Admin Portal does.
  *
  * The seed deliberately creates MORE students than any single page size
@@ -9,23 +9,15 @@
  *
  * Run: npx tsx src/tests/student-directory-pagination.test.ts
  */
-import path from 'node:path';
-import fs from 'node:fs';
 import bcrypt from 'bcryptjs';
+import { isValidId, toLocalId, type LocalId } from '../services/localId.js';
+import { useTemporaryLocalStore } from './helpers/local-test-store.js';
 
-// Reuse the mongod binary already present on this machine (no network needed).
-const BIN_DIR = path.join(process.env.USERPROFILE || '', '.cache', 'mongodb-binaries');
-if (fs.existsSync(BIN_DIR)) {
-  process.env.MONGOMS_DOWNLOAD_DIR = BIN_DIR;
-  process.env.MONGOMS_SYSTEM_BINARY = path.join(BIN_DIR, 'mongod-x64-win32-8.2.6.exe');
-}
-
-const WORK = 'A:\\mini projects\\New folder\\.runtime-verify';
-const DB_PATH = path.join(WORK, 'mongo-directory-data');
-fs.mkdirSync(DB_PATH, { recursive: true });
-process.env.TMPDIR = WORK;
-process.env.TMP = WORK;
-process.env.TEMP = WORK;
+// The store resolves its directory at import time, so this must come first.
+const store = useTemporaryLocalStore('directory-verify');
+process.env.TMPDIR = store.dataDir;
+process.env.TMP = store.dataDir;
+process.env.TEMP = store.dataDir;
 
 const PORT = 5098;
 process.env.PORT = String(PORT);
@@ -108,16 +100,7 @@ async function waitForHealth() {
 }
 
 async function main() {
-  const { MongoMemoryServer } = await import('mongodb-memory-server');
-  for (const entry of fs.readdirSync(DB_PATH)) {
-    fs.rmSync(path.join(DB_PATH, entry), { recursive: true, force: true });
-  }
-  const mem = await MongoMemoryServer.create({
-    binary: { version: '8.2.6' },
-    instance: { dbPath: DB_PATH, storageEngine: 'wiredTiger' },
-  });
-  process.env.MONGODB_URI = mem.getUri('ksrce_directory_verify');
-  console.log(`\n### Real mongod started at ${process.env.MONGODB_URI}`);
+  console.log(`\n### Local file store ready at ${store.dataDir}`);
 
   // Boot the REAL app.
   await import('../index.js');
@@ -125,7 +108,6 @@ async function main() {
   console.log(`### Real server listening on ${BASE}\n`);
 
   const { User, Student, Faculty, Department, Batch, MentorAssignment } = await import('../models/index.js');
-  const { default: mongoose } = await import('mongoose');
 
   // ── SEED ───────────────────────────────────────────────────────────────────
   const cse: any = await Department.findOne({ code: 'CSE' });
@@ -413,10 +395,10 @@ async function main() {
   await check('Paginated payload still leaks no secrets', async () => {
     const data = await getStudents('?page=1&limit=50');
     const text = JSON.stringify(data);
-    for (const needle of ['passwordHash', 'JWT_SECRET', 'MONGODB_URI', 'temporaryPassword']) {
+    for (const needle of ['passwordHash', 'JWT_SECRET', 'DATA_DIR', 'temporaryPassword']) {
       assert(!text.includes(needle), `payload leaked "${needle}"`);
     }
-    return 'no passwordHash / JWT_SECRET / MONGODB_URI / temporaryPassword in the 50-row page';
+    return 'no passwordHash / JWT_SECRET / DATA_DIR / temporaryPassword in the 50-row page';
   });
 
   // 15. RBAC preserved: a STUDENT token still cannot list the directory.
@@ -471,8 +453,7 @@ async function main() {
     for (const r of rows.filter((x) => x.status !== 'PASS')) console.log(`  - ${r.requirement}: ${r.evidence}`);
   }
 
-  await mongoose.disconnect();
-  await mem.stop();
+  await store.teardown();
   process.exit(fail > 0 ? 1 : 0);
 }
 

@@ -53,8 +53,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else {
         logout();
       }
-    } catch {
-      logout();
+    } catch (err) {
+      const statusCode = (err as { statusCode?: number })?.statusCode ?? 0;
+      if (statusCode === 401 || statusCode === 403) {
+        logout();
+      }
     } finally {
       setIsLoading(false);
     }

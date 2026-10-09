@@ -13,6 +13,7 @@ import {
   Info,
 } from 'lucide-react';
 import { SearchableSchoolDropdown } from '../../components/common/SearchableSchoolDropdown';
+import { PageHeader } from '../../components/common/PageHeader';
 
 interface CompleteProfileWizardProps {
   onCompleted: () => void;
@@ -240,14 +241,12 @@ export const CompleteProfileWizard: React.FC<CompleteProfileWizardProps> = ({ on
   return (
     <div className="wizard-container">
       {/* ── Header ── */}
-      <div className="wizard-banner card">
-        <span className="badge badge-warning" style={{ marginBottom: 8 }}>Mandatory First-Time Setup</span>
-        <h2 className="wizard-banner-title">Complete Your Student Profile</h2>
-        <p className="wizard-banner-sub">
-          Welcome to KSRCE! Please enter your complete personal, family, and academic details
-          to permanently activate your official digital mentoring record book.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Student"
+        title="Complete Your Profile"
+        subtitle="Welcome to KSRCE! Please enter your complete personal, family, and academic details to permanently activate your official digital mentoring record book."
+        actions={<span className="badge badge-warning">Mandatory First-Time Setup</span>}
+      />
 
       {/* ── Stepper ── */}
       <div className="wizard-stepper card">

@@ -1,28 +1,44 @@
 import assert from 'assert';
 import bcrypt from 'bcryptjs';
-import mongoose from 'mongoose';
-import { connectDB, closeDB } from '../config/database.js';
-import { ensureSystemBootstrap } from '../database/bootstrap.js';
-import {
-  User,
-  Student,
-  Faculty,
-  Department,
-  Batch,
-  AcademicRecord,
-  MentorAssignment,
-  Meeting,
-  CounsellingRecord,
-} from '../models/index.js';
-import { generateStudentPdf } from '../modules/pdf/pdf.service.js';
+import { useTemporaryLocalStore } from './helpers/local-test-store.js';
+
+// TEMPORARY LOCAL FILE STORAGE. Replace with a persistent database/storage
+// implementation before production deployment.
+//
+// This suite creates real users, mentors, students and records, so it runs against
+// a THROWAWAY data directory: a test run can never contaminate the development
+// store in `backend/data/`.
+//
+// Every application module below is imported DYNAMICALLY, inside
+// `runCriticalTest`. Static imports are hoisted and would evaluate
+// `config/database.js` -> `services/localStorage.service.ts` -- which resolves
+// `DATA_DIR` at import time -- BEFORE the line above runs, and the sandbox would
+// silently point at the live store instead.
+const store = useTemporaryLocalStore('critical-reassignment');
 
 async function runCriticalTest() {
   console.log('================================================================');
   console.log('KSRCE DATA PRESERVATION & ONBOARDING WORKFLOW TEST (SECTION 20)');
-  console.log('MONGODB & MONGOOSE ODM VALIDATION');
+  console.log('LOCAL FILE STORAGE VALIDATION');
   console.log('================================================================\n');
 
-  // Setup Clean MongoDB DB with migrations and bootstrap
+  const { connectDB, closeDB } = await import('../config/database.js');
+  const { ensureSystemBootstrap } = await import('../database/bootstrap.js');
+  const {
+    User,
+    Student,
+    Faculty,
+    Department,
+    Batch,
+    AcademicRecord,
+    MentorAssignment,
+    Meeting,
+    CounsellingRecord,
+  } = await import('../models/index.js');
+  const { generateStudentPdf } = await import('../modules/pdf/pdf.service.js');
+  const { isValidId, toLocalId } = await import('../services/localId.js');
+
+  // Open a clean local store, then run migrations and bootstrap
   await connectDB();
   await ensureSystemBootstrap();
 
@@ -119,7 +135,7 @@ async function runCriticalTest() {
   });
 
   const studentId = studentDoc._id.toString();
-  console.log(`✓ Student A account created with permanent MongoDB _id: ${studentId}`);
+  console.log(`✓ Student A account created with permanent local record _id: ${studentId}`);
 
   // ==========================================================================
   // STEP 2: Student A receives credentials
@@ -383,6 +399,7 @@ async function runCriticalTest() {
   await CounsellingRecord.deleteMany({ student: studentId });
 
   await closeDB();
+  await store.teardown();
 }
 
 runCriticalTest()

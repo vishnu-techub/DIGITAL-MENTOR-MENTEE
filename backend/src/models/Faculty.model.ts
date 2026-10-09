@@ -1,9 +1,9 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
 
-export interface IFaculty extends Document {
-  user: mongoose.Types.ObjectId;
+export interface IFaculty extends LocalDocument {
+  user: LocalId;
   employeeId: string;
-  department: mongoose.Types.ObjectId;
+  department: LocalId;
   designation: string;
   cabinLocation: string;
   phoneNumber?: string;
@@ -16,7 +16,7 @@ export interface IFaculty extends Document {
 const FacultySchema = new Schema<IFaculty>(
   {
     user: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'User',
       required: true,
       unique: true,
@@ -31,7 +31,7 @@ const FacultySchema = new Schema<IFaculty>(
       index: true,
     },
     department: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Department',
       required: true,
       index: true,
@@ -69,4 +69,4 @@ const FacultySchema = new Schema<IFaculty>(
 
 
 
-export const Faculty = mongoose.model<IFaculty>('Faculty', FacultySchema);
+export const Faculty = defineModel<IFaculty>('Faculty', FacultySchema);

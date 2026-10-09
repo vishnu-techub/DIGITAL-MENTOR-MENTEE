@@ -48,6 +48,12 @@ export const NOTIFICATION_TYPES = {
   PENDING_MEETING_UPDATE: 'PENDING_MEETING_UPDATE',
   MENTOR_ASSIGNMENT: 'MENTOR_ASSIGNMENT',
   SYSTEM_ANNOUNCEMENT: 'SYSTEM_ANNOUNCEMENT',
+  /**
+   * A notice a FACULTY member sends about their own department. It is stamped
+   * with the sender's department and delivered to that department's HOD (plus
+   * the Admin activity feed). It is the only type a client may create.
+   */
+  FACULTY_NOTIFICATION: 'FACULTY_NOTIFICATION',
 } as const;
 
 export const INSTITUTION_INFO = {

@@ -2,7 +2,6 @@ import { Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import mongoose from 'mongoose';
 import { StudentDocument, Student } from '../../models/index.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
@@ -21,6 +20,7 @@ import {
 } from '../../utils/record-permission.util.js';
 import { syncStudentDetailsPdf } from './student-details-pdf.service.js';
 import { resolveWritableUploadsDir, locateStoredUpload } from '../../config/storage.js';
+import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
 
 // Ensure a writable upload directory exists (safe on read-only hosts such as Render)
 export const UPLOADS_DIR = resolveWritableUploadsDir('documents');
@@ -112,7 +112,7 @@ function resolveStoredPath(
 
 /** Locate a Student by ObjectId or register number. */
 async function findStudent(idOrReg: string) {
-  if (mongoose.Types.ObjectId.isValid(idOrReg)) {
+  if (isValidId(idOrReg)) {
     const byId = await Student.findById(idOrReg);
     if (byId) return byId;
   }
@@ -210,7 +210,7 @@ export async function uploadDocument(req: AuthRequest, res: Response) {
       organizer: organizer?.trim() || '',
       eventDate: eventDate?.trim() || '',
       description: description?.trim() || '',
-      uploadedBy: req.user?.id ? new mongoose.Types.ObjectId(req.user.id) : undefined,
+      uploadedBy: req.user?.id ? toLocalId(req.user.id) : undefined,
       // An upload ALWAYS lands in PENDING. Uploading a certificate must never
       // make it verified — only a mentor confirmation of a SUBMITTED record
       // does that, and the value is hardcoded here so no request field, and no
@@ -343,7 +343,7 @@ export async function getStudentDocuments(req: AuthRequest, res: Response) {
 async function streamDocumentFile(req: AuthRequest, res: Response, disposition: 'inline' | 'attachment') {
   const documentId = req.params.documentId as string;
 
-  if (!mongoose.Types.ObjectId.isValid(documentId)) {
+  if (!isValidId(documentId)) {
     return sendError(res, 'Invalid document reference.', 400);
   }
 
@@ -455,7 +455,7 @@ export async function deleteDocument(req: AuthRequest, res: Response) {
   const documentId = req.params.documentId as string;
 
   try {
-    if (!mongoose.Types.ObjectId.isValid(documentId)) {
+    if (!isValidId(documentId)) {
       return sendError(res, 'Invalid document reference.', 400);
     }
 
@@ -565,7 +565,7 @@ export async function updateDocument(req: AuthRequest, res: Response) {
   const documentId = req.params.documentId as string;
 
   try {
-    if (!mongoose.Types.ObjectId.isValid(documentId)) {
+    if (!isValidId(documentId)) {
       return sendError(res, 'Invalid document reference.', 400);
     }
 
@@ -708,7 +708,7 @@ export async function verifyDocument(req: AuthRequest, res: Response) {
   }
 
   try {
-    if (!mongoose.Types.ObjectId.isValid(documentId)) {
+    if (!isValidId(documentId)) {
       return sendError(res, 'Invalid document reference.', 400);
     }
 
@@ -753,8 +753,8 @@ export async function verifyDocument(req: AuthRequest, res: Response) {
     doc.verificationStatus = verificationStatus;
     if (verificationStatus === RECORD_STATE.REJECTED) {
       doc.rejectionReason = rejectionReason.trim();
-      doc.rejectedBy = req.user?.id && mongoose.Types.ObjectId.isValid(req.user.id)
-        ? new mongoose.Types.ObjectId(req.user.id)
+      doc.rejectedBy = req.user?.id && isValidId(req.user.id)
+        ? toLocalId(req.user.id)
         : undefined;
       doc.rejectedDate = new Date();
     } else {
@@ -813,7 +813,7 @@ export async function submitDocument(req: AuthRequest, res: Response) {
   const documentId = req.params.documentId as string;
 
   try {
-    if (!mongoose.Types.ObjectId.isValid(documentId)) {
+    if (!isValidId(documentId)) {
       return sendError(res, 'Invalid document reference.', 400);
     }
 

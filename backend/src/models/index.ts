@@ -7,6 +7,7 @@ export * from './AcademicRecord.model.js';
 export * from './MentorAssignment.model.js';
 export * from './Meeting.model.js';
 export * from './CounsellingRecord.model.js';
+export * from './MentoringEvidence.model.js';
 export * from './MonthlyProgress.model.js';
 export * from './Notification.model.js';
 export * from './AuditLog.model.js';
@@ -16,3 +17,9 @@ export * from './School.model.js';
 export * from './StudentProgress.model.js';
 export * from './StudentEditRequest.model.js';
 export * from './AcademicEditRequest.model.js';
+export * from './InternalMark.model.js';
+export * from './MarkEntryPermission.model.js';
+export * from './MarkUpdateRequest.model.js';
+export * from './Placement.model.js';
+export * from './Achievement.model.js';
+

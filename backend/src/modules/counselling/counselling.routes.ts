@@ -3,6 +3,10 @@ import {
   getCounsellingRecords,
   createCounsellingRecord,
   updateCounsellingRecord,
+  removeCounsellingEvidence,
+  saveSaturdayCommonEvidence,
+  getEvidenceFile,
+  downloadEvidenceFile,
   getAiCounsellingSuggestion,
   askMentorAiBotController,
   grammarCheckController,
@@ -10,6 +14,7 @@ import {
 import { authenticate } from '../../middleware/auth.middleware.js';
 import { authorize } from '../../middleware/rbac.middleware.js';
 import { ROLES } from '../../config/constants.js';
+import { evidenceUploadArray } from './evidence.service.js';
 
 const router = Router();
 
@@ -41,13 +46,50 @@ router.post(
   getAiCounsellingSuggestion
 );
 
-// 4. Counselling records for a student
+// ---------------------------------------------------------------------------
+// EVIDENCE ROUTES — declared BEFORE `/:studentId` so "evidence" is never
+// swallowed by the dynamic student route.
+// ---------------------------------------------------------------------------
+
+// 4. Saturday COMMON meeting evidence. One physical upload, shared by every
+//    participating student.
+router.post(
+  '/evidence/saturday',
+  authorize(ROLES.FACULTY, ROLES.HOD, ROLES.ADMIN),
+  evidenceUploadArray('evidence'),
+  saveSaturdayCommonEvidence
+);
+
+// 5. Authenticated photo bytes. `/uploads` is not a public static mount, so a
+//    photo is only ever served through here after an ownership check.
+router.get('/evidence/:evidenceId/file', getEvidenceFile);
+router.get('/evidence/:evidenceId/download', downloadEvidenceFile);
+
+// 6. Mentoring records for a student
 router.get('/:studentId', getCounsellingRecords);
 
-// 5. Official Save (Only when mentor types and clicks Save)
-router.post('/', authorize(ROLES.FACULTY, ROLES.HOD, ROLES.ADMIN), createCounsellingRecord);
+// 7. Official Save (Only when mentor types and clicks Save)
+router.post(
+  '/',
+  authorize(ROLES.FACULTY, ROLES.HOD, ROLES.ADMIN),
+  evidenceUploadArray('evidence'),
+  createCounsellingRecord
+);
 
-// 6. Update Counselling Record (Preserves selections)
-router.put('/:id', authorize(ROLES.FACULTY, ROLES.HOD, ROLES.ADMIN), updateCounsellingRecord);
+// 8. Update Mentoring Record (Existing evidence is preserved and appended to)
+router.put(
+  '/:id',
+  authorize(ROLES.FACULTY, ROLES.HOD, ROLES.ADMIN),
+  evidenceUploadArray('evidence'),
+  updateCounsellingRecord
+);
+
+// 9. Explicit evidence detachment. Photos still shared with another record are
+//    retained on disk, never deleted.
+router.delete(
+  '/:id/evidence',
+  authorize(ROLES.FACULTY, ROLES.HOD, ROLES.ADMIN),
+  removeCounsellingEvidence
+);
 
 export default router;

@@ -1,5 +1,4 @@
 import { Response } from 'express';
-import mongoose from 'mongoose';
 import {
   Meeting,
   Student,
@@ -18,6 +17,7 @@ import {
   parseMeetingDate,
 } from '../../utils/meetingDate.util.js';
 import { checkStudentAccess, isActiveMentorOf, resolveFacultyIdForUser } from '../../utils/access.util.js';
+import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
 
 /** Latest meeting record for a student (the one notifications are built from). */
 async function latestMeetingFor(studentId: any) {
@@ -43,13 +43,13 @@ export async function getSaturdaySchedule(req: AuthRequest, res: Response) {
     if (req.user?.role === ROLES.STUDENT) {
       const sid = req.user.studentId;
       if (sid) {
-        const student = mongoose.Types.ObjectId.isValid(sid)
+        const student = isValidId(sid)
           ? await Student.findById(sid).select('_id')
           : await Student.findOne({ registerNumber: String(sid).toUpperCase() }).select('_id');
         if (student) meeting = await latestMeetingFor(student._id);
       }
     } else if (req.user?.role === ROLES.FACULTY && req.user.facultyId) {
-      const faculty = mongoose.Types.ObjectId.isValid(req.user.facultyId)
+      const faculty = isValidId(req.user.facultyId)
         ? await Faculty.findById(req.user.facultyId).select('_id')
         : await Faculty.findOne({ employeeId: req.user.facultyId }).select('_id');
       if (faculty) {
@@ -105,7 +105,7 @@ export async function getMeetings(req: AuthRequest, res: Response) {
     const filter: any = {};
 
     if (req.user?.role === ROLES.STUDENT && req.user.studentId) {
-      if (mongoose.Types.ObjectId.isValid(req.user.studentId)) {
+      if (isValidId(req.user.studentId)) {
         filter.student = req.user.studentId;
       } else {
         const s = await Student.findOne({ registerNumber: req.user.studentId });
@@ -113,13 +113,13 @@ export async function getMeetings(req: AuthRequest, res: Response) {
         else return sendSuccess(res, []);
       }
     } else if (req.user?.role === ROLES.FACULTY && req.user.facultyId) {
-      const faculty = mongoose.Types.ObjectId.isValid(req.user.facultyId)
+      const faculty = isValidId(req.user.facultyId)
         ? await Faculty.findById(req.user.facultyId).select('_id')
         : await Faculty.findOne({ employeeId: req.user.facultyId }).select('_id');
       if (faculty) filter.mentor = faculty._id;
       else return sendSuccess(res, []);
     } else if (req.user?.role === ROLES.HOD && req.user.departmentId) {
-      const students = await Student.find({ department: new mongoose.Types.ObjectId(req.user.departmentId) })
+      const students = await Student.find({ department: toLocalId(req.user.departmentId) })
         .select('_id')
         .lean();
       filter.student = { $in: students.map((s: any) => s._id) };
@@ -130,7 +130,7 @@ export async function getMeetings(req: AuthRequest, res: Response) {
     // A faculty member may only see meetings for currently-assigned mentees.
     if (req.user?.role === ROLES.FACULTY) {
       const faculty = await Faculty.findOne(
-        mongoose.Types.ObjectId.isValid(req.user.facultyId || '')
+        isValidId(req.user.facultyId || '')
           ? { _id: req.user.facultyId }
           : { employeeId: req.user.facultyId }
       ).select('_id');
@@ -143,7 +143,7 @@ export async function getMeetings(req: AuthRequest, res: Response) {
     }
 
     if (studentId) {
-      const s = mongoose.Types.ObjectId.isValid(studentId)
+      const s = isValidId(studentId)
         ? await Student.findById(studentId)
         : await Student.findOne({ registerNumber: String(studentId).toUpperCase() });
       if (!s) return sendSuccess(res, []);
@@ -154,7 +154,7 @@ export async function getMeetings(req: AuthRequest, res: Response) {
     }
 
     if (mentorId) {
-      const f = mongoose.Types.ObjectId.isValid(mentorId)
+      const f = isValidId(mentorId)
         ? await Faculty.findById(mentorId)
         : await Faculty.findOne({ employeeId: mentorId });
       if (f) filter.mentor = f._id;
@@ -255,7 +255,7 @@ export async function createMeetingRecord(req: AuthRequest, res: Response) {
   const normalizedDate = `${parsedDate.getFullYear()}-${String(parsedDate.getMonth() + 1).padStart(2, '0')}-${String(parsedDate.getDate()).padStart(2, '0')}`;
 
   try {
-    const student = mongoose.Types.ObjectId.isValid(studentId)
+    const student = isValidId(studentId)
       ? await Student.findById(studentId)
       : await Student.findOne({ registerNumber: String(studentId).toUpperCase() });
     if (!student) {

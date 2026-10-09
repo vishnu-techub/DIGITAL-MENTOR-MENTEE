@@ -1,14 +1,14 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
 
 export type UserRole = 'ADMIN' | 'HOD' | 'FACULTY' | 'STUDENT';
 
-export interface IUser extends Document {
+export interface IUser extends LocalDocument {
   username: string;
   passwordHash: string;
   role: UserRole;
   email: string;
   fullName: string;
-  department?: mongoose.Types.ObjectId;
+  department?: LocalId;
   isActive: boolean;
   lastLoginAt?: Date;
   createdAt: Date;
@@ -49,7 +49,7 @@ const UserSchema = new Schema<IUser>(
       trim: true,
     },
     department: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'Department',
       index: true,
     },
@@ -69,4 +69,4 @@ const UserSchema = new Schema<IUser>(
 
 
 
-export const User = mongoose.model<IUser>('User', UserSchema);
+export const User = defineModel<IUser>('User', UserSchema);

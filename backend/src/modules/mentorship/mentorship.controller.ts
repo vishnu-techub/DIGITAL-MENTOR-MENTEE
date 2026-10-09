@@ -1,5 +1,4 @@
 import { Response } from 'express';
-import mongoose from 'mongoose';
 import {
   Student,
   Faculty,
@@ -8,10 +7,12 @@ import {
   Notification,
 } from '../../models/index.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
+import { toIdString } from '../../utils/access.util.js';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
 import { ROLES } from '../../config/constants.js';
 import { generateMentorMenteesExcel } from './mentor-export.service.js';
+import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
 
 // Initial Mentor Allocation
 export async function assignMentor(req: AuthRequest, res: Response) {
@@ -23,7 +24,7 @@ export async function assignMentor(req: AuthRequest, res: Response) {
 
   try {
     let student = null;
-    if (mongoose.Types.ObjectId.isValid(studentId)) {
+    if (isValidId(studentId)) {
       student = await Student.findById(studentId);
     }
     if (!student) {
@@ -34,7 +35,7 @@ export async function assignMentor(req: AuthRequest, res: Response) {
     }
 
     let mentor = null;
-    if (mongoose.Types.ObjectId.isValid(mentorId)) {
+    if (isValidId(mentorId)) {
       mentor = await Faculty.findById(mentorId).populate('user');
     }
     if (!mentor) {
@@ -42,6 +43,19 @@ export async function assignMentor(req: AuthRequest, res: Response) {
     }
     if (!mentor || !mentor.isActive) {
       return sendError(res, 'Active faculty member not found.', 404);
+    }
+
+    // A HOD may only create assignments inside their own department. Without
+    // this the shared endpoint lets a department head assign across
+    // departments (or into a foreign department's roster) in one call.
+    if (req.user?.role === ROLES.HOD) {
+      if (
+        !req.user.departmentId ||
+        toIdString(student.department) !== req.user.departmentId ||
+        toIdString(mentor.department) !== req.user.departmentId
+      ) {
+        return sendError(res, 'Student or mentor is not in your department.', 404);
+      }
     }
 
     // Check if student already has an active mentor
@@ -59,8 +73,8 @@ export async function assignMentor(req: AuthRequest, res: Response) {
     }
 
     const fromDate = assignedFrom || new Date().toISOString().split('T')[0];
-    const assignerId = req.user?.id && mongoose.Types.ObjectId.isValid(req.user.id)
-      ? new mongoose.Types.ObjectId(req.user.id)
+    const assignerId = req.user?.id && isValidId(req.user.id)
+      ? toLocalId(req.user.id)
       : undefined;
 
     const assignment = await MentorAssignment.create({
@@ -139,7 +153,7 @@ export async function reassignMentor(req: AuthRequest, res: Response) {
 
   try {
     let student = null;
-    if (mongoose.Types.ObjectId.isValid(studentId)) {
+    if (isValidId(studentId)) {
       student = await Student.findById(studentId);
     }
     if (!student) {
@@ -150,7 +164,7 @@ export async function reassignMentor(req: AuthRequest, res: Response) {
     }
 
     let newMentor = null;
-    if (mongoose.Types.ObjectId.isValid(newMentorId)) {
+    if (isValidId(newMentorId)) {
       newMentor = await Faculty.findById(newMentorId).populate('user');
     }
     if (!newMentor) {
@@ -160,18 +174,30 @@ export async function reassignMentor(req: AuthRequest, res: Response) {
       return sendError(res, 'Target new faculty mentor not found or inactive.', 404);
     }
 
+    // Same department rule as `assignMentor`: a HOD cannot move a student to a
+    // mentor outside their own department, nor touch a foreign student.
+    if (req.user?.role === ROLES.HOD) {
+      if (
+        !req.user.departmentId ||
+        toIdString(student.department) !== req.user.departmentId ||
+        toIdString(newMentor.department) !== req.user.departmentId
+      ) {
+        return sendError(res, 'Student or mentor is not in your department.', 404);
+      }
+    }
+
     const currentAssignment = await MentorAssignment.findOne({
       student: student._id,
       status: 'ACTIVE',
     }).populate({ path: 'mentor', populate: { path: 'user' } });
 
-    if (currentAssignment && currentAssignment.mentor._id.toString() === newMentor._id.toString()) {
+    if (currentAssignment && toIdString(currentAssignment.mentor) === newMentor._id.toString()) {
       return sendError(res, 'The student is already actively assigned to this mentor.', 400);
     }
 
     const changeDate = effectiveDate || new Date().toISOString().split('T')[0];
-    const assignerId = req.user?.id && mongoose.Types.ObjectId.isValid(req.user.id)
-      ? new mongoose.Types.ObjectId(req.user.id)
+    const assignerId = req.user?.id && isValidId(req.user.id)
+      ? toLocalId(req.user.id)
       : undefined;
 
     // 1. If an existing active assignment exists, transition it to COMPLETED with assignedUntil
@@ -275,7 +301,7 @@ export async function getMentorshipHistory(req: AuthRequest, res: Response) {
 
   try {
     let student = null;
-    if (mongoose.Types.ObjectId.isValid(studentId)) {
+    if (isValidId(studentId)) {
       student = await Student.findById(studentId);
     }
     if (!student) {
@@ -354,6 +380,18 @@ export async function exportMentorMenteesExcel(req: AuthRequest, res: Response) 
 
     if (!targetMentorId) {
       return sendError(res, 'Target mentor ID could not be identified.', 400);
+    }
+
+    // A HOD may only export a mentor who belongs to their own department; the
+    // shared export would otherwise hand any department head another
+    // department's full mentee Excel with personal and academic data.
+    if (req.user?.role === ROLES.HOD && req.user.departmentId && targetMentorId !== 'ALL') {
+      const targetFaculty = isValidId(targetMentorId)
+        ? await Faculty.findById(targetMentorId)
+        : await Faculty.findOne({ employeeId: targetMentorId });
+      if (!targetFaculty || toIdString(targetFaculty.department) !== req.user.departmentId) {
+        return sendError(res, 'Mentor not found', 404);
+      }
     }
 
     const requestedYear = req.query.academicYear as string;

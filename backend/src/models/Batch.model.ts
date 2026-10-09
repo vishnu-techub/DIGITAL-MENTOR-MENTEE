@@ -1,6 +1,6 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
 
-export interface IBatch extends Document {
+export interface IBatch extends LocalDocument {
   name: string;
   startYear: number;
   endYear: number;
@@ -38,4 +38,4 @@ const BatchSchema = new Schema<IBatch>(
 
 
 
-export const Batch = mongoose.model<IBatch>('Batch', BatchSchema);
+export const Batch = defineModel<IBatch>('Batch', BatchSchema);

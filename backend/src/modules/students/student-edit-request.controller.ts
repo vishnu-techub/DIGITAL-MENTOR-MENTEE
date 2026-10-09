@@ -1,5 +1,4 @@
 import { Response } from 'express';
-import mongoose from 'mongoose';
 import {
   Student,
   User,
@@ -16,6 +15,7 @@ import { logAudit } from '../../middleware/audit.middleware.js';
 import { toIdString } from '../../utils/access.util.js';
 import { ROLES } from '../../config/constants.js';
 import { syncStudentDetailsPdf } from '../documents/student-details-pdf.service.js';
+import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
 
 /** Escape a user-supplied string so it is safe to embed in a RegExp. */
 function escapeRegex(value: string): string {
@@ -31,7 +31,7 @@ function exactNameRegex(value: string): RegExp {
 async function resolveDepartment(input: any) {
   const raw = String(input ?? '').trim();
   if (!raw) return null;
-  if (mongoose.Types.ObjectId.isValid(raw)) {
+  if (isValidId(raw)) {
     const byId = await Department.findById(raw);
     if (byId) return byId;
   }
@@ -41,7 +41,7 @@ async function resolveDepartment(input: any) {
 async function resolveBatch(input: any) {
   const raw = String(input ?? '').trim();
   if (!raw) return null;
-  if (mongoose.Types.ObjectId.isValid(raw)) {
+  if (isValidId(raw)) {
     const byId = await Batch.findById(raw);
     if (byId) return byId;
   }

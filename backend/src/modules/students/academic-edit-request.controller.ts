@@ -1,5 +1,4 @@
 import { Response } from 'express';
-import mongoose from 'mongoose';
 import {
   Student,
   User,
@@ -22,6 +21,7 @@ import {
 } from '../../utils/access.util.js';
 import { parseGrade, parseSemesterNumber, joinErrors } from '../../utils/validation.util.js';
 import { syncStudentDetailsPdf } from '../documents/student-details-pdf.service.js';
+import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
 
 const MAX_PENDING_PER_SEMESTER = 1;
 
@@ -55,7 +55,7 @@ function shape(r: any) {
 async function loadStudentForStudentUser(req: AuthRequest) {
   const tokenStudentId = req.user?.studentId;
   if (!tokenStudentId) return null;
-  if (mongoose.Types.ObjectId.isValid(tokenStudentId)) {
+  if (isValidId(tokenStudentId)) {
     const byId = await Student.findById(tokenStudentId);
     if (byId) return byId;
   }
@@ -64,7 +64,7 @@ async function loadStudentForStudentUser(req: AuthRequest) {
 
 /** Resolve the ACTIVE mentor's user id for a student (used to route requests + notices). */
 async function activeMentorUserId(studentId: string): Promise<{ facultyId: string; userId: string; name: string } | null> {
-  const asg = await MentorAssignment.findOne({ student: new mongoose.Types.ObjectId(studentId), status: 'ACTIVE' });
+  const asg = await MentorAssignment.findOne({ student: toLocalId(studentId), status: 'ACTIVE' });
   if (!asg) return null;
   const faculty = await Faculty.findById(asg.mentor).populate('user', 'fullName');
   if (!faculty) return null;
@@ -80,7 +80,7 @@ async function activeMentorUserId(studentId: string): Promise<{ facultyId: strin
 
 /** Semester with recorded results, highest first. */
 async function latestRecordedSemester(studentId: string): Promise<number> {
-  const rec = await AcademicRecord.findOne({ student: new mongoose.Types.ObjectId(studentId), semesterNumber: { $gt: 0 } })
+  const rec = await AcademicRecord.findOne({ student: toLocalId(studentId), semesterNumber: { $gt: 0 } })
     .sort({ semesterNumber: -1 })
     .select('semesterNumber')
     .lean();
@@ -118,7 +118,7 @@ export async function createAcademicEditRequest(req: AuthRequest, res: Response)
     else if (reason.length < 5) errors.push('Please provide a meaningful reason (at least 5 characters).');
 
     const supportingIdRaw = req.body?.supportingDocumentId ?? req.body?.supporting_document_id;
-    if (supportingIdRaw && !mongoose.Types.ObjectId.isValid(String(supportingIdRaw))) {
+    if (supportingIdRaw && !isValidId(String(supportingIdRaw))) {
       errors.push('The selected supporting document reference is invalid.');
     }
 
@@ -132,7 +132,7 @@ export async function createAcademicEditRequest(req: AuthRequest, res: Response)
     let supporting: any = null;
     if (supportingIdRaw) {
       supporting = await StudentDocument.findOne({
-        _id: new mongoose.Types.ObjectId(String(supportingIdRaw)),
+        _id: toLocalId(String(supportingIdRaw)),
         studentId: student._id,
       });
       if (!supporting) {
@@ -191,7 +191,7 @@ export async function createAcademicEditRequest(req: AuthRequest, res: Response)
     const mentor = await activeMentorUserId(student._id.toString());
     if (mentor) {
       await Notification.create({
-        user: new mongoose.Types.ObjectId(mentor.userId),
+        user: toLocalId(mentor.userId),
         title: 'Academic Correction Request',
         message: `${student.fullName} (${student.registerNumber}) requested a CGPA/SGPA correction for Semester 0${semesterNumber}: CGPA ${currentCgpa.toFixed(2)} → ${requestedCgpa.toFixed(2)}, SGPA ${currentSgpa.toFixed(2)} → ${requestedSgpa.toFixed(2)}.`,
         type: 'SYSTEM_ANNOUNCEMENT',
@@ -262,17 +262,17 @@ export async function listAcademicEditRequests(req: AuthRequest, res: Response) 
       filter.status = status.toUpperCase();
     }
     if (studentId) {
-      if (!mongoose.Types.ObjectId.isValid(studentId)) {
+      if (!isValidId(studentId)) {
         return sendError(res, 'Invalid student reference.', 400);
       }
-      filter.student = new mongoose.Types.ObjectId(studentId);
+      filter.student = toLocalId(studentId);
     }
 
     if (req.user?.role === ROLES.FACULTY) {
       const mentorId = await resolveFacultyIdForUser(req.user);
       if (!mentorId) return sendSuccess(res, []);
       const asgs = await MentorAssignment.find({
-        mentor: new mongoose.Types.ObjectId(mentorId),
+        mentor: toLocalId(mentorId),
         status: 'ACTIVE',
       })
         .select('student')
@@ -280,7 +280,7 @@ export async function listAcademicEditRequests(req: AuthRequest, res: Response) 
       filter.student = { $in: asgs.map((a: any) => a.student) };
     } else if (req.user?.role === ROLES.HOD) {
       if (!req.user.departmentId) return sendSuccess(res, []);
-      const students = await Student.find({ department: new mongoose.Types.ObjectId(req.user.departmentId) })
+      const students = await Student.find({ department: toLocalId(req.user.departmentId) })
         .select('_id')
         .lean();
       filter.student = { $in: students.map((s: any) => s._id) };
@@ -383,7 +383,7 @@ export async function approveAcademicEditRequest(req: AuthRequest, res: Response
     editReq.status = 'APPROVED';
     editReq.requestedCgpa = newCgpa;
     editReq.requestedSgpa = newSgpa;
-    editReq.approvedBy = new mongoose.Types.ObjectId(req.user!.id);
+    editReq.approvedBy = toLocalId(req.user!.id);
     editReq.approvedByName = req.user?.fullName || 'Faculty Mentor';
     editReq.approvedAt = new Date();
     await editReq.save();
@@ -453,7 +453,7 @@ export async function rejectAcademicEditRequest(req: AuthRequest, res: Response)
 
     // Original CGPA/SGPA are deliberately left untouched.
     editReq.status = 'REJECTED';
-    editReq.rejectedBy = new mongoose.Types.ObjectId(req.user!.id);
+    editReq.rejectedBy = toLocalId(req.user!.id);
     editReq.rejectedByName = req.user?.fullName || 'Faculty Mentor';
     editReq.rejectedAt = new Date();
     editReq.rejectionReason = rejectionReason;

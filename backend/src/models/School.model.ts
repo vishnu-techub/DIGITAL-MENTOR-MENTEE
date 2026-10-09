@@ -1,6 +1,6 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
 
-export interface ISchool extends Document {
+export interface ISchool extends LocalDocument {
   schoolName: string;
   city: string;
   district: string;
@@ -94,4 +94,4 @@ SchoolSchema.index(
 SchoolSchema.index({ district: 1, city: 1, schoolName: 1 });
 SchoolSchema.index({ isActive: 1, schoolName: 1 });
 
-export const School = mongoose.model<ISchool>('School', SchoolSchema);
+export const School = defineModel<ISchool>('School', SchoolSchema);

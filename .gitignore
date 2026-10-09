@@ -11,6 +11,7 @@
 .mongo-data/
 **/.mongo-data/
 .runtime-verify/
+.test-data/
 backend/data/
 *.db
 *.db-shm
@@ -27,8 +28,9 @@ build/
 **/build/
 
 # Uploaded Files & User Media
-backend/uploads/documents/*
-!backend/uploads/documents/.gitkeep
+# TEMPORARY LOCAL FILE STORAGE: uploads live in backend/storage/uploads/.
+backend/storage/uploads/
+backend/uploads/
 
 # Logs & Temporary files
 *.log

@@ -1,10 +1,10 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import { defineModel, getModel, Schema, LocalId, type LocalDocument } from '../services/localModel.js';
 
-export interface ISystemSetting extends Document {
+export interface ISystemSetting extends LocalDocument {
   key: string;
   value: string;
   description?: string;
-  updatedBy?: mongoose.Types.ObjectId;
+  updatedBy?: LocalId;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -27,7 +27,7 @@ const SystemSettingSchema = new Schema<ISystemSetting>(
       trim: true,
     },
     updatedBy: {
-      type: Schema.Types.ObjectId,
+      type: 'ObjectId',
       ref: 'User',
     },
   },
@@ -38,4 +38,4 @@ const SystemSettingSchema = new Schema<ISystemSetting>(
 
 
 
-export const SystemSetting = mongoose.model<ISystemSetting>('SystemSetting', SystemSettingSchema);
+export const SystemSetting = defineModel<ISystemSetting>('SystemSetting', SystemSettingSchema);

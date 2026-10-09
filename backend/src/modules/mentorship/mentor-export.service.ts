@@ -1,5 +1,4 @@
 import ExcelJS from 'exceljs';
-import mongoose from 'mongoose';
 import {
   Student,
   Faculty,
@@ -14,6 +13,7 @@ import {
   COUNSELLING_5_CATEGORIES,
 } from '../../models/index.js';
 import { calculateArrearStatistics } from '../../utils/arrears.util.js';
+import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
 
 function getProgressCategoryEntries(list: any[], category: string): string[] {
   return list
@@ -95,7 +95,7 @@ export async function generateMentorMenteesExcel(
     }
   } else {
     // 1. Resolve Faculty Mentor Record
-    if (mongoose.Types.ObjectId.isValid(mentorFacultyId)) {
+    if (isValidId(mentorFacultyId)) {
       faculty = await Faculty.findById(mentorFacultyId).populate('user department');
     }
     if (!faculty) {

@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { api, ApiError } from '../../api/client';
+import { api, ApiError, type StudentPdfMode } from '../../api/client';
+import { InternalMarksMentorPanel } from '../../components/mentor/InternalMarksMentorPanel';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { Modal } from '../../components/common/Modal';
+import { PageHeader } from '../../components/common/PageHeader';
 import { StudentDocumentsManager } from '../../components/documents/StudentDocumentsManager';
 import { MenteeProgressDashboard } from '../../components/mentor/MenteeProgressDashboard';
+import { MentorPlacementPanel } from '../../components/placement/MentorPlacementPanel';
 import { StudentProfileSkeleton } from '../../components/common/SkeletonLoader';
 import { StudentNotFound } from '../error/StudentNotFound';
 import { NetworkErrorState } from '../error/NetworkErrorState';
@@ -13,6 +16,11 @@ import { ServerErrorState } from '../error/ServerErrorState';
 import { MentorAiBotModal } from '../../components/mentor/MentorAiBotModal';
 import { GrammarAssistField } from '../../components/mentor/GrammarAssistField';
 import { CounsellingCategorySelect } from '../../components/mentor/CounsellingCategorySelect';
+import { DiscussionWithSelect } from '../../components/mentor/DiscussionWithSelect';
+import { EvidenceUploader, type StoredEvidenceView } from '../../components/mentor/EvidenceUploader';
+import { EvidenceGallery } from '../../components/mentor/EvidenceGallery';
+import { SaturdayEvidenceModal } from '../../components/mentor/SaturdayEvidenceModal';
+import type { PreparedEvidencePhoto } from '../../utils/evidence';
 import {
   ArrowLeft,
   GraduationCap,
@@ -43,6 +51,9 @@ import {
   Star,
   Download,
   Edit2,
+  Users,
+  Camera,
+  Briefcase,
 } from 'lucide-react';
 
 export type MentorProfileTab =
@@ -55,7 +66,8 @@ export type MentorProfileTab =
   | 'progress'
   | 'documents'
   | 'meeting'
-  | 'skills';
+  | 'skills'
+  | 'placement';
 
 interface MentorStudentProfileViewProps {
   studentId: string;
@@ -117,6 +129,9 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
   const [counsellingForm, setCounsellingForm] = useState({
     counsellingDate: new Date().toISOString().split('T')[0],
     categories: ['Academic Development'] as string[],
+    // WHO this discussion was held with. Required and not mutually exclusive:
+    // ['student'], ['parent'], or both. The server refuses a save without it.
+    discussionWith: [] as Array<'student' | 'parent'>,
     concernReason: '',
     discussionObservation: '',
     skillNeedingImprovement: '',
@@ -128,6 +143,16 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
   const [submittingCounselling, setSubmittingCounselling] = useState(false);
   const [counsellingErrors, setCounsellingErrors] = useState<Record<string, string>>({});
   const [activeAiField, setActiveAiField] = useState<string | null>(null);
+
+  // Geo-tagged evidence photos. `evidencePhotos` are picked but not yet saved;
+  // `removedEvidenceIds` are saved photos the mentor has chosen to detach.
+  // Everything else on the record is preserved untouched.
+  const [evidencePhotos, setEvidencePhotos] = useState<PreparedEvidencePhoto[]>([]);
+  const [removedEvidenceIds, setRemovedEvidenceIds] = useState<string[]>([]);
+  const [editingCounsellingEvidence, setEditingCounsellingEvidence] = useState<StoredEvidenceView[]>([]);
+
+  // Saturday COMMON meeting: one shared upload linked to every participant.
+  const [showSaturdayModal, setShowSaturdayModal] = useState(false);
 
   const [showClearArrearModal, setShowClearArrearModal] = useState(false);
   const [clearArrearForm, setClearArrearForm] = useState({
@@ -253,6 +278,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
         'documents',
         'meeting',
         'skills',
+        'placement',
       ];
       if (validTabs.includes(initialTab as MentorProfileTab)) {
         setActiveTab(initialTab as MentorProfileTab);
@@ -291,16 +317,23 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
     fetchStudentData();
   }, [studentId]);
 
-  // PDF Download Handler
-  const handleDownloadPdf = async () => {
+  // PDF Download Handler (full record book / internal assessment / mentor documents)
+  const handleDownloadPdf = async (mode: StudentPdfMode) => {
     if (!student) return;
     setPdfDownloading(true);
     try {
-      await api.pdf.downloadStudentPdf(
-        student.id,
-        `KSRCE_Mentee_${student.register_number}_Record_Book.pdf`
-      );
-      toast.success('KSRCE Student Record Book PDF downloaded successfully.');
+      const filenameMap: Record<StudentPdfMode, string> = {
+        full: `KSRCE_Mentee_${student.register_number}_Record_Book.pdf`,
+        internal: `KSRCE_Internal_Assessment_${student.register_number}.pdf`,
+        'mentor-documents': `KSRCE_Mentor_Documents_${student.register_number}.pdf`,
+      };
+      const labelMap: Record<StudentPdfMode, string> = {
+        full: 'KSRCE Student Record Book PDF',
+        internal: 'Internal Assessment PDF',
+        'mentor-documents': 'Mentor Documents PDF',
+      };
+      await api.pdf.downloadStudentPdf(student.id, filenameMap[mode], mode);
+      toast.success(`${labelMap[mode]} downloaded successfully.`);
     } catch (err: any) {
       toast.error('Failed to download student PDF: ' + err.message);
     } finally {
@@ -366,9 +399,13 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
     setEditingCounsellingId(null);
     setActiveAiField(null);
     setCounsellingErrors({});
+    setEvidencePhotos([]);
+    setRemovedEvidenceIds([]);
+    setEditingCounsellingEvidence([]);
     setCounsellingForm({
       counsellingDate: new Date().toISOString().split('T')[0],
       categories: ['Academic Development'],
+      discussionWith: [],
       concernReason: '',
       discussionObservation: '',
       skillNeedingImprovement: '',
@@ -385,13 +422,26 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
     setEditingCounsellingId(c.id || c._id);
     setActiveAiField(null);
     setCounsellingErrors({});
+    setEvidencePhotos([]);
+    setRemovedEvidenceIds([]);
+    // Photos already on the record are shown so an edit never silently drops one.
+    setEditingCounsellingEvidence(Array.isArray(c.evidence) ? c.evidence : []);
     const existingCats = Array.isArray(c.categories) && c.categories.length > 0
       ? c.categories
       : (c.category ? c.category.split(',').map((s: string) => s.trim()).filter(Boolean) : ['Academic Development']);
 
+    // Reported exactly as stored. A record created before this field existed
+    // reads "Not recorded" and starts empty rather than being guessed.
+    const existingDiscussion = Array.isArray(c.discussionWith)
+      ? c.discussionWith.filter((v: string) => v === 'student' || v === 'parent')
+      : Array.isArray(c.discussion_with)
+        ? c.discussion_with.filter((v: string) => v === 'student' || v === 'parent')
+        : [];
+
     setCounsellingForm({
       counsellingDate: c.counselling_date || c.counsellingDate || c.session_date ? new Date(c.counselling_date || c.counsellingDate || c.session_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
       categories: existingCats,
+      discussionWith: existingDiscussion,
       concernReason: c.concern_reason || c.concernReason || '',
       discussionObservation: c.discussion_observation || c.discussionObservation || c.challenge_observed || c.challengeObserved || '',
       skillNeedingImprovement: c.skill_needing_improvement || c.skillNeedingImprovement || '',
@@ -413,6 +463,9 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
     }
     if (!counsellingForm.categories || counsellingForm.categories.length === 0) {
       errors.categories = 'Please select at least one Counselling Category.';
+    }
+    if (counsellingForm.discussionWith.length === 0) {
+      errors.discussionWith = 'Select who this discussion was held with (Student, Parent, or both).';
     }
     if (!counsellingForm.concernReason.trim()) {
       errors.concernReason = 'Concern / Reason is required.';
@@ -437,6 +490,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
         counsellingDate: counsellingForm.counsellingDate,
         categories: counsellingForm.categories,
         category: counsellingForm.categories.join(', '),
+        discussionWith: counsellingForm.discussionWith,
         concernReason: counsellingForm.concernReason.trim(),
         discussionObservation: counsellingForm.discussionObservation.trim(),
         challengeObserved: counsellingForm.discussionObservation.trim() || counsellingForm.concernReason.trim(),
@@ -449,21 +503,48 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
         aiGenerated: false,
       };
 
+      // Sent as multipart when photos are attached. A plain text edit stays JSON and preserves existing evidence.
+      const saved = evidencePhotos.length > 0
+        ? await (editingCounsellingId
+            ? api.counselling.updateWithEvidence(editingCounsellingId, payload, evidencePhotos, removedEvidenceIds)
+            : api.counselling.createWithEvidence(payload, evidencePhotos))
+        : editingCounsellingId
+          ? await (removedEvidenceIds.length > 0
+              ? api.counselling.updateWithEvidence(editingCounsellingId, payload, [], removedEvidenceIds)
+              : api.counselling.update(editingCounsellingId, payload))
+          : await api.counselling.create(payload);
+
+      const result: any = saved?.data ?? saved;
+      // An update reports how many were added; a create reports the total it stored.
+      const added = Number(result?.evidenceAdded ?? result?.evidenceCount ?? 0);
+      const detached = Number(result?.evidenceDetached ?? 0);
+      const retained = (result?.evidenceRetained || []).length;
+
       if (editingCounsellingId) {
-        await api.counselling.update(editingCounsellingId, payload);
-        toast.success('Counselling record updated successfully.');
+        const parts = [`Mentoring record updated successfully.`];
+        if (added > 0) parts.push(`${added} new evidence photo(s) added.`);
+        if (detached > 0) parts.push(`${detached} photo(s) detached.`);
+        if (retained > 0) parts.push(`${retained} detached photo(s) are still shared and were retained.`);
+        toast.success(parts.join(' '));
       } else {
-        await api.counselling.create(payload);
-        toast.success('Counselling record saved successfully.');
+        toast.success(
+          added > 0
+            ? `Mentoring record saved with ${added} evidence photo(s).`
+            : 'Mentoring record saved successfully.'
+        );
       }
 
       setShowCounsellingModal(false);
       setEditingCounsellingId(null);
       setActiveAiField(null);
       setCounsellingErrors({});
+      setEvidencePhotos([]);
+      setRemovedEvidenceIds([]);
+      setEditingCounsellingEvidence([]);
       setCounsellingForm({
         counsellingDate: new Date().toISOString().split('T')[0],
         categories: ['Academic Development'],
+        discussionWith: [],
         concernReason: '',
         discussionObservation: '',
         skillNeedingImprovement: '',
@@ -474,7 +555,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
       });
       await fetchStudentData();
     } catch (err: any) {
-      toast.error('Failed to save counselling record: ' + err.message);
+      toast.error('Failed to save mentoring record: ' + err.message);
     } finally {
       setSubmittingCounselling(false);
     }
@@ -600,6 +681,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
     { id: 'documents', label: '8. Documents / Certificates', icon: <FileCheck size={16} aria-hidden="true" /> },
     { id: 'meeting', label: '9. Meeting History', icon: <CalendarCheck2 size={16} aria-hidden="true" /> },
     { id: 'skills', label: '10. Progress & Skills', icon: <Star size={16} aria-hidden="true" /> },
+    { id: 'placement', label: '11. Placement / Career', icon: <Briefcase size={16} aria-hidden="true" /> },
   ];
 
   return (
@@ -800,13 +882,33 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
 
           <button
             type="button"
-            onClick={handleDownloadPdf}
+            onClick={() => handleDownloadPdf('full')}
             disabled={pdfDownloading}
             className="btn btn-gold"
             aria-label={pdfDownloading ? 'Generating student PDF, please wait' : 'Download student record PDF'}
           >
             <Download size={16} aria-hidden="true" />
             {pdfDownloading ? 'Generating PDF…' : 'Download Student PDF'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleDownloadPdf('internal')}
+            disabled={pdfDownloading}
+            className="btn btn-secondary"
+            title="Download the internal assessment (IA1 / IA2 / End Sem) PDF"
+          >
+            <FileText size={16} aria-hidden="true" /> Internal Assessment
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleDownloadPdf('mentor-documents')}
+            disabled={pdfDownloading}
+            className="btn btn-secondary"
+            title="Download the mentor documents (meetings / counselling / evidence) PDF"
+          >
+            <FileCheck size={16} aria-hidden="true" /> Mentor Documents
           </button>
 
           <button
@@ -876,6 +978,12 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           role="tabpanel"
           aria-label="Mentee overview"
         >
+          <PageHeader
+            eyebrow={`${student.full_name} • ${student.register_number}`}
+            title="Mentee Overview"
+            subtitle="Consolidated snapshot of academic standing, counselling sessions, meetings and documents."
+          />
+
           {/* 6 Summary Cards — each is a real button so it is keyboard reachable */}
           <div className="overview-summary-grid">
             {/* 1. Academic Performance */}
@@ -1113,24 +1221,21 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           ============================================================ */}
       {activeTab === 'personal' && (
         <div id="mentor-tab-pane-personal" role="tabpanel" className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-            <div>
-              <h2 className="section-subheading">
-                Mentee Personal Details
-              </h2>
-              <p className="section-description">
-                Read-only institutional record. To propose corrections, click Request Update.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowRequestUpdateModal(true)}
-              className="btn btn-secondary btn-sm"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontWeight: 700 }}
-            >
-              <HelpCircle size={16} /> Request Update
-            </button>
-          </div>
+          <PageHeader
+            eyebrow={`${student.full_name} • ${student.register_number}`}
+            title="Mentee Personal Details"
+            subtitle="Read-only institutional record. To propose corrections, click Request Update."
+            actions={
+              <button
+                type="button"
+                onClick={() => setShowRequestUpdateModal(true)}
+                className="btn btn-secondary btn-sm"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontWeight: 700 }}
+              >
+                <HelpCircle size={16} /> Request Update
+              </button>
+            }
+          />
 
           <div
             style={{
@@ -1170,7 +1275,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               <div className="field-label">
                 Blood Group
               </div>
-              <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#DC2626', marginTop: '4px' }}>
+              <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-danger-600)', marginTop: '4px' }}>
                 {student.blood_group || 'N/A'}
               </div>
             </div>
@@ -1181,7 +1286,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               </div>
               <div className="field-value-accent">
                 {student.mobile_number ? (
-                  <a href={`tel:${student.mobile_number}`} style={{ color: '#1D4ED8', textDecoration: 'none' }}>
+                  <a href={`tel:${student.mobile_number}`} style={{ color: 'var(--color-navy-500)', textDecoration: 'none' }}>
                     📞 {student.mobile_number}
                   </a>
                 ) : (
@@ -1196,7 +1301,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               </div>
               <div className="field-value-accent">
                 {student.email ? (
-                  <a href={`mailto:${student.email}`} style={{ color: '#1D4ED8', textDecoration: 'none' }}>
+                  <a href={`mailto:${student.email}`} style={{ color: 'var(--color-navy-500)', textDecoration: 'none' }}>
                     ✉️ {student.email}
                   </a>
                 ) : (
@@ -1260,7 +1365,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               <div className="field-label">
                 Scholarship Details
               </div>
-              <div style={{ fontSize: '0.95rem', color: '#334155', marginTop: '4px' }}>
+              <div style={{ fontSize: '0.95rem', color: 'var(--color-slate-700)', marginTop: '4px' }}>
                 {student.scholarship_details || student.scholarshipDetails || 'No scholarship recorded'}
               </div>
             </div>
@@ -1268,30 +1373,30 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             {/* Lateral Entry Details Section (Conditional) */}
             {((student.admission_type || student.admissionType) === 'LATERAL_ENTRY' ||
               Boolean(student.lateral_entry?.previous_college_name || student.lateralEntry?.previousCollegeName)) && (
-              <div style={{ gridColumn: 'span 2', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '8px', padding: '1rem', marginTop: '0.5rem' }}>
+              <div style={{ gridColumn: 'span 2', backgroundColor: '#EFF6FF', border: '1px solid var(--color-navy-200)', borderRadius: '8px', padding: '1rem', marginTop: '0.5rem' }}>
                 <h4 style={{ fontSize: '0.9rem', fontWeight: 800, color: '#1E40AF', margin: '0 0 0.75rem 0' }}>
                   Lateral Entry Academic Details
                 </h4>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem', fontSize: '0.85rem' }}>
                   <div>
-                    <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous College Name:</span>
-                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_college_name || student.lateralEntry?.previousCollegeName || '—'}</strong>
+                    <span style={{ color: 'var(--color-slate-500)', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous College Name:</span>
+                    <strong style={{ color: 'var(--color-slate-800)' }}>{student.lateral_entry?.previous_college_name || student.lateralEntry?.previousCollegeName || '—'}</strong>
                   </div>
                   <div>
-                    <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous Course / Diploma:</span>
-                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_course || student.lateralEntry?.previousCourse || '—'}</strong>
+                    <span style={{ color: 'var(--color-slate-500)', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous Course / Diploma:</span>
+                    <strong style={{ color: 'var(--color-slate-800)' }}>{student.lateral_entry?.previous_course || student.lateralEntry?.previousCourse || '—'}</strong>
                   </div>
                   <div>
-                    <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous Institution:</span>
-                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_institution || student.lateralEntry?.previousInstitution || '—'}</strong>
+                    <span style={{ color: 'var(--color-slate-500)', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous Institution:</span>
+                    <strong style={{ color: 'var(--color-slate-800)' }}>{student.lateral_entry?.previous_institution || student.lateralEntry?.previousInstitution || '—'}</strong>
                   </div>
                   <div>
-                    <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous Qualification:</span>
-                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.previous_qualification_details || student.lateralEntry?.previousQualificationDetails || '—'}</strong>
+                    <span style={{ color: 'var(--color-slate-500)', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Previous Qualification:</span>
+                    <strong style={{ color: 'var(--color-slate-800)' }}>{student.lateral_entry?.previous_qualification_details || student.lateralEntry?.previousQualificationDetails || '—'}</strong>
                   </div>
                   <div>
-                    <span style={{ color: '#64748B', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Admission Year:</span>
-                    <strong style={{ color: '#1E293B' }}>{student.lateral_entry?.admission_year || student.lateralEntry?.admissionYear || '—'}</strong>
+                    <span style={{ color: 'var(--color-slate-500)', display: 'block', fontSize: '0.75rem', fontWeight: 700 }}>Admission Year:</span>
+                    <strong style={{ color: 'var(--color-slate-800)' }}>{student.lateral_entry?.admission_year || student.lateralEntry?.admissionYear || '—'}</strong>
                   </div>
                 </div>
               </div>
@@ -1301,7 +1406,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               <div className="field-label">
                 Permanent Home Address
               </div>
-              <div style={{ fontSize: '0.95rem', color: '#334155', marginTop: '4px', lineHeight: 1.5 }}>
+              <div style={{ fontSize: '0.95rem', color: 'var(--color-slate-700)', marginTop: '4px', lineHeight: 1.5 }}>
                 {student.address || 'Address on file in institutional registration book.'}
               </div>
             </div>
@@ -1314,6 +1419,12 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           ============================================================ */}
       {activeTab === 'academic' && (
         <div id="mentor-tab-pane-academic" role="tabpanel" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+          <PageHeader
+            eyebrow={`${student.full_name} • ${student.register_number}`}
+            title="Academic Details"
+            subtitle="Semester-wise results, active arrears, internal assessment marks and correction requests."
+          />
+
           {/* ============================================================
               ACADEMIC CORRECTION REQUESTS (approve / reject)
               A student cannot edit CGPA/SGPA directly — every change
@@ -1324,8 +1435,8 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             style={{
               padding: '1.25rem',
               backgroundColor: '#ffffff',
-              border: '1px solid #E2E8F0',
-              borderLeft: '5px solid #1D4ED8',
+              border: '1px solid var(--color-slate-200)',
+              borderLeft: '5px solid var(--color-navy-500)',
               borderRadius: '10px',
             }}
           >
@@ -1344,7 +1455,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   style={{
                     fontSize: '1.05rem',
                     fontWeight: 800,
-                    color: '#0B2545',
+                    color: 'var(--color-navy-800)',
                     margin: 0,
                     display: 'flex',
                     alignItems: 'center',
@@ -1353,7 +1464,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 >
                   <FileCheck size={18} /> Academic Correction Requests
                 </h3>
-                <p style={{ fontSize: '0.8rem', color: '#64748B', margin: '4px 0 0 0' }}>
+                <p style={{ fontSize: '0.8rem', color: 'var(--color-slate-500)', margin: '4px 0 0 0' }}>
                   {academicRequestsLoading
                     ? 'Loading requests…'
                     : myAcademicRequests.length === 0
@@ -1375,7 +1486,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               <div
                 style={{
                   padding: '9px 12px',
-                  background: '#FEF2F2',
+                  background: 'var(--color-danger-50)',
                   border: '1px solid #FECACA',
                   borderRadius: '6px',
                   color: '#B91C1C',
@@ -1411,7 +1522,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                             : ''}
                         </td>
                         <td>
-                          <strong style={{ color: '#1D4ED8' }}>
+                          <strong style={{ color: 'var(--color-navy-500)' }}>
                             CGPA {Number(r.requestedCgpa || 0).toFixed(2)}
                           </strong>
                           {r.requestedSgpa !== null && r.requestedSgpa !== undefined
@@ -1455,9 +1566,9 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                                 type="button"
                                 className="btn btn-sm"
                                 style={{
-                                  backgroundColor: '#DC2626',
+                                  backgroundColor: 'var(--color-danger-600)',
                                   color: '#fff',
-                                  border: '1px solid #DC2626',
+                                  border: '1px solid var(--color-danger-600)',
                                   fontWeight: 700,
                                 }}
                                 disabled={reviewingRequestId === (r.requestId || r._id || r.id)}
@@ -1467,7 +1578,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                               </button>
                             </div>
                           ) : (
-                            <span style={{ fontSize: '0.78rem', color: '#64748B' }}>
+                            <span style={{ fontSize: '0.78rem', color: 'var(--color-slate-500)' }}>
                               {r.reviewedByName || '—'}
                               {r.reviewNotes ? ` — ${r.reviewNotes}` : ''}
                               {r.rejectionReason ? ` — ${r.rejectionReason}` : ''}
@@ -1486,9 +1597,9 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             className="card"
             style={{
               padding: '1.5rem',
-              backgroundColor: activeArrearsCount > 0 ? '#FEF2F2' : '#F0FDF4',
+              backgroundColor: activeArrearsCount > 0 ? 'var(--color-danger-50)' : '#F0FDF4',
               border: `1px solid ${activeArrearsCount > 0 ? '#FECACA' : '#BBF7D0'}`,
-              borderLeft: `5px solid ${activeArrearsCount > 0 ? '#DC2626' : '#16A34A'}`,
+              borderLeft: `5px solid ${activeArrearsCount > 0 ? 'var(--color-danger-600)' : '#16A34A'}`,
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
@@ -1557,7 +1668,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             <div style={{ overflowX: 'auto' }}>
               <table className="table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
                 <thead>
-                  <tr style={{ backgroundColor: '#0B2545', color: '#ffffff' }}>
+                  <tr style={{ backgroundColor: 'var(--color-navy-800)', color: '#ffffff' }}>
                     <th style={{ padding: '0.75rem 1rem' }}>Semester</th>
                     <th style={{ padding: '0.75rem 1rem' }}>CGPA</th>
                     <th style={{ padding: '0.75rem 1rem' }}>SGPA</th>
@@ -1572,8 +1683,8 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                       const semNum = sem.semester_number || sem.semesterNumber;
                       const hasStanding = (sem.active_arrears_count ?? sem.arrears_count ?? 0) > 0;
                       return (
-                        <tr key={semNum} style={{ borderBottom: '1px solid #E2E8F0' }}>
-                          <td style={{ padding: '0.75rem 1rem', fontWeight: 700, color: '#0B2545' }}>
+                        <tr key={semNum} style={{ borderBottom: '1px solid var(--color-slate-200)' }}>
+                          <td style={{ padding: '0.75rem 1rem', fontWeight: 700, color: 'var(--color-navy-800)' }}>
                             Semester 0{semNum}
                           </td>
                           <td style={{ padding: '0.75rem 1rem', fontWeight: 700 }}>
@@ -1584,14 +1695,14 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                           </td>
                           <td style={{ padding: '0.75rem 1rem' }}>
                             {hasStanding ? (
-                              <span style={{ color: '#DC2626', fontWeight: 800 }}>
+                              <span style={{ color: 'var(--color-danger-600)', fontWeight: 800 }}>
                                 {sem.active_arrears_count ?? sem.arrears_count} Active
                               </span>
                             ) : (
-                              <span style={{ color: '#059669', fontWeight: 600 }}>0 Active</span>
+                              <span style={{ color: 'var(--color-success-600)', fontWeight: 600 }}>0 Active</span>
                             )}
                           </td>
-                          <td style={{ padding: '0.75rem 1rem', color: '#475569' }}>
+                          <td style={{ padding: '0.75rem 1rem', color: 'var(--color-slate-600)' }}>
                             {sem.arrear_subjects || sem.arrears_subjects || 'None'}
                           </td>
                           <td style={{ padding: '0.75rem 1rem' }}>
@@ -1606,7 +1717,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                     })
                   ) : (
                     <tr>
-                      <td colSpan={6} style={{ textAlign: 'center', padding: '1.5rem', color: '#64748B' }}>
+                      <td colSpan={6} style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--color-slate-500)' }}>
                         No semester academic records recorded yet.
                       </td>
                     </tr>
@@ -1618,10 +1729,10 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
 
           {/* Historical Arrear Clearance Records (Separated from Active!) */}
           <div className="card">
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0B2545', marginBottom: '0.5rem' }}>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--color-navy-800)', marginBottom: '0.5rem' }}>
               Historical Arrear Clearance Ledger
             </h3>
-            <p style={{ fontSize: '0.8rem', color: '#64748B', marginBottom: '1rem' }}>
+            <p style={{ fontSize: '0.8rem', color: 'var(--color-slate-500)', marginBottom: '1rem' }}>
               Historical arrear records are archived permanently and never deleted upon clearance.
             </p>
 
@@ -1629,7 +1740,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               <div style={{ overflowX: 'auto' }}>
                 <table className="table" style={{ width: '100%', fontSize: '0.85rem' }}>
                   <thead>
-                    <tr style={{ backgroundColor: '#F1F5F9', color: '#0F172A' }}>
+                    <tr style={{ backgroundColor: 'var(--color-slate-100)', color: 'var(--color-slate-900)' }}>
                       <th style={{ padding: '0.6rem 0.85rem' }}>Subject Code</th>
                       <th style={{ padding: '0.6rem 0.85rem' }}>Original Semester</th>
                       <th style={{ padding: '0.6rem 0.85rem' }}>Cleared in Semester</th>
@@ -1640,8 +1751,8 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   </thead>
                   <tbody>
                     {student.arrear_history.map((hist: any, idx: number) => (
-                      <tr key={idx} style={{ borderBottom: '1px solid #E2E8F0' }}>
-                        <td style={{ padding: '0.6rem 0.85rem', fontWeight: 700, color: '#0B2545' }}>
+                      <tr key={idx} style={{ borderBottom: '1px solid var(--color-slate-200)' }}>
+                        <td style={{ padding: '0.6rem 0.85rem', fontWeight: 700, color: 'var(--color-navy-800)' }}>
                           <code>{hist.subjectCode || hist.subject_code}</code>
                         </td>
                         <td style={{ padding: '0.6rem 0.85rem' }}>Semester 0{hist.originalSemester}</td>
@@ -1659,11 +1770,17 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 </table>
               </div>
             ) : (
-              <div style={{ padding: '1rem', textAlign: 'center', color: '#64748B', fontSize: '0.85rem', backgroundColor: '#F8FAFC', borderRadius: '8px' }}>
+              <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--color-slate-500)', fontSize: '0.85rem', backgroundColor: 'var(--color-slate-50)', borderRadius: '8px' }}>
                 No previously cleared arrear records on file.
               </div>
             )}
           </div>
+
+          {/* Internal Assessment Marks — Admin-controlled entry window + correction requests */}
+          <InternalMarksMentorPanel
+            studentId={student.id}
+            registerNumber={student.register_number}
+          />
         </div>
       )}
 
@@ -1672,30 +1789,27 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           ============================================================ */}
       {activeTab === 'parent' && (
         <div id="mentor-tab-pane-parent" role="tabpanel" className="card">
-          <div style={{ marginBottom: '1.5rem' }}>
-            <h2 className="section-subheading">
-              Parent & Guardian Information
-            </h2>
-            <p className="section-description">
-              Confidential institutional records for mentor-parent communication and emergency contact.
-            </p>
-          </div>
+          <PageHeader
+            eyebrow={`${student.full_name} • ${student.register_number}`}
+            title="Parent & Guardian Information"
+            subtitle="Confidential institutional records for mentor-parent communication and emergency contact."
+          />
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
             {/* Father's Info */}
-            <div style={{ padding: '1.25rem', backgroundColor: '#F8FAFC', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
-              <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0B2545', textTransform: 'uppercase', marginBottom: '0.75rem' }}>
+            <div style={{ padding: '1.25rem', backgroundColor: 'var(--color-slate-50)', borderRadius: '12px', border: '1px solid var(--color-slate-200)' }}>
+              <div style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--color-navy-800)', textTransform: 'uppercase', marginBottom: '0.75rem' }}>
                 Father's Details
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', fontSize: '0.88rem' }}>
                 <div>
-                  <span style={{ color: '#64748B' }}>Name:</span>{' '}
-                  <strong style={{ color: '#0F172A' }}>{student.parent?.father_name || 'Recorded in dossier'}</strong>
+                  <span style={{ color: 'var(--color-slate-500)' }}>Name:</span>{' '}
+                  <strong style={{ color: 'var(--color-slate-900)' }}>{student.parent?.father_name || 'Recorded in dossier'}</strong>
                 </div>
                 <div>
-                  <span style={{ color: '#64748B' }}>Contact:</span>{' '}
+                  <span style={{ color: 'var(--color-slate-500)' }}>Contact:</span>{' '}
                   {student.parent?.father_contact ? (
-                    <a href={`tel:${student.parent.father_contact}`} style={{ color: '#1D4ED8', fontWeight: 700, textDecoration: 'none' }}>
+                    <a href={`tel:${student.parent.father_contact}`} style={{ color: 'var(--color-navy-500)', fontWeight: 700, textDecoration: 'none' }}>
                       📞 {student.parent.father_contact}
                     </a>
                   ) : (
@@ -1703,26 +1817,26 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   )}
                 </div>
                 <div>
-                  <span style={{ color: '#64748B' }}>Occupation:</span>{' '}
+                  <span style={{ color: 'var(--color-slate-500)' }}>Occupation:</span>{' '}
                   <strong>{student.parent?.father_occupation || 'Business / Private'}</strong>
                 </div>
               </div>
             </div>
 
             {/* Mother's Info */}
-            <div style={{ padding: '1.25rem', backgroundColor: '#F8FAFC', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
-              <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0B2545', textTransform: 'uppercase', marginBottom: '0.75rem' }}>
+            <div style={{ padding: '1.25rem', backgroundColor: 'var(--color-slate-50)', borderRadius: '12px', border: '1px solid var(--color-slate-200)' }}>
+              <div style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--color-navy-800)', textTransform: 'uppercase', marginBottom: '0.75rem' }}>
                 Mother's Details
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', fontSize: '0.88rem' }}>
                 <div>
-                  <span style={{ color: '#64748B' }}>Name:</span>{' '}
-                  <strong style={{ color: '#0F172A' }}>{student.parent?.mother_name || 'Recorded in dossier'}</strong>
+                  <span style={{ color: 'var(--color-slate-500)' }}>Name:</span>{' '}
+                  <strong style={{ color: 'var(--color-slate-900)' }}>{student.parent?.mother_name || 'Recorded in dossier'}</strong>
                 </div>
                 <div>
-                  <span style={{ color: '#64748B' }}>Contact:</span>{' '}
+                  <span style={{ color: 'var(--color-slate-500)' }}>Contact:</span>{' '}
                   {student.parent?.mother_contact ? (
-                    <a href={`tel:${student.parent.mother_contact}`} style={{ color: '#1D4ED8', fontWeight: 700, textDecoration: 'none' }}>
+                    <a href={`tel:${student.parent.mother_contact}`} style={{ color: 'var(--color-navy-500)', fontWeight: 700, textDecoration: 'none' }}>
                       📞 {student.parent.mother_contact}
                     </a>
                   ) : (
@@ -1730,18 +1844,18 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   )}
                 </div>
                 <div>
-                  <span style={{ color: '#64748B' }}>Occupation:</span>{' '}
+                  <span style={{ color: 'var(--color-slate-500)' }}>Occupation:</span>{' '}
                   <strong>{student.parent?.mother_occupation || 'Home Maker'}</strong>
                 </div>
               </div>
             </div>
 
             {/* Permanent Address & Emergency Contact */}
-            <div style={{ gridColumn: 'span 2', padding: '1.25rem', backgroundColor: '#F8FAFC', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
-              <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0B2545', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
+            <div style={{ gridColumn: 'span 2', padding: '1.25rem', backgroundColor: 'var(--color-slate-50)', borderRadius: '12px', border: '1px solid var(--color-slate-200)' }}>
+              <div style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--color-navy-800)', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
                 Permanent Family Address
               </div>
-              <div style={{ fontSize: '0.9rem', color: '#334155', lineHeight: 1.5 }}>
+              <div style={{ fontSize: '0.9rem', color: 'var(--color-slate-700)', lineHeight: 1.5 }}>
                 {student.address || 'Address registered in institutional admission ledger.'}
               </div>
             </div>
@@ -1754,16 +1868,13 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           ============================================================ */}
       {activeTab === 'mentor' && (
         <div id="mentor-tab-pane-mentor" role="tabpanel" className="card">
-          <div style={{ marginBottom: '1.5rem' }}>
-            <h2 className="section-subheading">
-              Mentorship Assignment & Reassignment History
-            </h2>
-            <p className="section-description">
-              Chronological ledger of faculty mentors assigned to this mentee. All records are permanently preserved.
-            </p>
-          </div>
+          <PageHeader
+            eyebrow={`${student.full_name} • ${student.register_number}`}
+            title="Mentorship Assignment & Reassignment History"
+            subtitle="Chronological ledger of faculty mentors assigned to this mentee. All records are permanently preserved."
+          />
 
-          <div className="timeline-container" style={{ position: 'relative', paddingLeft: '1.5rem', borderLeft: '3px solid #E2E8F0' }}>
+          <div className="timeline-container" style={{ position: 'relative', paddingLeft: '1.5rem', borderLeft: '3px solid var(--color-slate-200)' }}>
             {student.mentorHistory && student.mentorHistory.length > 0 ? (
               student.mentorHistory.map((m: any, idx: number) => {
                 const isActive = m.status === 'ACTIVE';
@@ -1779,27 +1890,27 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                         width: '16px',
                         height: '16px',
                         borderRadius: '50%',
-                        backgroundColor: isActive ? '#059669' : '#94A3B8',
+                        backgroundColor: isActive ? 'var(--color-success-600)' : '#94A3B8',
                         border: '3px solid #ffffff',
-                        boxShadow: '0 0 0 2px #E2E8F0',
+                        boxShadow: '0 0 0 2px var(--color-slate-200)',
                       }}
                     />
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                      <span style={{ fontSize: '0.85rem', fontWeight: 800, color: '#0B2545' }}>{year}</span>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--color-navy-800)' }}>{year}</span>
                       <span className={`badge ${isActive ? 'badge-success' : 'badge-secondary'}`}>
                         {isActive ? 'Current Mentor' : 'Previous Mentor'}
                       </span>
                     </div>
 
-                    <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0F172A' }}>
+                    <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--color-slate-900)' }}>
                       {m.mentor_name}
                     </div>
-                    <div style={{ fontSize: '0.82rem', color: '#64748B' }}>
+                    <div style={{ fontSize: '0.82rem', color: 'var(--color-slate-500)' }}>
                       {m.designation} • KSRCE Faculty
                     </div>
 
-                    <div style={{ fontSize: '0.8rem', color: '#475569', marginTop: '6px' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--color-slate-600)', marginTop: '6px' }}>
                       <span>Assigned: <strong>{m.assigned_from || 'Term start'}</strong></span>
                       {m.assigned_until && (
                         <span> • Concluded: <strong>{m.assigned_until}</strong></span>
@@ -1807,7 +1918,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                     </div>
 
                     {m.change_reason && (
-                      <div style={{ fontSize: '0.78rem', color: '#D97706', marginTop: '4px', fontStyle: 'italic' }}>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--color-warning-600)', marginTop: '4px', fontStyle: 'italic' }}>
                         Reason for Assignment: {m.change_reason}
                       </div>
                     )}
@@ -1815,7 +1926,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 );
               })
             ) : (
-              <div style={{ color: '#64748B', fontSize: '0.85rem' }}>
+              <div style={{ color: 'var(--color-slate-500)', fontSize: '0.85rem' }}>
                 Initial mentor assignment record active in MongoDB.
               </div>
             )}
@@ -1829,18 +1940,12 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
       {activeTab === 'counselling' && (
         <div id="mentor-tab-pane-counselling" role="tabpanel" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
           {/* Header & Add Action */}
-          {/* Header & Add Action */}
-          <div className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-              <div>
-                <h2 className="section-subheading">
-                  Mentee Counselling Records & Dossier
-                </h2>
-                <p className="section-description">
-                  Student-specific intervention and corrective action records for {student.full_name} ({student.register_number}).
-                </p>
-              </div>
-              <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap' }}>
+          <PageHeader
+            eyebrow={`${student.full_name} • ${student.register_number}`}
+            title="Mentee Counselling Records & Dossier"
+            subtitle={`Student-specific intervention and corrective action records for ${student.full_name} (${student.register_number}).`}
+            actions={
+              <>
                 <button
                   type="button"
                   onClick={() => setShowAiBot(true)}
@@ -1860,15 +1965,32 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 </button>
                 <button
                   type="button"
+                  onClick={() => setShowSaturdayModal(true)}
+                  className="btn btn-secondary"
+                  style={{
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.45rem',
+                    color: '#92400E',
+                    borderColor: '#FCD34D',
+                    backgroundColor: 'var(--color-warning-50)',
+                  }}
+                  title="Record photos taken once at a Saturday common meeting and share them with every participant"
+                >
+                  <Users size={16} /> Saturday Common Meeting
+                </button>
+                <button
+                  type="button"
                   onClick={handleOpenAddCounselling}
                   className="btn btn-primary"
                   style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '0.45rem' }}
                 >
-                  <Plus size={16} /> Add Counselling Record
+                  <Plus size={16} /> Add Mentoring Record
                 </button>
-              </div>
-            </div>
-          </div>
+              </>
+            }
+          />
 
           {/* Counselling Records List */}
           {student.counsellingRecords && student.counsellingRecords.length > 0 ? (
@@ -1906,12 +2028,50 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                           </span>
                         ))}
                       </div>
-                      <span style={{ fontSize: '0.82rem', color: '#64748B', fontWeight: 600 }}>
+                      <span style={{ fontSize: '0.82rem', color: 'var(--color-slate-500)', fontWeight: 600 }}>
                         Counselling Date: {c.counselling_date || c.counsellingDate || c.session_date ? new Date(c.counselling_date || c.counsellingDate || c.session_date).toLocaleDateString() : 'Recent'}
                       </span>
                       {c.status && (
-                        <span className="badge badge-secondary" style={{ backgroundColor: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE' }}>
+                        <span className="badge badge-secondary" style={{ backgroundColor: '#EFF6FF', color: 'var(--color-navy-500)', border: '1px solid var(--color-navy-200)' }}>
                           Status: {c.status}
+                        </span>
+                      )}
+                      {/* Who the discussion was held with. Not guessed — a record
+                          created before this field existed reads "Not recorded". */}
+                      <span
+                        className="badge"
+                        style={{
+                          backgroundColor: 'var(--color-slate-100)',
+                          color: 'var(--color-slate-700)',
+                          border: '1px solid var(--color-slate-300)',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.25rem',
+                        }}
+                      >
+                        {(() => {
+                          const dw = Array.isArray(c.discussionWith) ? c.discussionWith : (Array.isArray(c.discussion_with) ? c.discussion_with : null);
+                          const hasStudent = dw?.includes('student');
+                          const hasParent = dw?.includes('parent');
+                          if (hasStudent && hasParent) return 'Discussion With: Student & Parent';
+                          if (hasStudent) return 'Discussion With: Student';
+                          if (hasParent) return 'Discussion With: Parent';
+                          return 'Discussion With: Not recorded';
+                        })()}
+                      </span>
+                      {c.recordKind === 'SATURDAY_COMMON' && (
+                        <span
+                          className="badge"
+                          style={{
+                            backgroundColor: 'var(--color-warning-100)',
+                            color: '#92400E',
+                            border: '1px solid #FCD34D',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.25rem',
+                          }}
+                        >
+                          <Users size={11} /> Saturday Common Meeting
                         </span>
                       )}
                     </div>
@@ -1941,7 +2101,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem', fontSize: '0.86rem' }}>
                     {(c.concern_reason || c.concernReason) && (
                       <div>
-                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-slate-500)', textTransform: 'uppercase' }}>
                           Concern / Reason
                         </div>
                         <div className="field-value">
@@ -1951,7 +2111,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                     )}
 
                     <div>
-                      <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+                      <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-slate-500)', textTransform: 'uppercase' }}>
                         Discussion / Observation
                       </div>
                       <div className="field-value" style={{ fontWeight: 500, whiteSpace: 'pre-line' }}>
@@ -1961,17 +2121,17 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
 
                     {(c.skill_needing_improvement || c.skillNeedingImprovement) && (
                       <div>
-                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-slate-500)', textTransform: 'uppercase' }}>
                           Skills Needing Improvement
                         </div>
-                        <div style={{ color: '#D97706', marginTop: '2px', fontWeight: 600 }}>
+                        <div style={{ color: 'var(--color-warning-600)', marginTop: '2px', fontWeight: 600 }}>
                           {c.skill_needing_improvement || c.skillNeedingImprovement}
                         </div>
                       </div>
                     )}
 
                     <div>
-                      <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+                      <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-slate-500)', textTransform: 'uppercase' }}>
                         Action Plan
                       </div>
                       <div className="field-value" style={{ whiteSpace: 'pre-line' }}>
@@ -1981,10 +2141,10 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
 
                     {(c.mentor_remarks || c.mentorRemarks) && (
                       <div>
-                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-slate-500)', textTransform: 'uppercase' }}>
                           Mentor Remarks
                         </div>
-                        <div style={{ color: '#334155', marginTop: '2px', fontStyle: 'italic' }}>
+                        <div style={{ color: 'var(--color-slate-700)', marginTop: '2px', fontStyle: 'italic' }}>
                           {c.mentor_remarks || c.mentorRemarks}
                         </div>
                       </div>
@@ -1992,7 +2152,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
 
                     {(c.follow_up_date || c.followUpDate) && (
                       <div>
-                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-slate-500)', textTransform: 'uppercase' }}>
                           Follow-up Date
                         </div>
                         <div style={{ color: '#2563EB', marginTop: '2px', fontWeight: 600 }}>
@@ -2001,6 +2161,29 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                       </div>
                     )}
                   </div>
+
+                  {/* Geo-tagged evidence. Photos are private, so they load only
+                      after the mentor clicks, with the bearer token attached. */}
+                  {Array.isArray(c.evidence) && c.evidence.length > 0 && (
+                    <div style={{ marginTop: '1rem', paddingTop: '0.85rem', borderTop: '1px solid var(--color-slate-200)' }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.4rem',
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          color: 'var(--color-slate-500)',
+                          textTransform: 'uppercase',
+                          marginBottom: '0.55rem',
+                        }}
+                      >
+                        <Camera size={12} />
+                        Evidence Photos ({c.evidence.length})
+                      </div>
+                      <EvidenceGallery evidence={c.evidence} />
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -2010,7 +2193,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               <h3 className="section-subheading">
                 No Counselling Records for this Mentee Yet
               </h3>
-              <p style={{ fontSize: '0.85rem', color: '#64748B', maxWidth: '440px', margin: '0 auto 1.25rem auto' }}>
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-slate-500)', maxWidth: '440px', margin: '0 auto 1.25rem auto' }}>
                 Counselling sessions are recorded on a student-specific basis. Mentors manually type the counselling details with built-in writing assistance.
               </p>
               <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
@@ -2062,12 +2245,18 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           ============================================================ */}
       {activeTab === 'documents' && (
         <div id="mentor-tab-pane-documents" role="tabpanel" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+          <PageHeader
+            eyebrow={`${student.full_name} • ${student.register_number}`}
+            title="Documents & Certificates"
+            subtitle="Achievements, certificates and primary forms submitted by this mentee."
+          />
+
           {/* Sub-tab switcher */}
           <div
             style={{
               display: 'flex',
               gap: '0.5rem',
-              backgroundColor: '#F1F5F9',
+              backgroundColor: 'var(--color-slate-100)',
               padding: '4px',
               borderRadius: '10px',
               width: 'fit-content',
@@ -2083,7 +2272,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 fontSize: '0.85rem',
                 fontWeight: 700,
                 backgroundColor: docSubTab === 'progress' ? '#ffffff' : 'transparent',
-                color: docSubTab === 'progress' ? '#0B2545' : '#64748B',
+                color: docSubTab === 'progress' ? 'var(--color-navy-800)' : 'var(--color-slate-500)',
                 boxShadow: docSubTab === 'progress' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
                 border: 'none',
                 display: 'inline-flex',
@@ -2103,7 +2292,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 fontSize: '0.85rem',
                 fontWeight: 700,
                 backgroundColor: docSubTab === 'files' ? '#ffffff' : 'transparent',
-                color: docSubTab === 'files' ? '#0B2545' : '#64748B',
+                color: docSubTab === 'files' ? 'var(--color-navy-800)' : 'var(--color-slate-500)',
                 boxShadow: docSubTab === 'files' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
                 border: 'none',
                 display: 'inline-flex',
@@ -2146,14 +2335,20 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           ============================================================ */}
       {activeTab === 'meeting' && (
         <div id="mentor-tab-pane-meeting" role="tabpanel" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+          <PageHeader
+            eyebrow={`${student.full_name} • ${student.register_number}`}
+            title="Meeting History"
+            subtitle="Saturday mentoring sessions, attendance and discussion ledger."
+          />
+
           {/* Upcoming Saturday Meeting Banner */}
           <div
             className="card"
             style={{
               padding: '1.5rem',
-              backgroundColor: '#FEF3C7',
+              backgroundColor: 'var(--color-warning-100)',
               border: '1px solid #FDE68A',
-              borderLeft: '5px solid #D97706',
+              borderLeft: '5px solid var(--color-warning-600)',
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
@@ -2169,7 +2364,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 type="button"
                 onClick={() => setShowMeetingModal(true)}
                 className="btn btn-primary"
-                style={{ backgroundColor: '#D97706', borderColor: '#D97706', fontWeight: 700 }}
+                style={{ backgroundColor: 'var(--color-warning-600)', borderColor: 'var(--color-warning-600)', fontWeight: 700 }}
               >
                 <Plus size={16} /> Log Saturday Meeting
               </button>
@@ -2190,12 +2385,12 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                     style={{
                       padding: '1.25rem',
                       borderRadius: '12px',
-                      backgroundColor: '#F8FAFC',
-                      border: '1px solid #E2E8F0',
+                      backgroundColor: 'var(--color-slate-50)',
+                      border: '1px solid var(--color-slate-200)',
                     }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                      <div style={{ fontWeight: 800, color: '#0B2545', fontSize: '0.95rem' }}>
+                      <div style={{ fontWeight: 800, color: 'var(--color-navy-800)', fontSize: '0.95rem' }}>
                         📅 {m.meeting_date ? new Date(m.meeting_date).toLocaleDateString() : 'Saturday'} ({m.meeting_time || '10:30 AM'})
                       </div>
                       <span className={`badge ${m.attendance_status === 'PRESENT' ? 'badge-success' : 'badge-danger'}`}>
@@ -2203,13 +2398,13 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                       </span>
                     </div>
 
-                    <div style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '0.5rem' }}>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--color-slate-600)', marginBottom: '0.5rem' }}>
                       📍 Location: {m.location || 'Faculty Cabin'}
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '0.75rem', fontSize: '0.85rem' }}>
                       <div>
-                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-slate-500)', textTransform: 'uppercase' }}>
                           Challenges Discussed
                         </div>
                         <div className="field-value">
@@ -2218,7 +2413,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                       </div>
 
                       <div>
-                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>
+                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-slate-500)', textTransform: 'uppercase' }}>
                           Corrective Action & Remarks
                         </div>
                         <div className="field-value">
@@ -2230,7 +2425,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 ))}
               </div>
             ) : (
-              <div style={{ padding: '1.5rem', textAlign: 'center', color: '#64748B', fontSize: '0.85rem', backgroundColor: '#F8FAFC', borderRadius: '8px' }}>
+              <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--color-slate-500)', fontSize: '0.85rem', backgroundColor: 'var(--color-slate-50)', borderRadius: '8px' }}>
                 No past Saturday meetings recorded for this mentee yet.
               </div>
             )}
@@ -2239,20 +2434,24 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
       )}
 
       {/* ============================================================
+          12b. PLACEMENT TAB (final-year placement monitor)
+          ============================================================ */}
+      {activeTab === 'placement' && (
+        <div id="mentor-tab-pane-placement" role="tabpanel">
+          <MentorPlacementPanel studentId={studentId} />
+        </div>
+      )}
+
+      {/* ============================================================
           13. PROGRESS & SKILLS TAB (7 core domains tracked)
           ============================================================ */}
       {activeTab === 'skills' && (
         <div id="mentor-tab-pane-skills" role="tabpanel" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
-          <div className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-              <div>
-                <h2 className="section-subheading">
-                  Mentor Skill Assessment & Progress Tracker
-                </h2>
-                <p className="section-description">
-                  Evaluating 7 core professional and academic competencies for {student.full_name}.
-                </p>
-              </div>
+          <PageHeader
+            eyebrow={`${student.full_name} • ${student.register_number}`}
+            title="Mentor Skill Assessment & Progress Tracker"
+            subtitle={`Evaluating 7 core professional and academic competencies for ${student.full_name}.`}
+            actions={
               <button
                 type="button"
                 onClick={() => setShowSkillAssessmentModal(true)}
@@ -2261,8 +2460,8 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               >
                 <Plus size={16} /> Update Skill Assessment
               </button>
-            </div>
-          </div>
+            }
+          />
 
           {/* 7 Core Domains Grid */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.25rem' }}>
@@ -2280,7 +2479,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 level: 'Developing (Level 3/5)',
                 pct: 60,
                 status: 'Needs Practice',
-                color: '#D97706',
+                color: 'var(--color-warning-600)',
                 recommendation: 'Encourage participation in departmental symposium presentations.',
               },
               {
@@ -2296,7 +2495,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 level: 'Proficient (Level 4/5)',
                 pct: 80,
                 status: 'On Track',
-                color: '#059669',
+                color: 'var(--color-success-600)',
                 recommendation: 'Active team member in lab assignments.',
               },
               {
@@ -2312,7 +2511,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 level: activeArrearsCount > 0 ? 'Attention Needed (Level 2/5)' : 'Good (Level 4/5)',
                 pct: activeArrearsCount > 0 ? 40 : 80,
                 status: activeArrearsCount > 0 ? 'Attention Required' : 'On Track',
-                color: activeArrearsCount > 0 ? '#DC2626' : '#2563EB',
+                color: activeArrearsCount > 0 ? 'var(--color-danger-600)' : '#2563EB',
                 recommendation: activeArrearsCount > 0 ? 'Clear active arrear in upcoming exam session.' : 'Maintain SGPA > 7.5.',
               },
               {
@@ -2320,7 +2519,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 level: 'Developing (Level 3/5)',
                 pct: 60,
                 status: 'Ongoing',
-                color: '#0B2545',
+                color: 'var(--color-navy-800)',
                 recommendation: 'Complete mandatory NPTEL / certification course.',
               },
             ].map((skill, idx) => (
@@ -2334,7 +2533,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#0B2545', margin: 0 }}>
+                  <h4 style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--color-navy-800)', margin: 0 }}>
                     {skill.title}
                   </h4>
                   <span
@@ -2344,18 +2543,18 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   </span>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: '#64748B', marginBottom: '0.35rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--color-slate-500)', marginBottom: '0.35rem' }}>
                   <span>{skill.level}</span>
                   <span>{skill.pct}%</span>
                 </div>
 
                 {/* Progress bar */}
-                <div style={{ width: '100%', height: '8px', backgroundColor: '#E2E8F0', borderRadius: '4px', overflow: 'hidden', marginBottom: '0.75rem' }}>
+                <div style={{ width: '100%', height: '8px', backgroundColor: 'var(--color-slate-200)', borderRadius: '4px', overflow: 'hidden', marginBottom: '0.75rem' }}>
                   <div style={{ width: `${skill.pct}%`, height: '100%', backgroundColor: skill.color, borderRadius: '4px' }} />
                 </div>
 
-                <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.4 }}>
-                  <strong style={{ color: '#0B2545' }}>Mentor Guidance:</strong> {skill.recommendation}
+                <div style={{ fontSize: '0.78rem', color: 'var(--color-slate-600)', lineHeight: 1.4 }}>
+                  <strong style={{ color: 'var(--color-navy-800)' }}>Mentor Guidance:</strong> {skill.recommendation}
                 </div>
               </div>
             ))}
@@ -2375,7 +2574,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           onClose={() => setShowRequestUpdateModal(false)}
         >
           <form onSubmit={handleRequestUpdateSubmit}>
-            <p style={{ fontSize: '0.85rem', color: '#64748B', marginBottom: '1.25rem' }}>
+            <p style={{ fontSize: '0.85rem', color: 'var(--color-slate-500)', marginBottom: '1.25rem' }}>
               Mentors cannot directly edit core student biodata to prevent accidental corruption. Submit details below to notify the Academic Administrator.
             </p>
 
@@ -2442,6 +2641,9 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             setShowCounsellingModal(false);
             setEditingCounsellingId(null);
             setCounsellingErrors({});
+            setEvidencePhotos([]);
+            setRemovedEvidenceIds([]);
+            setEditingCounsellingEvidence([]);
           }}
           onSubmit={handleCounsellingSubmit}
           footer={
@@ -2461,6 +2663,9 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   setShowCounsellingModal(false);
                   setEditingCounsellingId(null);
                   setCounsellingErrors({});
+                  setEvidencePhotos([]);
+                  setRemovedEvidenceIds([]);
+                  setEditingCounsellingEvidence([]);
                 }}
                 style={{ minHeight: '44px', padding: '0.5rem 1.25rem' }}
               >
@@ -2478,22 +2683,24 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               >
                 {submittingCounselling
                   ? 'Saving Record...'
+                  : evidencePhotos.length > 0
+                  ? `Save with ${evidencePhotos.length} Photo(s)`
                   : editingCounsellingId
-                  ? 'Update Counselling Record'
-                  : 'Save Counselling Record'}
+                  ? 'Update Mentoring Record'
+                  : 'Save Mentoring Record'}
               </button>
             </div>
           }
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-            <p style={{ fontSize: '0.8rem', color: '#64748B', margin: '0 0 1rem 0' }}>
+            <p style={{ fontSize: '0.8rem', color: 'var(--color-slate-500)', margin: '0 0 1rem 0' }}>
               Mentor-recorded counselling session for {student.full_name} ({student.register_number}). Enter observations manually. Real-time writing assistance helps detect spelling and grammar without modifying your meaning.
             </p>
 
             {/* Field 1: Counselling Date * */}
             <div className="form-group" style={{ marginBottom: '1.15rem' }}>
               <label className="form-label" style={{ fontWeight: 700, fontSize: '0.85rem' }}>
-                Counselling Date <span style={{ color: '#DC2626' }}>*</span>
+                Counselling Date <span style={{ color: 'var(--color-danger-600)' }}>*</span>
               </label>
               <input
                 type="date"
@@ -2510,11 +2717,11 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 style={{
                   fontSize: '0.88rem',
                   minHeight: '42px',
-                  borderColor: counsellingErrors.counsellingDate ? '#EF4444' : undefined,
+                  borderColor: counsellingErrors.counsellingDate ? 'var(--color-danger-500)' : undefined,
                 }}
               />
               {counsellingErrors.counsellingDate && (
-                <div style={{ color: '#DC2626', fontSize: '0.78rem', marginTop: '4px', fontWeight: 600 }}>
+                <div style={{ color: 'var(--color-danger-600)', fontSize: '0.78rem', marginTop: '4px', fontWeight: 600 }}>
                   {counsellingErrors.counsellingDate}
                 </div>
               )}
@@ -2533,7 +2740,20 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               error={counsellingErrors.categories}
             />
 
-            {/* Field 3: Concern / Reason * */}
+            {/* Field 3: Discussion With * — required, Student and/or Parent */}
+            <DiscussionWithSelect
+              selected={counsellingForm.discussionWith}
+              onChange={(next) => {
+                setCounsellingForm((prev) => ({ ...prev, discussionWith: next }));
+                if (counsellingErrors.discussionWith && next.length > 0) {
+                  setCounsellingErrors((prev) => ({ ...prev, discussionWith: undefined }));
+                }
+              }}
+              required
+              error={counsellingErrors.discussionWith}
+            />
+
+            {/* Field 4: Concern / Reason * */}
             <GrammarAssistField
               fieldId="concernReason"
               label="Concern / Reason"
@@ -2619,6 +2839,21 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               onChange={(val) => setCounsellingForm((prev) => ({ ...prev, mentorRemarks: val }))}
             />
 
+            {/* Geo-tagged evidence photos. Location is requested at capture time,
+                and each photo is compressed under 200 KB before upload. */}
+            <EvidenceUploader
+              existing={editingCounsellingEvidence}
+              photos={evidencePhotos}
+              onPhotosChange={setEvidencePhotos}
+              removedExistingIds={removedEvidenceIds}
+              onRemovedExistingIdsChange={setRemovedEvidenceIds}
+              onRemoveExisting={(evidenceId) =>
+                setRemovedEvidenceIds((prev) => [...prev, evidenceId])
+              }
+              disabled={submittingCounselling}
+              hint="Photos already saved on this record are kept unless you detach them."
+            />
+
             {/* Field 7 & 8: Follow-up Date & Status */}
             <div
               style={{
@@ -2668,6 +2903,16 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           </div>
         </Modal>
       )}
+
+      {/* Saturday COMMON meeting: one shared upload linked to every participant.
+          Kept separate from the per-mentee form above because the photos are
+          taken once physically and must not be re-uploaded per student. */}
+      <SaturdayEvidenceModal
+        isOpen={showSaturdayModal}
+        onClose={() => setShowSaturdayModal(false)}
+        onSaved={fetchStudentData}
+        presetStudentId={student.id}
+      />
 
       {/* Modal 3: Log Saturday Meeting */}
       {showMeetingModal && (
@@ -2775,7 +3020,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           onClose={() => setShowClearArrearModal(false)}
         >
           <form onSubmit={handleClearArrearSubmit}>
-            <p style={{ fontSize: '0.82rem', color: '#64748B', marginBottom: '1rem' }}>
+            <p style={{ fontSize: '0.82rem', color: 'var(--color-slate-500)', marginBottom: '1rem' }}>
               Mark an arrear as successfully cleared. Historical arrear records will remain preserved for institutional accreditation records.
             </p>
 
@@ -2857,7 +3102,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', marginBottom: '1.25rem' }}>
               {Object.keys(skillRatings).map((domain) => (
                 <div key={domain} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#0F172A' }}>{domain}</span>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-slate-900)' }}>{domain}</span>
                   <select
                     className="form-control"
                     style={{ width: '130px', padding: '0.35rem 0.6rem', fontSize: '0.82rem' }}
@@ -2936,7 +3181,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: 'linear-gradient(135deg, #0B2545 0%, #1D4E89 100%)',
+            background: 'linear-gradient(135deg, var(--color-navy-800) 0%, #1D4E89 100%)',
             color: '#ffffff',
             border: '2px solid #ffffff',
             boxShadow: '0 6px 20px rgba(11, 37, 69, 0.32)',
@@ -2978,36 +3223,36 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 gap: '0.75rem',
                 marginBottom: '1rem',
                 padding: '0.85rem',
-                background: '#F8FAFC',
-                border: '1px solid #E2E8F0',
+                background: 'var(--color-slate-50)',
+                border: '1px solid var(--color-slate-200)',
                 borderRadius: '6px',
                 fontSize: '0.85rem',
               }}
             >
               <div>
-                <div style={{ color: '#64748B', fontSize: '0.75rem' }}>Semester</div>
+                <div style={{ color: 'var(--color-slate-500)', fontSize: '0.75rem' }}>Semester</div>
                 <div style={{ fontWeight: 700 }}>Semester 0{reviewTarget.semesterNumber}</div>
               </div>
               <div>
-                <div style={{ color: '#64748B', fontSize: '0.75rem' }}>Student</div>
+                <div style={{ color: 'var(--color-slate-500)', fontSize: '0.75rem' }}>Student</div>
                 <div style={{ fontWeight: 700 }}>
                   {reviewTarget.studentName || student?.full_name || reviewTarget.studentRegNumber || '—'}
                 </div>
               </div>
               <div>
-                <div style={{ color: '#64748B', fontSize: '0.75rem' }}>Current CGPA</div>
+                <div style={{ color: 'var(--color-slate-500)', fontSize: '0.75rem' }}>Current CGPA</div>
                 <div style={{ fontWeight: 700 }}>{Number(reviewTarget.currentCgpa || 0).toFixed(2)}</div>
               </div>
               <div>
-                <div style={{ color: '#64748B', fontSize: '0.75rem' }}>Requested CGPA</div>
-                <div style={{ fontWeight: 700, color: '#1D4ED8' }}>
+                <div style={{ color: 'var(--color-slate-500)', fontSize: '0.75rem' }}>Requested CGPA</div>
+                <div style={{ fontWeight: 700, color: 'var(--color-navy-500)' }}>
                   {Number(reviewTarget.requestedCgpa || 0).toFixed(2)}
                 </div>
               </div>
               {reviewTarget.requestedSgpa !== null && reviewTarget.requestedSgpa !== undefined && (
                 <div>
-                  <div style={{ color: '#64748B', fontSize: '0.75rem' }}>Requested SGPA</div>
-                  <div style={{ fontWeight: 700, color: '#1D4ED8' }}>
+                  <div style={{ color: 'var(--color-slate-500)', fontSize: '0.75rem' }}>Requested SGPA</div>
+                  <div style={{ fontWeight: 700, color: 'var(--color-navy-500)' }}>
                     {Number(reviewTarget.requestedSgpa).toFixed(2)}
                   </div>
                 </div>
@@ -3015,10 +3260,10 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             </div>
 
             <div style={{ marginBottom: '1rem' }}>
-              <div style={{ color: '#64748B', fontSize: '0.75rem', marginBottom: '4px' }}>
+              <div style={{ color: 'var(--color-slate-500)', fontSize: '0.75rem', marginBottom: '4px' }}>
                 Student Reason
               </div>
-              <p style={{ margin: 0, fontSize: '0.85rem', color: '#334155', lineHeight: 1.5 }}>
+              <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--color-slate-700)', lineHeight: 1.5 }}>
                 {reviewTarget.reason}
               </p>
             </div>
@@ -3028,7 +3273,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 style={{
                   marginBottom: '1rem',
                   padding: '9px 12px',
-                  background: '#FEF2F2',
+                  background: 'var(--color-danger-50)',
                   border: '1px solid #FECACA',
                   borderRadius: '6px',
                   color: '#991B1B',
@@ -3044,7 +3289,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                 style={{
                   marginBottom: '1rem',
                   padding: '9px 12px',
-                  background: '#FEF2F2',
+                  background: 'var(--color-danger-50)',
                   border: '1px solid #FECACA',
                   borderRadius: '6px',
                   color: '#B91C1C',

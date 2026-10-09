@@ -1,3 +1,18 @@
+# ============================================================
+# TEMPORARY LOCAL FILE STORAGE.
+# Temporary local file storage. Replace with a persistent database/storage
+# implementation before production deployment.
+#
+# MongoDB/Mongoose have been removed, so there is no MONGODB_URI to supply. The
+# backend reads JSON files from DATA_DIR and uploaded documents from
+# UPLOADS_DIR.
+#
+# The Render free plan has NO persistent disk and mounts the project directory
+# read-only, so on that plan the store falls back to an ephemeral temp directory:
+# every record and every uploaded certificate is LOST on each redeploy and on
+# each cold start. Attach a persistent disk and point DATA_DIR / UPLOADS_DIR at
+# it before this is used for anything real.
+# ============================================================
 services:
   # ------------------------------------------------------------
   # KSRCE Digital Mentor-Mentee Backend API Service
@@ -23,8 +38,12 @@ services:
         sync: false
       - key: ADMIN_DEPT
         value: IT
-      - key: MONGODB_URI
-        sync: false
+      # Uncomment ONLY after attaching a persistent disk, and point them at it.
+      # Without a disk both default to an ephemeral temp directory.
+      # - key: DATA_DIR
+      #   value: /mnt/data/data
+      # - key: UPLOADS_DIR
+      #   value: /mnt/data/uploads
 
   # ------------------------------------------------------------
   # KSRCE Digital Mentor-Mentee Frontend Static Web Application

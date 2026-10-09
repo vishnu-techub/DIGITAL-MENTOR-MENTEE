@@ -3,7 +3,7 @@ import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { LoginPage } from './pages/auth/LoginPage';
 import { Navbar } from './components/common/Navbar';
-import { Sidebar } from './components/common/Sidebar';
+import { Sidebar, getNavLabel } from './components/common/Sidebar';
 import { AdminDashboard } from './pages/admin/AdminDashboard';
 import { HodDashboard } from './pages/hod/HodDashboard';
 import { FacultyDashboard } from './pages/faculty/FacultyDashboard';
@@ -27,41 +27,15 @@ export const App: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div
-        style={{
-          minHeight: '100vh',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: '#0B2545',
-          color: '#ffffff',
-          fontFamily: 'Inter, sans-serif',
-        }}
-      >
+      <div className="app-boot" role="status" aria-live="polite">
         <img
           src="/ksrce-logo.png"
           alt="KSRCE Logo"
-          style={{ width: '64px', height: '64px', objectFit: 'contain', marginBottom: '1.25rem' }}
+          style={{ width: '68px', height: '68px', objectFit: 'contain' }}
         />
-        <div
-          style={{
-            width: '42px',
-            height: '42px',
-            border: '4px solid #C59B27',
-            borderTopColor: 'transparent',
-            borderRadius: '50%',
-            animation: 'spin 0.8s linear infinite',
-            marginBottom: '1rem',
-          }}
-        />
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-        <div style={{ fontSize: '1.1rem', fontWeight: 800, letterSpacing: '0.03em' }}>
-          K.S.R. COLLEGE OF ENGINEERING
-        </div>
-        <div style={{ fontSize: '0.82rem', color: '#D4AF37', marginTop: '4px', letterSpacing: '0.04em' }}>
-          Initializing Digital Mentor–Mentee Management System...
-        </div>
+        <div className="app-boot-spinner" aria-hidden="true" />
+        <div className="app-boot-title">K.S.R. COLLEGE OF ENGINEERING</div>
+        <div className="app-boot-sub">Initializing Digital Mentor–Mentee Management System…</div>
       </div>
     );
   }
@@ -150,6 +124,7 @@ export const App: React.FC = () => {
       <Navbar
         onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         isSidebarOpen={isSidebarOpen}
+        pageLabel={getNavLabel(user?.role, currentTab)}
       />
       <div style={{ display: 'flex', flex: 1, position: 'relative' }}>
         <Sidebar

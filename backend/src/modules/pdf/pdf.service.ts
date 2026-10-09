@@ -2,7 +2,6 @@ import fs from 'fs';
 import path from 'path';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import mongoose from 'mongoose';
 import { PDFDocument } from 'pdf-lib';
 import {
   Student,
@@ -12,6 +11,7 @@ import {
   CounsellingRecord,
   MonthlyProgress,
   StudentDocument,
+  InternalMark,
 } from '../../models/index.js';
 import { calculateArrearStatistics } from '../../utils/arrears.util.js';
 // Reuse the single existing uploads abstraction (traversal-safe). Documents are
@@ -25,6 +25,8 @@ import {
   sniffStoredFileType,
   UPLOADS_BASE,
 } from '../../config/storage.js';
+import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
+import { buildEvidenceViews, normaliseEvidenceRefs } from '../counselling/evidence.service.js';
 
 let logoBase64: string | null = null;
 try {
@@ -36,10 +38,31 @@ try {
   // gracefully fallback if logo unavailable
 }
 
-export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint8Array> {
+/**
+ * The three official download modes:
+ *   full             — the complete Digital Mentor–Mentee Record Book (default,
+ *                      byte-compatible with the historical single dossier)
+ *   internal         — Internal Assessment marks report only (no counselling
+ *                      discussion, no photographs)
+ *   mentor-documents — mentoring records & evidence: meetings, counselling,
+ *                      photo evidence, student documents/certificates
+ */
+export type StudentPdfMode = 'full' | 'internal' | 'mentor-documents';
+
+const STUDENT_PDF_MODES: StudentPdfMode[] = ['full', 'internal', 'mentor-documents'];
+
+export function isStudentPdfMode(value: unknown): value is StudentPdfMode {
+  return typeof value === 'string' && (STUDENT_PDF_MODES as string[]).includes(value);
+}
+
+export async function generateStudentPdf(
+  studentIdOrRegNo: string,
+  mode: StudentPdfMode = 'full'
+): Promise<Uint8Array> {
+  if (!isStudentPdfMode(mode)) mode = 'full';
   // 1. Fetch Student Master
   let studentDoc: any = null;
-  if (mongoose.Types.ObjectId.isValid(studentIdOrRegNo)) {
+  if (isValidId(studentIdOrRegNo)) {
     studentDoc = await Student.findById(studentIdOrRegNo).populate('department').populate('batch');
   }
   if (!studentDoc) {
@@ -110,6 +133,17 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
   );
   const semesters = arrearStats.formattedSemesters;
 
+  // 5B. Subject-wise internal assessment marks — fetched for the Internal
+  // Assessment report and for the internal-assessment section of the full
+  // record book. The mentor-documents download deliberately excludes marks.
+  const internalMarks =
+    mode === 'mentor-documents'
+      ? []
+      : await InternalMark.find({ student: studentDoc._id }).sort({
+          semesterNumber: 1,
+          subjectCode: 1,
+        });
+
   // 6. Current Mentor
   const activeAsgDoc: any = await MentorAssignment.findOne({
     student: studentDoc._id,
@@ -159,40 +193,72 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
     .populate({ path: 'mentor', populate: { path: 'user' } })
     .sort({ meetingDate: 1 });
 
-  const meetings = meetingDocs.map((m: any) => {
-    const mentorUser = (m.mentor as any)?.user || {};
-    return {
-      meeting_date: m.meetingDate,
-      meeting_time: m.meetingTime,
-      location: m.location,
-      attendance_status: m.attendanceStatus,
-      meeting_status: m.meetingStatus,
-      challenges_discussed: m.challengesDiscussed || '',
-      student_feedback: m.studentFeedback || '',
-      counselling_provided: m.counsellingProvided || '',
-      corrective_action: m.correctiveAction || '',
-      mentor_remarks: m.mentorRemarks || '',
-      mentor_name: mentorUser.fullName || '',
-    };
-  });
+  // Meetings carry photo evidence too (shared Saturday session photos); the
+  // evidence views are resolved here so the photo-evidence pages of the record
+  // book can reproduce them. Skipped for the internal marks report, which never
+  // embeds photographs.
+  const meetings = await Promise.all(
+    meetingDocs.map(async (m: any) => {
+      const mentorUser = (m.mentor as any)?.user || {};
+      return {
+        meeting_date: m.meetingDate,
+        meeting_time: m.meetingTime,
+        location: m.location,
+        attendance_status: m.attendanceStatus,
+        meeting_status: m.meetingStatus,
+        challenges_discussed: m.challengesDiscussed || '',
+        student_feedback: m.studentFeedback || '',
+        counselling_provided: m.counsellingProvided || '',
+        corrective_action: m.correctiveAction || '',
+        mentor_remarks: m.mentorRemarks || '',
+        mentor_name: mentorUser.fullName || '',
+        evidence:
+          mode === 'internal'
+            ? []
+            : await buildEvidenceViews(
+                normaliseEvidenceRefs(m.evidence).map((ref: any) => ref.evidenceId)
+              ),
+      };
+    })
+  );
 
   // 9. Counselling Records
   const counsellingDocs = await CounsellingRecord.find({ student: studentDoc._id })
     .populate({ path: 'mentor', populate: { path: 'user' } })
     .sort({ sessionDate: 1 });
 
-  const counsellingRecords = counsellingDocs.map((c: any) => {
-    const mentorUser = (c.mentor as any)?.user || {};
-    return {
-      session_date: c.sessionDate,
-      category: c.category,
-      challenge_observed: c.challengeObserved,
-      corrective_action: c.correctiveAction,
-      student_feedback: c.studentFeedback || '',
-      mentor_remarks: c.mentorRemarks || '',
-      mentor_name: mentorUser.fullName || '',
-    };
-  });
+  const counsellingRecords = await Promise.all(
+    counsellingDocs.map(async (c: any) => {
+      const mentorUser = (c.mentor as any)?.user || {};
+      const discussionWith: string[] = Array.isArray(c.discussionWith) ? c.discussionWith : [];
+      return {
+        session_date: c.sessionDate,
+        category: c.category,
+        // Reported exactly as stored. An older record with no stored
+        // participants prints "Not recorded" rather than an invented value.
+        discussion_with:
+          discussionWith.includes('student') && discussionWith.includes('parent')
+            ? 'Student & Parent'
+            : discussionWith.includes('student')
+              ? 'Student'
+              : discussionWith.includes('parent')
+                ? 'Parent'
+                : 'Not recorded',
+        record_kind: c.recordKind || 'INDIVIDUAL',
+        challenge_observed: c.challengeObserved,
+        corrective_action: c.correctiveAction,
+        student_feedback: c.studentFeedback || '',
+        mentor_remarks: c.mentorRemarks || '',
+        mentor_name: mentorUser.fullName || '',
+        evidence:
+          mode === 'internal'
+            ? []
+            : await buildEvidenceViews(
+                normaliseEvidenceRefs(c.evidence).map((ref: any) => ref.evidenceId)
+              ),
+      };
+    })
+  );
 
   // 10. Monthly Progress Records
   const progressDocs = await MonthlyProgress.find({ student: studentDoc._id })
@@ -281,6 +347,15 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 14;
 
+  // The banner title differs per download mode; the rest of the institutional
+  // header is identical across the three reports.
+  const docTitle =
+    mode === 'internal'
+      ? 'OFFICIAL INTERNAL ASSESSMENT REPORT'
+      : mode === 'mentor-documents'
+        ? 'MENTORING RECORDS & DOCUMENT ARCHIVE'
+        : 'OFFICIAL DIGITAL MENTOR–MENTEE RECORD BOOK';
+
   const renderHeader = (isFirstPage: boolean = false) => {
     // Institutional Top Header
     doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
@@ -308,7 +383,7 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(10.5);
     doc.setTextColor(goldColor[0], goldColor[1], goldColor[2]);
-    doc.text('OFFICIAL DIGITAL MENTOR–MENTEE RECORD BOOK', pageWidth / 2, 30.5, { align: 'center' });
+    doc.text(docTitle, pageWidth / 2, 30.5, { align: 'center' });
 
     doc.setDrawColor(200, 200, 200);
     doc.setLineWidth(0.5);
@@ -344,546 +419,897 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
 
   currentY += 27;
 
-  // SECTION 1: PERSONAL & FAMILY INFORMATION
-  autoTable(doc, {
-    startY: currentY,
-    margin: { left: margin, right: margin },
-    theme: 'grid',
-    head: [[{ content: '1. PERSONAL & FAMILY INFORMATION', colSpan: 4, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }]],
-    body: [
-      [
-        { content: 'Date of Birth:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
-        student.dob || 'Not specified',
-        { content: 'Email Address:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
-        student.email || 'N/A',
-      ],
-      [
-        { content: "Father's Name:", styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
-        parent?.father_name || 'N/A',
-        { content: 'Father Contact & Job:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
-        `${parent?.father_contact || 'N/A'} (${parent?.father_occupation || 'N/A'})`,
-      ],
-      [
-        { content: "Mother's Name:", styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
-        parent?.mother_name || 'N/A',
-        { content: 'Mother Contact & Job:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
-        `${parent?.mother_contact || 'N/A'} (${parent?.mother_occupation || 'N/A'})`,
-      ],
-      [
-        { content: 'Permanent Address:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
-        { content: student.address || 'KSRCE Campus / Tiruchengode', colSpan: 3 },
-      ],
-    ],
-    styles: { fontSize: 8.5, cellPadding: 2.2 },
-  });
-
-  currentY = (doc as any).lastAutoTable.finalY + 6;
-
-  // SECTION 2: ADMISSION & SCHOOLING DETAILS
-  autoTable(doc, {
-    startY: currentY,
-    margin: { left: margin, right: margin },
-    theme: 'grid',
-    head: [[{ content: '2. SCHOOLING & ADMISSION PARTICULARS', colSpan: 4, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }]],
-    body: [
-      [
-        { content: '10th Mark & School:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
-        `${school?.tenth_mark ? `${school.tenth_mark}/500` : 'N/A'} — ${school?.tenth_school || 'N/A'}`,
-        { content: '12th Mark & School:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
-        `${school?.twelfth_mark ? `${school.twelfth_mark}/600` : 'N/A'} — ${school?.twelfth_school || 'N/A'}`,
-      ],
-      [
-        { content: 'TNEA Cut-off Mark:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
-        school?.cutoff_mark ? `${school.cutoff_mark} / 200` : 'N/A',
-        { content: 'Admission Mode:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
-        school?.admission_type === 'LATERAL_ENTRY' ? 'LATERAL ENTRY' : school?.admission_type === 'MANAGEMENT' ? 'MANAGEMENT' : 'COUNSELLING',
-      ],
-      ...(school?.admission_type === 'LATERAL_ENTRY' && school?.lateral_entry ? [
-        [
-          { content: 'Lateral Entry College:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
-          `${school.lateral_entry.previousCollegeName || school.lateral_entry.previousInstitution || 'N/A'}`,
-          { content: 'Previous Course / Diploma:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
-          `${school.lateral_entry.previousCourseDiploma || school.lateral_entry.previousCourse || 'N/A'}`,
-        ] as any,
-        [
-          { content: 'Previous Institution:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
-          `${school.lateral_entry.previousInstitution || 'N/A'}`,
-          { content: 'Qualification & Adm Year:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
-          `${school.lateral_entry.previousQualificationDetails || 'N/A'} (Adm: ${school.lateral_entry.admissionYear || 'N/A'})`,
-        ] as any,
-      ] : []),
-      [
-        { content: 'Scholarship Details:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
-        { content: school?.scholarship_details || 'Nil', colSpan: 3 },
-      ],
-    ],
-    styles: { fontSize: 8.5, cellPadding: 2.2 },
-  });
-
-  currentY = (doc as any).lastAutoTable.finalY + 6;
-
-  // SECTION 3: SEMESTER ACADEMIC PERFORMANCE (Semesters 1 - 8)
-  // SGPA is printed from the stored value. The PDF must never fall back to the
-  // CGPA when SGPA is unrecorded.
-  const semesterRows = [1, 2, 3, 4, 5, 6, 7, 8].map((num) => {
-    const s = semesters.find((x: any) => x.semester_number === num);
-    const arrearsCountDisplay = s ? `${s.arrears_count}` : '0';
-    const subjectsDisplay = s ? (s.arrears_subjects || '—') : '—';
-    const hasStanding = s ? Boolean(s.has_active_arrear || s.arrears_count > 0) : false;
-    const statusDisplay = hasStanding ? 'Active Arrear' : 'Clear';
-
-    return [
-      `Semester 0${num}`,
-      s && s.cgpa > 0 ? s.cgpa.toFixed(2) : '-',
-      s && s.sgpa > 0 ? s.sgpa.toFixed(2) : '-',
-      arrearsCountDisplay,
-      subjectsDisplay,
-      statusDisplay,
-    ];
-  });
-
-  autoTable(doc, {
-    startY: currentY,
-    margin: { left: margin, right: margin },
-    theme: 'grid',
-    head: [
-      [{
-        content: `3. SEMESTER ACADEMIC PERFORMANCE (SEMESTERS 1 TO 8) — Active: ${arrearStats.activeArrearsCount} | Total History: ${arrearStats.historicalArrearsCount} | Cleared: ${arrearStats.clearedCount}`,
-        colSpan: 6,
-        styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' },
-      }],
-      ['Semester', 'CGPA', 'SGPA', 'Semester Arrears', 'Arrear Subjects', 'Clearance Remarks & Status'],
-    ],
-    body: semesterRows,
-    headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold', halign: 'center' },
-    styles: { fontSize: 8, cellPadding: 1.8, halign: 'center' },
-    columnStyles: {
-      0: { fontStyle: 'bold', halign: 'left', cellWidth: 26 },
-      1: { cellWidth: 16 },
-      2: { cellWidth: 16 },
-      3: { cellWidth: 28 },
-      4: { halign: 'left', cellWidth: 36 },
-      5: { halign: 'left' },
-    },
-  });
-
-  currentY = (doc as any).lastAutoTable.finalY + 6;
-
-  // SECTION 3B: ARREAR HISTORY (If any history exists)
-  if (arrearStats.arrearHistory && arrearStats.arrearHistory.length > 0) {
-    const arrearHistoryRows = arrearStats.arrearHistory.map((h: any) => [
-      h.subjectCode,
-      `Semester 0${h.originalSemester}`,
-      `Attempt ${h.attempt || 1}`,
-      h.status === 'CLEARED' ? (h.clearedInSemester ? `Semester 0${h.clearedInSemester}` : 'Cleared') : '—',
-      h.clearedDate || '—',
-      h.status === 'CLEARED' ? 'CLEARED' : 'ACTIVE ARREAR',
-      h.remarks || '—',
-    ]);
-
-    autoTable(doc, {
-      startY: currentY,
-      margin: { left: margin, right: margin },
-      theme: 'grid',
-      head: [
-        [{
-          content: `ARREAR HISTORY (Preserved Records) — Current Active: ${arrearStats.activeArrearsCount} | Total History: ${arrearStats.historicalArrearsCount} | Cleared: ${arrearStats.clearedCount}`,
-          colSpan: 7,
-          styles: { fillColor: [70, 80, 95], textColor: [255, 255, 255], fontStyle: 'bold' },
-        }],
-        ['Subject Code', 'Original Semester', 'Attempt', 'Cleared In', 'Cleared Date', 'Status', 'Remarks'],
-      ],
-      body: arrearHistoryRows,
-      headStyles: { fillColor: [55, 65, 80], textColor: [255, 255, 255], fontSize: 7.5, fontStyle: 'bold', halign: 'center' },
-      styles: { fontSize: 7.5, cellPadding: 1.6, halign: 'center' },
-      columnStyles: {
-        0: { fontStyle: 'bold', halign: 'left', cellWidth: 26 },
-        1: { cellWidth: 28 },
-        2: { cellWidth: 20 },
-        3: { cellWidth: 24 },
-        4: { cellWidth: 24 },
-        5: { fontStyle: 'bold', cellWidth: 28 },
-        6: { halign: 'left' },
-      },
-    });
-
-    currentY = (doc as any).lastAutoTable.finalY + 6;
-  }
-
-  // SECTION 4: MENTOR ASSIGNMENT & REASSIGNMENT HISTORY (Immutable Lineage)
-  //
-  // The "Tenure Duration" column was removed from this table. `assignedFrom` /
-  // `assignedUntil` remain on the MentorAssignment model (other modules still
-  // use them, and the data must not be deleted) - they are simply no longer
-  // printed as a derived "duration" column here.
-  const mentorHistoryRows = mentorHistory.length > 0
-    ? mentorHistory.map((h: any, idx: number) => [
-        `#${idx + 1}`,
-        h.mentor_name,
-        h.designation || 'Faculty Mentor',
-        h.status,
-        h.change_reason || 'Initial Assignment',
-      ])
-    : [['1', currentMentor?.mentor_name || 'Assigned Mentor', currentMentor?.designation || '', 'ACTIVE', 'Initial Allocation']];
-
-  autoTable(doc, {
-    startY: currentY,
-    margin: { left: margin, right: margin },
-    theme: 'grid',
-    head: [
-      [{ content: '4. MENTOR ASSIGNMENT & HISTORICAL REASSIGNMENT LINEAGE', colSpan: 5, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }],
-      ['#', 'Mentor Name', 'Designation', 'Status', 'Reason for Change / Allocation'],
-    ],
-    body: mentorHistoryRows,
-    headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold' },
-    styles: { fontSize: 8, cellPadding: 2 },
-    columnStyles: {
-      0: { cellWidth: 10, halign: 'center' },
-      1: { fontStyle: 'bold', cellWidth: 46 },
-      2: { cellWidth: 38 },
-      3: { cellWidth: 26, halign: 'center' },
-    },
-  });
-
-  // PAGE 2 (or Next Page) for Meetings & Counselling
-  doc.addPage();
-  renderHeader(false);
-  currentY = 38;
-
-  // SECTION 5: WEEKLY SATURDAY MEETINGS RECORD
-  const meetingRows = meetings.length > 0
-    ? meetings.map((m: any) => [
-        m.meeting_date,
-        `${m.meeting_time}\n(${m.location})`,
-        m.attendance_status,
-        m.challenges_discussed || 'None reported',
-        m.corrective_action || 'Regular mentoring guidance',
-        m.mentor_remarks || 'Satisfactory',
-      ])
-    : [['No meetings logged yet.', '-', '-', '-', '-', '-']];
-
-  autoTable(doc, {
-    startY: currentY,
-    margin: { left: margin, right: margin },
-    theme: 'grid',
-    head: [
-      [{ content: '5. WEEKLY SATURDAY MENTOR–MENTEE MEETINGS LOG', colSpan: 6, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }],
-      ['Date', 'Time & Location', 'Attendance', 'Challenges Discussed', 'Corrective Action Taken', 'Mentor Remarks'],
-    ],
-    body: meetingRows,
-    headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold' },
-    styles: { fontSize: 7.5, cellPadding: 2 },
-    columnStyles: {
-      0: { fontStyle: 'bold', cellWidth: 22 },
-      1: { cellWidth: 28 },
-      2: { cellWidth: 20, halign: 'center' },
-      3: { cellWidth: 40 },
-      4: { cellWidth: 40 },
-      5: { cellWidth: 32 },
-    },
-  });
-
-  currentY = (doc as any).lastAutoTable.finalY + 6;
-
-  // SECTION 6: 5-DOMAIN COUNSELLING & INTERVENTION RECORDS
-  const counsellingRows = counsellingRecords.length > 0
-    ? counsellingRecords.map((c: any) => [
-        c.session_date,
-        c.category,
-        c.challenge_observed,
-        c.corrective_action,
-        c.student_feedback || 'Acknowledged',
-        c.mentor_remarks || 'Action initiated',
-      ])
-    : [['No formal counselling sessions logged.', '-', '-', '-', '-', '-']];
-
-  autoTable(doc, {
-    startY: currentY,
-    margin: { left: margin, right: margin },
-    theme: 'grid',
-    head: [
-      [{ content: '6. 5-DOMAIN COUNSELLING & CORRECTIVE ACTION RECORDS', colSpan: 6, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }],
-      ['Date', 'Category Domain', 'Challenge Observed', 'Corrective Action Prescribed', 'Student Feedback', 'Mentor Remarks'],
-    ],
-    body: counsellingRows,
-    headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold' },
-    styles: { fontSize: 7.5, cellPadding: 2 },
-    columnStyles: {
-      0: { fontStyle: 'bold', cellWidth: 20 },
-      1: { fontStyle: 'bold', cellWidth: 32 },
-      2: { cellWidth: 38 },
-      3: { cellWidth: 38 },
-      4: { cellWidth: 28 },
-      5: { cellWidth: 26 },
-    },
-  });
-
-  currentY = (doc as any).lastAutoTable.finalY + 6;
-
-  // SECTION 7: MONTHLY PROGRESS EVALUATION LEDGER
-  if (monthlyProgress.length > 0) {
-    if (currentY > pageHeight - 65) {
-      doc.addPage();
-      renderHeader(false);
-      currentY = 38;
-    }
-
-    const progressRows = monthlyProgress.map((p: any) => [
-      p.month_name,
-      `Acad: ${p.academic_rating}/5\n${p.academic_notes || ''}`,
-      `Placement: ${p.placement_rating}/5\n${p.placement_notes || ''}`,
-      `E&C: ${p.ec_rating}/5\n${p.ec_notes || ''}`,
-      `Innov: ${p.innovation_rating}/5\n${p.innovation_notes || ''}`,
-      `Skill: ${p.skill_rating}/5\n${p.skill_notes || ''}`,
-    ]);
-
-    autoTable(doc, {
-      startY: currentY,
-      margin: { left: margin, right: margin },
-      theme: 'grid',
-      head: [
-        [{ content: '7. MONTHLY PROGRESS EVALUATION LEDGER', colSpan: 6, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }],
-        ['Period', 'Academic', 'Placement', 'Extra-Curricular', 'Innovation', 'Skill Development'],
-      ],
-      body: progressRows,
-      headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold' },
-      styles: { fontSize: 7.5, cellPadding: 2 },
-    });
-
-    currentY = (doc as any).lastAutoTable.finalY + 6;
-  }
-
-  // SECTION 8: STUDENT DOCUMENTS & CERTIFICATES OFFICIAL ARCHIVE
-  //
-  // Every document on the student's record is listed here with its metadata, and
-  // the actual file is embedded: images inline on the following pages, PDFs as
-  // annexure pages appended after the signed record (jsPDF cannot merge PDFs on
-  // its own, so pdf-lib performs that final append).
-  if (currentY > pageHeight - 70) {
-    doc.addPage();
-    renderHeader(false);
-    currentY = 38;
-  }
-
-  const uploadedCount = studentDocuments.filter((d: any) => !d.is_system_form).length;
-  const docRows =
-    studentDocuments.length > 0
-      ? studentDocuments.map((d: any, i: number) => [
-          String(i + 1),
-          d.title.length > 38 ? `${d.title.slice(0, 37)}…` : d.title,
-          `${d.document_type}\n${d.category}`,
-          d.event_details.length > 46 ? `${d.event_details.slice(0, 45)}…` : d.event_details,
-          d.uploaded_on,
-          d.verification_status,
-        ])
-      : [['—', 'No documents on record.', '-', '-', '-', '-']];
-
-  autoTable(doc, {
-    startY: currentY,
-    margin: { left: margin, right: margin },
-    theme: 'grid',
-    head: [
-      [
-        {
-          content: '8. STUDENT DOCUMENTS & CERTIFICATES – OFFICIAL ARCHIVE',
-          colSpan: 6,
-          styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' },
-        },
-      ],
-      ['#', 'Document Name', 'Type / Category', 'Event / Details', 'Upload Date', 'Status'],
-    ],
-    body: docRows,
-    headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold' },
-    styles: { fontSize: 7.5, cellPadding: 2 },
-    columnStyles: {
-      0: { cellWidth: 8, halign: 'center' },
-      1: { fontStyle: 'bold', cellWidth: 40 },
-      2: { cellWidth: 30 },
-      3: { cellWidth: 42 },
-      4: { cellWidth: 24, halign: 'center' },
-      5: { cellWidth: 24, halign: 'center' },
-    },
-  });
-
-  currentY = (doc as any).lastAutoTable.finalY + 5;
-
-  doc.setFont('helvetica', 'italic');
-  doc.setFontSize(7.5);
-  doc.setTextColor(100, 100, 100);
-  doc.text(
-    `${uploadedCount} student-uploaded document(s) on record. Certificate scans are reproduced in full as annexures following the signed record. Verification is carried out by the assigned mentor / administrator.`,
-    margin,
-    currentY
-  );
-  currentY += 8;
-
-  // ---- Embed the actual files -------------------------------------------------
-  // Images are drawn inline; PDFs are collected and appended after the record is
-  // signed. Anything that cannot be embedded is reported, never silently dropped.
-  const EMBED_LIMITS = { images: 25, pdfFiles: 25 };
+  // ---- Shared state for all three download modes ---------------------------
+  // Declared here (once) because the annexure embedding loop, the photo
+  // evidence pages and the signed tail all read and write the same state.
+  const EMBED_LIMITS = { images: 25, pdfFiles: 25, photos: 60 };
   const IMAGE_FORMATS: Record<string, string> = {
     'image/png': 'PNG',
     'image/jpeg': 'JPEG',
     'image/jpg': 'JPEG',
   };
-
   const annexurePdfs: Array<{ meta: any; doc: PDFDocument; pages: number }> = [];
   let imageCount = 0;
+  let photosUnavailable = 0;
   const notEmbedded: Array<{ name: string; reason: string }> = [];
   const missingFileReasons = new Map<string, number>();
 
-  for (const d of studentDocuments) {
-    if (d.is_system_form) continue; // never self-embed this dossier
+  // Section numbers differ per document type: the full record book numbers
+  // every section in one long sequence, the focused mentor-documents download
+  // uses its own short sequence. Titles are identical either way.
+  const numbered = (fullNo: number, docsNo: number, title: string): string =>
+    `${mode === 'full' ? fullNo : docsNo}. ${title}`;
+  const documentsSectionNo = mode === 'full' ? 10 : 5;
 
-    // Resolve through the ONE existing uploads helper -- the same
-    // `locateStoredUpload` the Student Documents view/download endpoints use, so
-    // a file that the portal can display is never reported as missing here. It
-    // searches every known upload root (explicit UPLOADS_DIR, a mounted
-    // persistent disk, the backend package directory, the legacy cwd-relative
-    // directory, the tmp fallback) and only then falls back to a byte-exact
-    // content-identity recovery anchored on the recorded file name and size.
-    const located = locateStoredUpload(d.file_url, {
-      fileName: d.file_name,
-      fileSize: d.file_size,
-      fileType: d.file_type,
+  // ---- Internal assessment section (modes: full + internal) ----------------
+  // Subject-wise IA1/IA2/End-Semester marks grouped under semester sub-headers.
+  // An empty record still shows the section with an explicit "not recorded"
+  // row, so a reader never mistakes "missing section" for "no data".
+  const drawInternalAssessmentSection = (sectionLabel: string): void => {
+    const body: any[] = [];
+    if (internalMarks.length === 0) {
+      body.push([
+        { content: '—', styles: { halign: 'center' } },
+        { content: 'No internal assessment marks have been recorded for this student yet.', colSpan: 5, styles: { halign: 'left', fontStyle: 'italic' } },
+      ]);
+    } else {
+      let lastSem = -1;
+      for (const m of internalMarks as any[]) {
+        if (m.semesterNumber !== lastSem) {
+          lastSem = m.semesterNumber;
+          body.push([
+            {
+              content: `Semester ${m.semesterNumber}`,
+              colSpan: 6,
+              styles: { fillColor: [226, 232, 240], textColor: [11, 37, 69], fontStyle: 'bold', halign: 'left' },
+            },
+          ]);
+        }
+        const entered = [m.ia1, m.ia2, m.endSem].filter((v: any) => v != null) as number[];
+        const total = entered.length > 0 ? entered.reduce((a, b) => a + b, 0) : null;
+        body.push([
+          m.subjectCode,
+          m.subjectName || '—',
+          m.ia1 != null ? String(m.ia1) : '—',
+          m.ia2 != null ? String(m.ia2) : '—',
+          m.endSem != null ? String(m.endSem) : '—',
+          total != null ? String(total) : '—',
+        ]);
+      }
+    }
+
+    autoTable(doc, {
+      startY: currentY,
+      margin: { left: margin, right: margin },
+      theme: 'grid',
+      head: [
+        [{ content: sectionLabel, colSpan: 6, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }],
+        ['Subject Code', 'Subject Name', 'IA1 (out of 50)', 'IA2 (out of 50)', 'End Semester (out of 100)', 'Total (of recorded marks)'],
+      ],
+      body,
+      headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold', halign: 'center' },
+      styles: { fontSize: 8, cellPadding: 1.8, halign: 'center' },
+      columnStyles: {
+        0: { fontStyle: 'bold', halign: 'left', cellWidth: 26 },
+        1: { halign: 'left', cellWidth: 52 },
+        2: { cellWidth: 22 },
+        3: { cellWidth: 22 },
+        4: { cellWidth: 30 },
+        5: { cellWidth: 30 },
+      },
     });
-    if (!located) {
-      // Only claim the bytes are gone AFTER the same resolver the application
-      // uses everywhere else has searched every root it knows about. A record
-      // whose stored path is not even inside the uploads tree is a different
-      // fault and is named as such.
-      if (!resolveStoredUploadPath(d.file_url)) {
-        notEmbedded.push({
-          name: d.file_name,
-          reason: `Stored path "${d.file_url}" is not inside the uploads directory, so it cannot be looked up at all. This record needs administrator repair.`,
-        });
-        continue;
-      }
-      notEmbedded.push({
-        name: d.file_name,
-        reason: `No file with these exact bytes was found in any upload location searched (${describeUploadRoots()}), and no other file matches the recorded size of ${d.file_size} bytes. The record is intact but the file itself was lost.`,
-      });
-      missingFileReasons.set(d.file_url, (missingFileReasons.get(d.file_url) || 0) + 1);
-      continue;
-    }
 
-    if (located.recovered) {
-      // A file found away from its recorded path is a real storage fault even
-      // though the content is available, so it is logged for the operator.
-      console.warn(
-        `generateStudentPdf: "${d.file_name}" was not at its recorded path (${d.file_url}); ` +
-          `resolved it by ${located.strategy} to ${located.path}`
+    currentY = (doc as any).lastAutoTable.finalY + 4;
+    if (internalMarks.length > 0) {
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(7);
+      doc.setTextColor(110, 110, 110);
+      doc.text(
+        '"—" indicates the mark has not been recorded for that component. Total is the sum of the recorded components only.',
+        margin,
+        currentY
       );
+      currentY += 5;
     }
+  };
 
-    const absPath = located.path;
-    if (!fs.existsSync(absPath)) {
-      // Defensive: `locateStoredUpload` only returns paths it has stat'ed, so a
-      // failure here means the file vanished between the lookup and this read.
-      notEmbedded.push({
-        name: d.file_name,
-        reason: 'The file was located but disappeared from disk while the record book was being generated. Please retry.',
-      });
-      continue;
-    }
-
-    // Trust the BYTES, not the declared MIME type. A record can say `pdf` while
-    // holding a scan (or the reverse), and choosing the wrong branch is what
-    // silently produced blank annexures.
-    const sniffed = sniffStoredFileType(absPath);
-    const declared = (d.file_type || '').toLowerCase().trim();
-    const mime = sniffed || declared;
-
-    if (sniffed && declared && sniffed !== (declared === 'image/jpg' ? 'image/jpeg' : declared)) {
-      console.warn(
-        `generateStudentPdf: "${d.file_name}" is stored as "${declared}" but its content is "${sniffed}"; embedding it as ${sniffed}.`
-      );
-    }
-
-    if (mime === 'application/pdf') {
-      if (annexurePdfs.length >= EMBED_LIMITS.pdfFiles) {
-        notEmbedded.push({
-          name: d.file_name,
-          reason: `Record book annexure limit of ${EMBED_LIMITS.pdfFiles} PDF files reached, so this document was not reproduced. It is still listed in Section 8 and remains available in Student Documents.`,
-        });
-        continue;
+  // ---- Photo evidence pages (modes: full + mentor-documents) ---------------
+  // One grid of every evidence photo the student's mentoring records point at,
+  // deduplicated by evidence id (a shared Saturday photo appears once), with a
+  // caption naming the record it belongs to and the stored file metadata.
+  const collectPhotoItems = (): Array<{ caption: string; view: any }> => {
+    const items: Array<{ caption: string; view: any }> = [];
+    const seen = new Set<string>();
+    const push = (views: any[], caption: string) => {
+      for (const v of views || []) {
+        const key = String(v?.evidenceId || '');
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        items.push({ caption, view: v });
       }
-      try {
-        // Loaded once here and reused below, so each file is parsed only once.
-        const src = await PDFDocument.load(fs.readFileSync(absPath), { ignoreEncryption: true });
-        annexurePdfs.push({ meta: d, doc: src, pages: src.getPageCount() });
-      } catch (e: any) {
-        notEmbedded.push({
-          name: d.file_name,
-          reason: 'The file is present on disk but is not a readable PDF (it is damaged or password-protected), so it could not be reproduced.',
-        });
-        console.error('generateStudentPdf: could not read document', absPath, e?.message);
-      }
-      continue;
+    };
+    for (const m of meetings as any[]) {
+      push(m.evidence, `Saturday Meeting \u2022 ${m.meeting_date}`);
     }
-
-    const fmt = IMAGE_FORMATS[mime];
-    if (!fmt) {
-      notEmbedded.push({
-        name: d.file_name,
-        reason: `Unsupported file type "${d.file_type || 'unknown'}". Only PDF, JPEG and PNG can be reproduced as annexures.`,
-      });
-      continue;
+    for (const c of counsellingRecords as any[]) {
+      push(c.evidence, `Counselling \u2022 ${c.session_date} \u2022 ${c.category}`);
     }
-    if (imageCount >= EMBED_LIMITS.images) {
-      notEmbedded.push({
-        name: d.file_name,
-        reason: `Record book annexure limit of ${EMBED_LIMITS.images} images reached, so this image was not reproduced. It is still listed in Section 8 and remains available in Student Documents.`,
-      });
-      continue;
-    }
+    return items;
+  };
 
-    try {
-      const dataUrl = `data:${mime};base64,${fs.readFileSync(absPath).toString('base64')}`;
-      const props = doc.getImageProperties(dataUrl);
+  const drawPhotoEvidence = (sectionLabel: string): void => {
+    const photoItems = collectPhotoItems();
+    if (photoItems.length === 0) return;
+    const shown = photoItems.slice(0, EMBED_LIMITS.photos);
+    photosUnavailable = 0;
 
-      doc.addPage();
-      renderHeader(false);
+    doc.addPage();
+    renderHeader(false);
+    currentY = 38;
 
+    const drawHeading = () => {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(9.5);
       doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-      doc.text(`ANNEXURE IMAGE – ${d.title}`, margin, 40, { maxWidth: pageWidth - margin * 2 });
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7.5);
-      doc.setTextColor(90, 90, 90);
-      doc.text(
-        `${d.document_type} | ${d.category} | Uploaded: ${d.uploaded_on} | Status: ${d.verification_status} | File: ${d.file_name}`,
-        margin,
-        45,
-        { maxWidth: pageWidth - margin * 2 }
-      );
+      doc.text(`${sectionLabel} — ${photoItems.length} PHOTO(S) ON RECORD`, margin, currentY);
+      doc.setDrawColor(goldColor[0], goldColor[1], goldColor[2]);
+      doc.setLineWidth(0.6);
+      doc.line(margin, currentY + 1.5, pageWidth - margin, currentY + 1.5);
+      currentY += 7;
+    };
+    drawHeading();
 
-      // Fit the image inside the printable area, preserving aspect ratio. The
-      // band runs from just under the caption to just above the footer rule at
-      // `pageHeight - 12`, so a full-height scan is never drawn over the footer.
-      const maxW = pageWidth - margin * 2;
-      const bandTop = 50;
-      const maxH = pageHeight - 16 - bandTop;
-      const ratio = props.width > 0 && props.height > 0 ? props.height / props.width : 0.7;
-      let drawW = maxW;
-      let drawH = drawW * ratio;
-      if (drawH > maxH) {
-        drawH = maxH;
-        drawW = drawH / ratio;
+    const truncateToWidth = (text: string, maxWidth: number): string => {
+      const lines = doc.splitTextToSize(text, maxWidth) as string[];
+      if (lines.length <= 1) return text;
+      const first = lines[0];
+      return first.length > 1 ? `${first.slice(0, -1)}…` : `${first}…`;
+    };
+
+    const gap = 6;
+    const cellW = (pageWidth - margin * 2 - gap) / 2;
+    const imgBoxH = 40;
+    const cellH = imgBoxH + 12;
+
+    for (let i = 0; i < shown.length; i++) {
+      const col = i % 2;
+      if (col === 0 && currentY + cellH > pageHeight - 18) {
+        doc.addPage();
+        renderHeader(false);
+        currentY = 38;
+        drawHeading();
       }
-      // Centred in both axes so a tall scan is not pinned to the top edge and a
-      // wide one is not jammed against the left margin.
-      const drawX = margin + (maxW - drawW) / 2;
-      const drawY = bandTop + Math.max(0, (maxH - drawH) / 2);
-      doc.addImage(dataUrl, fmt, drawX, drawY, drawW, drawH);
-      imageCount++;
-    } catch (e: any) {
-      notEmbedded.push({
-        name: d.file_name,
-        reason: 'The image file is present on disk but could not be decoded, so it could not be reproduced.',
+
+      const { caption, view } = shown[i];
+      const x = margin + col * (cellW + gap);
+
+      // Frame for the photo cell.
+      doc.setDrawColor(215, 215, 215);
+      doc.setLineWidth(0.3);
+      doc.roundedRect(x, currentY, cellW, imgBoxH, 1.5, 1.5, 'S');
+
+      // Resolve the bytes through the SAME uploads resolver every other part of
+      // the application uses, then trust the content sniff over the MIME claim.
+      let drawn = false;
+      try {
+        const located = locateStoredUpload(view.storedPath, {
+          fileName: view.fileName,
+          fileSize: view.fileSize,
+          fileType: view.fileType,
+        });
+        if (located && fs.existsSync(located.path)) {
+          const mime = sniffStoredFileType(located.path) || (view.fileType || '').toLowerCase();
+          const fmt = IMAGE_FORMATS[mime];
+          if (fmt) {
+            const dataUrl = `data:${mime};base64,${fs.readFileSync(located.path).toString('base64')}`;
+            const props = doc.getImageProperties(dataUrl);
+            const ratio = props.width > 0 && props.height > 0 ? props.height / props.width : 0.75;
+            const maxW = cellW - 4;
+            const maxH = imgBoxH - 4;
+            let drawW = maxW;
+            let drawH = drawW * ratio;
+            if (drawH > maxH) {
+              drawH = maxH;
+              drawW = drawH / ratio;
+            }
+            doc.addImage(
+              dataUrl,
+              fmt,
+              x + (cellW - drawW) / 2,
+              currentY + (imgBoxH - drawH) / 2,
+              drawW,
+              drawH
+            );
+            drawn = true;
+          }
+        }
+      } catch (e: any) {
+        console.error('generateStudentPdf: could not embed evidence photo', view.fileName, e?.message);
+      }
+
+      if (!drawn) {
+        // Never silently drop a photo: the cell states the failure in place.
+        photosUnavailable++;
+        doc.setFont('helvetica', 'italic');
+        doc.setFontSize(7);
+        doc.setTextColor(150, 80, 80);
+        doc.text('Photo file unavailable', x + cellW / 2, currentY + imgBoxH / 2, { align: 'center' });
+      }
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(90, 90, 90);
+      doc.text(truncateToWidth(`${i + 1}. ${caption}`, cellW), x, currentY + imgBoxH + 4);
+      const sizeLabel =
+        view.fileSize != null ? ` — ${(Number(view.fileSize) / 1024).toFixed(1)} KB` : '';
+      doc.text(truncateToWidth(`${view.fileName || 'photo'}${sizeLabel}`, cellW), x, currentY + imgBoxH + 7.5);
+
+      if (col === 1) currentY += cellH;
+    }
+    if (shown.length % 2 === 1) currentY += cellH;
+
+    if (photoItems.length > shown.length) {
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(7);
+      doc.setTextColor(110, 110, 110);
+      doc.text(
+        `Showing ${shown.length} of ${photoItems.length} photos (record book photo limit of ${EMBED_LIMITS.photos} reached).`,
+        margin,
+        currentY + 2
+      );
+      currentY += 7;
+    }
+    if (photosUnavailable > 0) {
+      console.warn(
+        `generateStudentPdf: ${photosUnavailable} evidence photo(s) could not be reproduced for reg no ${student.register_number}; the affected cells say so in the PDF.`
+      );
+    }
+  };
+
+  if (mode === 'internal') {
+    drawInternalAssessmentSection(
+      '1. INTERNAL ASSESSMENT MARKS (IA1 / 50 \u2022 IA2 / 50 \u2022 END SEMESTER / 100)'
+    );
+  } else {
+
+    if (mode === 'full') {
+      // SECTION 1: PERSONAL & FAMILY INFORMATION
+      autoTable(doc, {
+        startY: currentY,
+        margin: { left: margin, right: margin },
+        theme: 'grid',
+        head: [[{ content: '1. PERSONAL & FAMILY INFORMATION', colSpan: 4, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }]],
+        body: [
+          [
+            { content: 'Date of Birth:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            student.dob || 'Not specified',
+            { content: 'Email Address:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            student.email || 'N/A',
+          ],
+          [
+            { content: "Father's Name:", styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            parent?.father_name || 'N/A',
+            { content: 'Father Contact & Job:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            `${parent?.father_contact || 'N/A'} (${parent?.father_occupation || 'N/A'})`,
+          ],
+          [
+            { content: "Mother's Name:", styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            parent?.mother_name || 'N/A',
+            { content: 'Mother Contact & Job:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            `${parent?.mother_contact || 'N/A'} (${parent?.mother_occupation || 'N/A'})`,
+          ],
+          [
+            { content: 'Permanent Address:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            { content: student.address || 'KSRCE Campus / Tiruchengode', colSpan: 3 },
+          ],
+        ],
+        styles: { fontSize: 8.5, cellPadding: 2.2 },
       });
-      console.error('generateStudentPdf: could not embed image', absPath, e?.message);
+
+      currentY = (doc as any).lastAutoTable.finalY + 6;
+
+      // SECTION 2: ADMISSION & SCHOOLING DETAILS
+      autoTable(doc, {
+        startY: currentY,
+        margin: { left: margin, right: margin },
+        theme: 'grid',
+        head: [[{ content: '2. SCHOOLING & ADMISSION PARTICULARS', colSpan: 4, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }]],
+        body: [
+          [
+            { content: '10th Mark & School:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            `${school?.tenth_mark ? `${school.tenth_mark}/500` : 'N/A'} — ${school?.tenth_school || 'N/A'}`,
+            { content: '12th Mark & School:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            `${school?.twelfth_mark ? `${school.twelfth_mark}/600` : 'N/A'} — ${school?.twelfth_school || 'N/A'}`,
+          ],
+          [
+            { content: 'TNEA Cut-off Mark:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            school?.cutoff_mark ? `${school.cutoff_mark} / 200` : 'N/A',
+            { content: 'Admission Mode:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            school?.admission_type === 'LATERAL_ENTRY' ? 'LATERAL ENTRY' : school?.admission_type === 'MANAGEMENT' ? 'MANAGEMENT' : 'COUNSELLING',
+          ],
+          ...(school?.admission_type === 'LATERAL_ENTRY' && school?.lateral_entry ? [
+            [
+              { content: 'Lateral Entry College:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
+              `${school.lateral_entry.previousCollegeName || school.lateral_entry.previousInstitution || 'N/A'}`,
+              { content: 'Previous Course / Diploma:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
+              `${school.lateral_entry.previousCourseDiploma || school.lateral_entry.previousCourse || 'N/A'}`,
+            ] as any,
+            [
+              { content: 'Previous Institution:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
+              `${school.lateral_entry.previousInstitution || 'N/A'}`,
+              { content: 'Qualification & Adm Year:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
+              `${school.lateral_entry.previousQualificationDetails || 'N/A'} (Adm: ${school.lateral_entry.admissionYear || 'N/A'})`,
+            ] as any,
+          ] : []),
+          [
+            { content: 'Scholarship Details:', styles: { fontStyle: 'bold' as const, fillColor: [248, 249, 250] } },
+            { content: school?.scholarship_details || 'Nil', colSpan: 3 },
+          ],
+        ],
+        styles: { fontSize: 8.5, cellPadding: 2.2 },
+      });
+
+      currentY = (doc as any).lastAutoTable.finalY + 6;
+
+      // SECTION 3: SEMESTER ACADEMIC PERFORMANCE (Semesters 1 - 8)
+      // SGPA is printed from the stored value. The PDF must never fall back to the
+      // CGPA when SGPA is unrecorded.
+      const semesterRows = [1, 2, 3, 4, 5, 6, 7, 8].map((num) => {
+        const s = semesters.find((x: any) => x.semester_number === num);
+        const arrearsCountDisplay = s ? `${s.arrears_count}` : '0';
+        const subjectsDisplay = s ? (s.arrears_subjects || '—') : '—';
+        const hasStanding = s ? Boolean(s.has_active_arrear || s.arrears_count > 0) : false;
+        const statusDisplay = hasStanding ? 'Active Arrear' : 'Clear';
+
+        return [
+          `Semester 0${num}`,
+          s && s.cgpa > 0 ? s.cgpa.toFixed(2) : '-',
+          s && s.sgpa > 0 ? s.sgpa.toFixed(2) : '-',
+          arrearsCountDisplay,
+          subjectsDisplay,
+          statusDisplay,
+        ];
+      });
+
+      autoTable(doc, {
+        startY: currentY,
+        margin: { left: margin, right: margin },
+        theme: 'grid',
+        head: [
+          [{
+            content: `3. SEMESTER ACADEMIC PERFORMANCE (SEMESTERS 1 TO 8) — Active: ${arrearStats.activeArrearsCount} | Total History: ${arrearStats.historicalArrearsCount} | Cleared: ${arrearStats.clearedCount}`,
+            colSpan: 6,
+            styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' },
+          }],
+          ['Semester', 'CGPA', 'SGPA', 'Semester Arrears', 'Arrear Subjects', 'Clearance Remarks & Status'],
+        ],
+        body: semesterRows,
+        headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold', halign: 'center' },
+        styles: { fontSize: 8, cellPadding: 1.8, halign: 'center' },
+        columnStyles: {
+          0: { fontStyle: 'bold', halign: 'left', cellWidth: 26 },
+          1: { cellWidth: 16 },
+          2: { cellWidth: 16 },
+          3: { cellWidth: 28 },
+          4: { halign: 'left', cellWidth: 36 },
+          5: { halign: 'left' },
+        },
+      });
+
+      currentY = (doc as any).lastAutoTable.finalY + 6;
+
+      // SECTION 3B: ARREAR HISTORY (If any history exists)
+      if (arrearStats.arrearHistory && arrearStats.arrearHistory.length > 0) {
+        const arrearHistoryRows = arrearStats.arrearHistory.map((h: any) => [
+          h.subjectCode,
+          `Semester 0${h.originalSemester}`,
+          `Attempt ${h.attempt || 1}`,
+          h.status === 'CLEARED' ? (h.clearedInSemester ? `Semester 0${h.clearedInSemester}` : 'Cleared') : '—',
+          h.clearedDate || '—',
+          h.status === 'CLEARED' ? 'CLEARED' : 'ACTIVE ARREAR',
+          h.remarks || '—',
+        ]);
+
+        autoTable(doc, {
+          startY: currentY,
+          margin: { left: margin, right: margin },
+          theme: 'grid',
+          head: [
+            [{
+              content: `ARREAR HISTORY (Preserved Records) — Current Active: ${arrearStats.activeArrearsCount} | Total History: ${arrearStats.historicalArrearsCount} | Cleared: ${arrearStats.clearedCount}`,
+              colSpan: 7,
+              styles: { fillColor: [70, 80, 95], textColor: [255, 255, 255], fontStyle: 'bold' },
+            }],
+            ['Subject Code', 'Original Semester', 'Attempt', 'Cleared In', 'Cleared Date', 'Status', 'Remarks'],
+          ],
+          body: arrearHistoryRows,
+          headStyles: { fillColor: [55, 65, 80], textColor: [255, 255, 255], fontSize: 7.5, fontStyle: 'bold', halign: 'center' },
+          styles: { fontSize: 7.5, cellPadding: 1.6, halign: 'center' },
+          columnStyles: {
+            0: { fontStyle: 'bold', halign: 'left', cellWidth: 26 },
+            1: { cellWidth: 28 },
+            2: { cellWidth: 20 },
+            3: { cellWidth: 24 },
+            4: { cellWidth: 24 },
+            5: { fontStyle: 'bold', cellWidth: 28 },
+            6: { halign: 'left' },
+          },
+        });
+
+        currentY = (doc as any).lastAutoTable.finalY + 6;
+      }
+    }
+
+    if (mode === 'full') {
+      drawInternalAssessmentSection('4. INTERNAL ASSESSMENT MARKS');
+    }
+
+    if (mode === 'full') {
+      // SECTION 5: MENTOR ASSIGNMENT & REASSIGNMENT HISTORY (Immutable Lineage)
+      //
+      // The "Tenure Duration" column was removed from this table. `assignedFrom` /
+      // `assignedUntil` remain on the MentorAssignment model (other modules still
+      // use them, and the data must not be deleted) - they are simply no longer
+      // printed as a derived "duration" column here.
+      const mentorHistoryRows = mentorHistory.length > 0
+        ? mentorHistory.map((h: any, idx: number) => [
+            `#${idx + 1}`,
+            h.mentor_name,
+            h.designation || 'Faculty Mentor',
+            h.status,
+            h.change_reason || 'Initial Assignment',
+          ])
+        : [['1', currentMentor?.mentor_name || 'Assigned Mentor', currentMentor?.designation || '', 'ACTIVE', 'Initial Allocation']];
+
+      autoTable(doc, {
+        startY: currentY,
+        margin: { left: margin, right: margin },
+        theme: 'grid',
+        head: [
+          [{ content: '5. MENTOR ASSIGNMENT & HISTORICAL REASSIGNMENT LINEAGE', colSpan: 5, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }],
+          ['#', 'Mentor Name', 'Designation', 'Status', 'Reason for Change / Allocation'],
+        ],
+        body: mentorHistoryRows,
+        headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold' },
+        styles: { fontSize: 8, cellPadding: 2 },
+        columnStyles: {
+          0: { cellWidth: 10, halign: 'center' },
+          1: { fontStyle: 'bold', cellWidth: 46 },
+          2: { cellWidth: 38 },
+          3: { cellWidth: 26, halign: 'center' },
+        },
+      });
+    } else {
+      // The focused mentor-documents download opens with a compact student and
+      // mentor information block instead of the full personal / schooling /
+      // semester profile, which belongs to the complete record book only.
+      autoTable(doc, {
+        startY: currentY,
+        margin: { left: margin, right: margin },
+        theme: 'grid',
+        head: [[{ content: '1. STUDENT & MENTOR INFORMATION', colSpan: 4, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }]],
+        body: [
+          [
+            { content: 'Student Name:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            student.full_name,
+            { content: 'Register Number:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            student.register_number,
+          ],
+          [
+            { content: 'Department:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            `B.E. ${student.department_name} (${student.department_code})`,
+            { content: 'Academic Batch:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            acadExtra || 'Not recorded',
+          ],
+          [
+            { content: 'Active Mentor:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            currentMentor ? currentMentor.mentor_name : 'Pending Allocation',
+            { content: 'Designation & Employee ID:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            currentMentor
+              ? `${currentMentor.designation || 'Faculty Mentor'} (${currentMentor.employee_id || 'N/A'})`
+              : 'N/A',
+          ],
+          [
+            { content: 'Mentor Contact:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            currentMentor?.phone_number || 'N/A',
+            { content: 'Mentor Assigned From:', styles: { fontStyle: 'bold', fillColor: [248, 249, 250] } },
+            formatDocDate(currentMentor?.assigned_from) || 'N/A',
+          ],
+        ],
+        styles: { fontSize: 8.5, cellPadding: 2.2 },
+      });
+      currentY = (doc as any).lastAutoTable.finalY + 6;
+    }
+
+    // PAGE 2 (or Next Page) for Meetings & Counselling
+    doc.addPage();
+    renderHeader(false);
+    currentY = 38;
+
+    // SECTION 6: WEEKLY SATURDAY MEETINGS RECORD
+    const meetingRows = meetings.length > 0
+      ? meetings.map((m: any) => [
+          m.meeting_date,
+          `${m.meeting_time}\n(${m.location})`,
+          m.attendance_status,
+          m.challenges_discussed || 'None reported',
+          m.corrective_action || 'Regular mentoring guidance',
+          m.mentor_remarks || 'Satisfactory',
+        ])
+      : [['No meetings logged yet.', '-', '-', '-', '-', '-']];
+
+    autoTable(doc, {
+      startY: currentY,
+      margin: { left: margin, right: margin },
+      theme: 'grid',
+      head: [
+        [{ content: numbered(6, 2, 'WEEKLY SATURDAY MENTOR\u2013MENTEE MEETINGS LOG'), colSpan: 6, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }],
+        ['Date', 'Time & Location', 'Attendance', 'Challenges Discussed', 'Corrective Action Taken', 'Mentor Remarks'],
+      ],
+      body: meetingRows,
+      headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold' },
+      styles: { fontSize: 7.5, cellPadding: 2 },
+      columnStyles: {
+        0: { fontStyle: 'bold', cellWidth: 22 },
+        1: { cellWidth: 28 },
+        2: { cellWidth: 20, halign: 'center' },
+        3: { cellWidth: 40 },
+        4: { cellWidth: 40 },
+        5: { cellWidth: 32 },
+      },
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 6;
+
+    // SECTION 7: 5-DOMAIN COUNSELLING & INTERVENTION RECORDS
+    const counsellingRows = counsellingRecords.length > 0
+      ? counsellingRecords.map((c: any) => [
+          c.session_date,
+          c.category,
+          c.discussion_with,
+          c.challenge_observed,
+          c.corrective_action,
+          c.student_feedback || 'Acknowledged',
+          c.mentor_remarks || 'Action initiated',
+        ])
+      : [['No formal counselling sessions logged.', '-', '-', '-', '-', '-', '-']];
+
+    autoTable(doc, {
+      startY: currentY,
+      margin: { left: margin, right: margin },
+      theme: 'grid',
+      head: [
+        [{ content: numbered(7, 3, '5-DOMAIN COUNSELLING & CORRECTIVE ACTION RECORDS'), colSpan: 7, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }],
+        ['Date', 'Category Domain', 'Discussion With', 'Challenge Observed', 'Corrective Action Prescribed', 'Student Feedback', 'Mentor Remarks'],
+      ],
+      body: counsellingRows,
+      headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold' },
+      styles: { fontSize: 7.5, cellPadding: 2 },
+      columnStyles: {
+        0: { fontStyle: 'bold', cellWidth: 20 },
+        1: { fontStyle: 'bold', cellWidth: 28 },
+        2: { fontStyle: 'bold', cellWidth: 26 },
+        3: { cellWidth: 36 },
+        4: { cellWidth: 36 },
+        5: { cellWidth: 26 },
+        6: { cellWidth: 24 },
+      },
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 6;
+
+    // SECTION 7.1: GEO-TAGGED EVIDENCE PHOTOS
+    // The physical images are served through the authenticated evidence
+    // endpoints; the official record book carries their verifiable metadata
+    // (capture time, coordinates, accuracy, owner) and each file's byte size,
+    // so an auditor can confirm every photo is under the 200 KB limit. Full
+    // record book only — the mentor-documents download shows the photos
+    // themselves in the photo evidence section instead.
+    const allEvidence: any[] = [];
+    for (const record of counsellingRecords as any[]) {
+      for (const item of record.evidence || []) allEvidence.push({ ...item, session_date: record.session_date });
+    }
+    if (mode === 'full' && allEvidence.length > 0) {
+      if (currentY > pageHeight - 70) {
+        doc.addPage();
+        currentY = margin;
+      }
+      const evidenceRows = allEvidence.map((e: any) => [
+        e.session_date || '-',
+        e.fileName || '-',
+        `${(e.fileSize / 1024).toFixed(1)} KB`,
+        e.capturedAt ? new Date(e.capturedAt).toISOString().slice(0, 19).replace('T', ' ') : '-',
+        e.locationVerified ? `${e.latitudeLabel}, ${e.longitudeLabel}` : 'NOT AVAILABLE',
+        e.accuracy != null ? `+/- ${Number(e.accuracy).toFixed(0)} m` : '-',
+        e.capturedBy || '-',
+      ]);
+      autoTable(doc, {
+        startY: currentY,
+        margin: { left: margin, right: margin },
+        theme: 'grid',
+        head: [
+          [{ content: '7.1  GEO-TAGGED EVIDENCE PHOTOS (each file <= 200 KB)', colSpan: 7, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }],
+          ['Date', 'File Name', 'Size', 'Captured At (UTC)', 'Location', 'Accuracy', 'Captured By'],
+        ],
+        body: evidenceRows,
+        headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold' },
+        styles: { fontSize: 7.5, cellPadding: 2 },
+        columnStyles: {
+          0: { fontStyle: 'bold', cellWidth: 20 },
+          1: { cellWidth: 40 },
+          2: { cellWidth: 16 },
+          3: { cellWidth: 34 },
+          4: { cellWidth: 38 },
+          5: { cellWidth: 18 },
+          6: { cellWidth: 28 },
+        },
+      });
+      currentY = (doc as any).lastAutoTable.finalY + 6;
+    }
+
+    // SECTION 8: MENTORING PHOTO EVIDENCE — the physical photos themselves,
+    // reproduced from the same storage resolver used everywhere else. Deduped by
+    // evidence id, so a shared Saturday photo appears once. Both the full record
+    // book and the mentor-documents download carry these pages.
+    drawPhotoEvidence(numbered(8, 4, 'MENTORING PHOTO EVIDENCE'));
+
+    // SECTION 9: MONTHLY PROGRESS EVALUATION LEDGER
+    if (mode === 'full' && monthlyProgress.length > 0) {
+      if (currentY > pageHeight - 65) {
+        doc.addPage();
+        renderHeader(false);
+        currentY = 38;
+      }
+
+      const progressRows = monthlyProgress.map((p: any) => [
+        p.month_name,
+        `Acad: ${p.academic_rating}/5\n${p.academic_notes || ''}`,
+        `Placement: ${p.placement_rating}/5\n${p.placement_notes || ''}`,
+        `E&C: ${p.ec_rating}/5\n${p.ec_notes || ''}`,
+        `Innov: ${p.innovation_rating}/5\n${p.innovation_notes || ''}`,
+        `Skill: ${p.skill_rating}/5\n${p.skill_notes || ''}`,
+      ]);
+
+      autoTable(doc, {
+        startY: currentY,
+        margin: { left: margin, right: margin },
+        theme: 'grid',
+        head: [
+          [{ content: '9. MONTHLY PROGRESS EVALUATION LEDGER', colSpan: 6, styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' } }],
+          ['Period', 'Academic', 'Placement', 'Extra-Curricular', 'Innovation', 'Skill Development'],
+        ],
+        body: progressRows,
+        headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold' },
+        styles: { fontSize: 7.5, cellPadding: 2 },
+      });
+
+      currentY = (doc as any).lastAutoTable.finalY + 6;
+    }
+
+    // SECTION 10: STUDENT DOCUMENTS & CERTIFICATES OFFICIAL ARCHIVE
+    //
+    // Every document on the student's record is listed here with its metadata, and
+    // the actual file is embedded: images inline on the following pages, PDFs as
+    // annexure pages appended after the signed record (jsPDF cannot merge PDFs on
+    // its own, so pdf-lib performs that final append).
+    if (currentY > pageHeight - 70) {
+      doc.addPage();
+      renderHeader(false);
+      currentY = 38;
+    }
+
+    const uploadedCount = studentDocuments.filter((d: any) => !d.is_system_form).length;
+    const docRows =
+      studentDocuments.length > 0
+        ? studentDocuments.map((d: any, i: number) => [
+            String(i + 1),
+            d.title.length > 38 ? `${d.title.slice(0, 37)}…` : d.title,
+            `${d.document_type}\n${d.category}`,
+            d.event_details.length > 46 ? `${d.event_details.slice(0, 45)}…` : d.event_details,
+            d.uploaded_on,
+            d.verification_status,
+          ])
+        : [['—', 'No documents on record.', '-', '-', '-', '-']];
+
+    autoTable(doc, {
+      startY: currentY,
+      margin: { left: margin, right: margin },
+      theme: 'grid',
+      head: [
+        [
+          {
+            content: `${documentsSectionNo}. STUDENT DOCUMENTS & CERTIFICATES – OFFICIAL ARCHIVE`,
+            colSpan: 6,
+            styles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold' },
+          },
+        ],
+        ['#', 'Document Name', 'Type / Category', 'Event / Details', 'Upload Date', 'Status'],
+      ],
+      body: docRows,
+      headStyles: { fillColor: [40, 60, 90], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold' },
+      styles: { fontSize: 7.5, cellPadding: 2 },
+      columnStyles: {
+        0: { cellWidth: 8, halign: 'center' },
+        1: { fontStyle: 'bold', cellWidth: 40 },
+        2: { cellWidth: 30 },
+        3: { cellWidth: 42 },
+        4: { cellWidth: 24, halign: 'center' },
+        5: { cellWidth: 24, halign: 'center' },
+      },
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 5;
+
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 100, 100);
+    doc.text(
+      `${uploadedCount} student-uploaded document(s) on record. Certificate scans are reproduced in full as annexures following the signed record. Verification is carried out by the assigned mentor / administrator.`,
+      margin,
+      currentY
+    );
+    currentY += 8;
+
+    // ---- Embed the actual files -------------------------------------------------
+    // Images are drawn inline; PDFs are collected and appended after the record is
+    // signed. Anything that cannot be embedded is reported, never silently dropped.
+    // EMBED_LIMITS, IMAGE_FORMATS, annexurePdfs, imageCount, notEmbedded and
+    // missingFileReasons are declared once above the mode branch, because the
+    // signed tail after this block consumes the same state.
+
+    for (const d of studentDocuments) {
+      if (d.is_system_form) continue; // never self-embed this dossier
+
+      // Resolve through the ONE existing uploads helper -- the same
+      // `locateStoredUpload` the Student Documents view/download endpoints use, so
+      // a file that the portal can display is never reported as missing here. It
+      // searches every known upload root (explicit UPLOADS_DIR, a mounted
+      // persistent disk, the backend package directory, the legacy cwd-relative
+      // directory, the tmp fallback) and only then falls back to a byte-exact
+      // content-identity recovery anchored on the recorded file name and size.
+      const located = locateStoredUpload(d.file_url, {
+        fileName: d.file_name,
+        fileSize: d.file_size,
+        fileType: d.file_type,
+      });
+      if (!located) {
+        // Only claim the bytes are gone AFTER the same resolver the application
+        // uses everywhere else has searched every root it knows about. A record
+        // whose stored path is not even inside the uploads tree is a different
+        // fault and is named as such.
+        if (!resolveStoredUploadPath(d.file_url)) {
+          notEmbedded.push({
+            name: d.file_name,
+            reason: `Stored path "${d.file_url}" is not inside the uploads directory, so it cannot be looked up at all. This record needs administrator repair.`,
+          });
+          continue;
+        }
+        notEmbedded.push({
+          name: d.file_name,
+          reason: `No file with these exact bytes was found in any upload location searched (${describeUploadRoots()}), and no other file matches the recorded size of ${d.file_size} bytes. The record is intact but the file itself was lost.`,
+        });
+        missingFileReasons.set(d.file_url, (missingFileReasons.get(d.file_url) || 0) + 1);
+        continue;
+      }
+
+      if (located.recovered) {
+        // A file found away from its recorded path is a real storage fault even
+        // though the content is available, so it is logged for the operator.
+        console.warn(
+          `generateStudentPdf: "${d.file_name}" was not at its recorded path (${d.file_url}); ` +
+            `resolved it by ${located.strategy} to ${located.path}`
+        );
+      }
+
+      const absPath = located.path;
+      if (!fs.existsSync(absPath)) {
+        // Defensive: `locateStoredUpload` only returns paths it has stat'ed, so a
+        // failure here means the file vanished between the lookup and this read.
+        notEmbedded.push({
+          name: d.file_name,
+          reason: 'The file was located but disappeared from disk while the record book was being generated. Please retry.',
+        });
+        continue;
+      }
+
+      // Trust the BYTES, not the declared MIME type. A record can say `pdf` while
+      // holding a scan (or the reverse), and choosing the wrong branch is what
+      // silently produced blank annexures.
+      const sniffed = sniffStoredFileType(absPath);
+      const declared = (d.file_type || '').toLowerCase().trim();
+      const mime = sniffed || declared;
+
+      if (sniffed && declared && sniffed !== (declared === 'image/jpg' ? 'image/jpeg' : declared)) {
+        console.warn(
+          `generateStudentPdf: "${d.file_name}" is stored as "${declared}" but its content is "${sniffed}"; embedding it as ${sniffed}.`
+        );
+      }
+
+      if (mime === 'application/pdf') {
+        if (annexurePdfs.length >= EMBED_LIMITS.pdfFiles) {
+          notEmbedded.push({
+            name: d.file_name,
+            reason: `Record book annexure limit of ${EMBED_LIMITS.pdfFiles} PDF files reached, so this document was not reproduced. It is still listed in Section ${documentsSectionNo} and remains available in Student Documents.`,
+          });
+          continue;
+        }
+        try {
+          // Loaded once here and reused below, so each file is parsed only once.
+          const src = await PDFDocument.load(fs.readFileSync(absPath), { ignoreEncryption: true });
+          annexurePdfs.push({ meta: d, doc: src, pages: src.getPageCount() });
+        } catch (e: any) {
+          notEmbedded.push({
+            name: d.file_name,
+            reason: 'The file is present on disk but is not a readable PDF (it is damaged or password-protected), so it could not be reproduced.',
+          });
+          console.error('generateStudentPdf: could not read document', absPath, e?.message);
+        }
+        continue;
+      }
+
+      const fmt = IMAGE_FORMATS[mime];
+      if (!fmt) {
+        notEmbedded.push({
+          name: d.file_name,
+          reason: `Unsupported file type "${d.file_type || 'unknown'}". Only PDF, JPEG and PNG can be reproduced as annexures.`,
+        });
+        continue;
+      }
+      if (imageCount >= EMBED_LIMITS.images) {
+        notEmbedded.push({
+          name: d.file_name,
+          reason: `Record book annexure limit of ${EMBED_LIMITS.images} images reached, so this image was not reproduced. It is still listed in Section ${documentsSectionNo} and remains available in Student Documents.`,
+        });
+        continue;
+      }
+
+      try {
+        const dataUrl = `data:${mime};base64,${fs.readFileSync(absPath).toString('base64')}`;
+        const props = doc.getImageProperties(dataUrl);
+
+        doc.addPage();
+        renderHeader(false);
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9.5);
+        doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+        doc.text(`ANNEXURE IMAGE – ${d.title}`, margin, 40, { maxWidth: pageWidth - margin * 2 });
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7.5);
+        doc.setTextColor(90, 90, 90);
+        doc.text(
+          `${d.document_type} | ${d.category} | Uploaded: ${d.uploaded_on} | Status: ${d.verification_status} | File: ${d.file_name}`,
+          margin,
+          45,
+          { maxWidth: pageWidth - margin * 2 }
+        );
+
+        // Fit the image inside the printable area, preserving aspect ratio. The
+        // band runs from just under the caption to just above the footer rule at
+        // `pageHeight - 12`, so a full-height scan is never drawn over the footer.
+        const maxW = pageWidth - margin * 2;
+        const bandTop = 50;
+        const maxH = pageHeight - 16 - bandTop;
+        const ratio = props.width > 0 && props.height > 0 ? props.height / props.width : 0.7;
+        let drawW = maxW;
+        let drawH = drawW * ratio;
+        if (drawH > maxH) {
+          drawH = maxH;
+          drawW = drawH / ratio;
+        }
+        // Centred in both axes so a tall scan is not pinned to the top edge and a
+        // wide one is not jammed against the left margin.
+        const drawX = margin + (maxW - drawW) / 2;
+        const drawY = bandTop + Math.max(0, (maxH - drawH) / 2);
+        doc.addImage(dataUrl, fmt, drawX, drawY, drawW, drawH);
+        imageCount++;
+      } catch (e: any) {
+        notEmbedded.push({
+          name: d.file_name,
+          reason: 'The image file is present on disk but could not be decoded, so it could not be reproduced.',
+        });
+        console.error('generateStudentPdf: could not embed image', absPath, e?.message);
+      }
     }
   }
 
@@ -1073,7 +1499,7 @@ export async function generateStudentPdf(studentIdOrRegNo: string): Promise<Uint
       notice.setFontSize(8.5);
       notice.setTextColor(60, 60, 60);
       notice.text(
-        'Every certificate above is reproduced in full as an annexure. The entries below are the only exceptions: they are registered in Section 8 but their file could not be read at generation time. The file name and the exact reason are stated for each one.',
+        `Every certificate above is reproduced in full as an annexure. The entries below are the only exceptions: they are registered in Section ${documentsSectionNo} but their file could not be read at generation time. The file name and the exact reason are stated for each one.`,
         nw / 2,
         62,
         { align: 'center', maxWidth: nw - 40 }

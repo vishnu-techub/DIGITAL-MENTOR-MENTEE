@@ -1,7 +1,6 @@
 import { Response } from 'express';
 import bcrypt from 'bcryptjs';
 import fs from 'fs';
-import mongoose from 'mongoose';
 import {
   User,
   Student,
@@ -26,6 +25,8 @@ import { ROLES } from '../../config/constants.js';
 // second storage system or re-derive the uploads root.
 import { resolveStoredUploadPath } from '../../config/storage.js';
 import { RECORD_STATE } from '../../utils/record-permission.util.js';
+import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
+import { toIdString } from '../../utils/access.util.js';
 
 // Dashboard Overview Statistics
 export async function getAdminDashboardStats(req: AuthRequest, res: Response) {
@@ -335,7 +336,7 @@ export async function createFaculty(req: AuthRequest, res: Response) {
 
     // Resolve department
     let deptDoc = null;
-    if (mongoose.Types.ObjectId.isValid(departmentId)) {
+    if (isValidId(departmentId)) {
       deptDoc = await Department.findById(departmentId);
     }
     if (!deptDoc) {
@@ -482,6 +483,142 @@ export async function deleteFaculty(req: AuthRequest, res: Response) {
   }
 }
 
+/**
+ * PATCH /api/admin/faculty/:facultyId/department — ADMIN only.
+ *
+ * Reassigns a Faculty member (and their login `User`) to a different academic
+ * department. This is a *scope* move, not a mentor reassignment:
+ *
+ *   - `Faculty.department` and `User.department` are both updated, so HOD
+ *     visibility and the department scope of future logins follow the new
+ *     department immediately.
+ *   - Existing ACTIVE `MentorAssignment` rows are deliberately NOT touched:
+ *     mentees never move with the faculty. The Admin reassigns mentees
+ *     afterwards through the existing Mentor Reassignment flow
+ *     (`POST /api/mentorship/reassign`), so every historical mentoring /
+ *     counselling / academic record keeps its original author.
+ *   - Department isolation is never weakened: the faculty's mentee access
+ *     stays derived from their ACTIVE assignments (not the department), and a
+ *     re-login issues a token with the new `departmentId` claim.
+ */
+export async function reassignFacultyDepartment(req: AuthRequest, res: Response) {
+  if (req.user?.role !== ROLES.ADMIN) {
+    return sendError(res, 'You are not authorized to perform this operation.', 403);
+  }
+  const facultyId = req.params.facultyId as string;
+  const { departmentId } = req.body || {};
+
+  if (!isValidId(facultyId)) {
+    return sendError(res, 'Faculty member not found.', 404);
+  }
+  if (!departmentId || typeof departmentId !== 'string' || !departmentId.trim()) {
+    return sendError(res, 'A new department is required.', 400);
+  }
+
+  try {
+    const faculty: any = await Faculty.findById(facultyId).populate('user').populate('department');
+    if (!faculty) {
+      return sendError(res, 'Faculty member not found.', 404);
+    }
+
+    // Resolve the target department the same way `createFaculty` does: by id,
+    // or fall back to a department code / name.
+    let newDept: any = null;
+    if (isValidId(departmentId.trim())) {
+      newDept = await Department.findById(departmentId.trim());
+    }
+    if (!newDept) {
+      newDept = await Department.findOne({
+        $or: [{ code: departmentId.trim().toUpperCase() }, { name: departmentId.trim() }],
+      });
+    }
+    if (!newDept) {
+      return sendError(res, 'Valid department is required.', 400);
+    }
+
+    const prevDept: any = faculty.department || {};
+    if (toIdString(prevDept._id) === toIdString(newDept._id)) {
+      return sendError(res, `${faculty.employeeId} is already assigned to the ${newDept.name} department.`, 400);
+    }
+
+    const user: any = faculty.user;
+    if (user && user._id) {
+      // `user` here is a populated snapshot — mutate the persisted document
+      // instead, so the local file store (plain-object populate) and any real
+      // database-backed store both update the User row correctly.
+      const userDoc: any = await User.findById(user._id);
+      if (userDoc) {
+        userDoc.department = newDept._id;
+        await userDoc.save();
+      }
+    }
+
+    faculty.department = newDept._id;
+    await faculty.save();
+
+    // Mentees are deliberately preserved — count them so the Admin can see how
+    // many assignments still need a manual mentor reassignment.
+    const unchagedMentees = await MentorAssignment.countDocuments({
+      mentor: faculty._id,
+      status: 'ACTIVE',
+    });
+
+    await logAudit({
+      userId: req.user!.id,
+      action: 'REASSIGN_FACULTY_DEPARTMENT',
+      entity: 'FACULTY',
+      entityId: faculty._id.toString(),
+      details: {
+        employeeId: faculty.employeeId,
+        fullName: user?.fullName || faculty.employeeId,
+        previousDepartmentId: toIdString(prevDept._id) || '',
+        previousDepartmentName: prevDept.name || '',
+        newDepartmentId: toIdString(newDept._id),
+        newDepartmentName: newDept.name,
+        activeMenteesPreserved: unchagedMentees,
+      },
+      req,
+    });
+
+    const row = {
+      id: faculty._id.toString(),
+      _id: faculty._id.toString(),
+      user_id: user && user._id ? user._id.toString() : '',
+      employee_id: faculty.employeeId,
+      designation: faculty.designation,
+      cabin_location: faculty.cabinLocation,
+      phone_number: faculty.phoneNumber,
+      is_active: faculty.isActive ? 1 : 0,
+      full_name: user?.fullName || '',
+      email: user?.email || '',
+      username: user?.username || '',
+      role: user?.role || 'FACULTY',
+      department_id: toIdString(newDept._id),
+      department_name: newDept.name || '',
+      department_code: newDept.code || '',
+      mentee_count: unchagedMentees,
+    };
+
+    return sendSuccess(
+      res,
+      {
+        faculty: row,
+        previousDepartment: {
+          id: toIdString(prevDept._id) || '',
+          name: prevDept.name || '',
+          code: prevDept.code || '',
+        },
+        newDepartment: { id: toIdString(newDept._id), name: newDept.name, code: newDept.code },
+        unchangedMentees: unchagedMentees,
+      },
+      `Faculty ${user?.fullName || faculty.employeeId} moved from ${prevDept.name || 'the previous department'} to ${newDept.name}. Existing mentee assignments are preserved and must be reassigned manually.`
+    );
+  } catch (err: any) {
+    console.error('reassignFacultyDepartment error:', err);
+    return sendError(res, 'Failed to reassign faculty department.', 500);
+  }
+}
+
 // System Settings Management (Saturday Schedule)
 export async function getSystemSettings(req: AuthRequest, res: Response) {
   try {
@@ -508,7 +645,7 @@ export async function updateSystemSettings(req: AuthRequest, res: Response) {
   const { meetingDay, meetingTime, meetingLocation } = req.body;
 
   try {
-    const userId = req.user?.id ? (mongoose.Types.ObjectId.isValid(req.user.id) ? new mongoose.Types.ObjectId(req.user.id) : undefined) : undefined;
+    const userId = req.user?.id ? (isValidId(req.user.id) ? toLocalId(req.user.id) : undefined) : undefined;
 
     if (meetingDay) {
       await SystemSetting.findOneAndUpdate(
@@ -558,11 +695,21 @@ export async function getMenteesByMentor(req: AuthRequest, res: Response) {
   const { search = '', page = '1', limit = '50' } = req.query as Record<string, string>;
 
   try {
-    if (!mentorId || !mongoose.Types.ObjectId.isValid(mentorId)) {
+    if (!mentorId || !isValidId(mentorId)) {
       return sendError(res, 'Mentor not found', 404);
     }
     const faculty = await Faculty.findById(mentorId);
     if (!faculty) return sendError(res, 'Mentor not found', 404);
+
+    // A HOD may only drill into a mentor who belongs to their own department.
+    // Without this, the shared callback passes the OTHER department's
+    // mentor id to a HOD and returns that mentor's full mentee record
+    // (including CGPA, arrears and counselling counts).
+    if (req.user?.role === ROLES.HOD && req.user.departmentId) {
+      if (toIdString(faculty.department) !== req.user.departmentId) {
+        return sendError(res, 'Mentor not found', 404);
+      }
+    }
 
     const activeAssignments = await MentorAssignment.find({
       mentor: faculty._id,
@@ -690,6 +837,11 @@ export async function getStudentsForAssignment(req: AuthRequest, res: Response) 
     }
     if (department) filter.department = department;
     if (batch) filter.batch = batch;
+    // A HOD may only list their OWN department's students, no matter what the
+    // client passes as the `department` query parameter.
+    if (req.user?.role === ROLES.HOD && req.user.departmentId) {
+      filter.department = req.user.departmentId;
+    }
 
     const pageNum = Math.max(1, parseInt(page, 10));
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10)));
@@ -777,8 +929,8 @@ export async function assignMenteesToMentor(req: AuthRequest, res: Response) {
     }
 
     const assignerId =
-      req.user?.id && mongoose.Types.ObjectId.isValid(req.user.id)
-        ? new mongoose.Types.ObjectId(req.user.id)
+      req.user?.id && isValidId(req.user.id)
+        ? toLocalId(req.user.id)
         : undefined;
     const mentorUser: any = mentor.user;
     const fromDate = new Date().toISOString().split('T')[0];
@@ -787,7 +939,7 @@ export async function assignMenteesToMentor(req: AuthRequest, res: Response) {
 
     for (const sid of studentIds) {
       let student: any = null;
-      if (mongoose.Types.ObjectId.isValid(sid)) student = await Student.findById(sid);
+      if (isValidId(sid)) student = await Student.findById(sid);
       if (!student) student = await Student.findOne({ registerNumber: sid });
       if (!student) { results.notFound.push(sid); continue; }
 
