@@ -33,6 +33,7 @@ import {
 import { syncStudentDetailsPdf } from '../documents/student-details-pdf.service.js';
 import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
 import { buildEvidenceViews, normaliseEvidenceRefs } from '../counselling/evidence.service.js';
+import { calculateProfileCompletion } from '../../utils/profile-completion.util.js';
 
 /**
  * SINGLE SOURCE OF TRUTH for a student's institutional email.
@@ -277,16 +278,8 @@ export async function getStudents(req: AuthRequest, res: Response) {
       const latestWithCgpa = records.find((r: any) => (r.cgpa || 0) > 0);
       const currentCgpa = latestWithCgpa ? latestWithCgpa.cgpa : 0.0;
 
-      // Profile completion percentage calculation
-      let completionPercent = 0;
-      if (s.profileCompleted) {
-        completionPercent = 100;
-      } else {
-        if (s.fullName && s.registerNumber) completionPercent += 25;
-        if (s.mobileNumber && s.email && s.dob) completionPercent += 25;
-        if (s.parent?.fatherName || s.parent?.motherName) completionPercent += 25;
-        if (s.school?.tenthMark || s.school?.twelfthMark) completionPercent += 25;
-      }
+      // Profile completion percentage calculation (shared with getStudentById).
+      const completionPercent = calculateProfileCompletion(s).percentage;
 
       const dept = s.department as any;
       const batch = s.batch as any;
@@ -369,6 +362,9 @@ export async function getStudentById(req: AuthRequest, res: Response) {
 
     const dept = student.department as any;
     const batch = student.batch as any;
+
+    // Same definition the directory uses — see profile-completion.util.ts.
+    const profileCompletion = calculateProfileCompletion(student);
 
     // Fetch related records in parallel
     const [semesters, activeAsg, allAsgs, meetings, counsellingRecords, monthlyProgress] =
@@ -517,6 +513,11 @@ export async function getStudentById(req: AuthRequest, res: Response) {
       address: student.address || null,
       profile_completed: student.profileCompleted ? 1 : 0,
       profile_completed_at: student.profileCompletedAt || null,
+      // Real, server-derived values. `profile_completion_percentage` matches the
+      // directory listing; `profile_completion_missing` names the buckets still
+      // outstanding so the dashboard can explain "Incomplete" without guessing.
+      profile_completion_percentage: profileCompletion.percentage,
+      profile_completion_missing: profileCompletion.missing,
       is_active: student.isActive ? 1 : 0,
       created_at: student.createdAt,
       parent: {

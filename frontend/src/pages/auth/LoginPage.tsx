@@ -169,7 +169,6 @@ export const LoginPage: React.FC = () => {
             <button
               type="submit"
               className={`btn btn-primary btn-block ${loading ? 'btn-loading' : ''}`}
-              style={{ marginTop: '0.75rem', fontSize: 'var(--text-md)' }}
               disabled={loading}
             >
               {loading ? 'Authenticating…' : 'Sign In to Portal'} {!loading && <ArrowRight size={16} />}
@@ -177,26 +176,9 @@ export const LoginPage: React.FC = () => {
           </form>
 
           {!isInstalled && (
-            <div style={{ marginTop: '1.25rem', textAlign: 'center' }}>
-              <button
-                type="button"
-                onClick={promptInstall}
-                style={{
-                  background: 'linear-gradient(135deg, #0B2545 0%, #133E68 100%)',
-                  color: '#ffffff',
-                  border: '1px solid rgba(255, 215, 0, 0.45)',
-                  borderRadius: 'var(--radius-md)',
-                  padding: '0.55rem 1rem',
-                  fontSize: 'var(--text-sm)',
-                  fontWeight: 700,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.45rem',
-                  cursor: 'pointer',
-                  boxShadow: '0 4px 12px rgba(11, 37, 69, 0.15)',
-                }}
-              >
-                <Download size={14} color="#FDE047" /> Download / Install KSRCE Web App
+            <div className="login-pwa-row">
+              <button type="button" onClick={promptInstall} className="login-pwa-btn">
+                <Download size={15} /> Download / Install KSRCE Web App
               </button>
             </div>
           )}

@@ -72,6 +72,42 @@ function getMeetingNotice(schedule: any) {
   };
 }
 
+/**
+ * Profile completion, read from the SERVER's own fields.
+ *
+ * The students detail endpoint reports `profile_completed` (0/1) — the stored
+ * wizard flag — plus `profile_completion_percentage` and
+ * `profile_completion_missing` from the shared calculation in
+ * `backend/src/utils/profile-completion.util.ts`. The old code read
+ * `profile?.profileCompleted`, which the detail endpoint never returned, so the
+ * card showed "Incomplete" even for a completed profile. `profileCompleted` is
+ * still honoured as a fallback for the `/auth/me` shape.
+ *
+ * No percentage is ever invented: when the server supplies no number (older
+ * payloads) only the "Complete"/"Incomplete" state is shown.
+ */
+function getProfileCompletion(profile: any): {
+  complete: boolean;
+  percent: number;
+  hasPercent: boolean;
+  missing: string[];
+} {
+  const flag =
+    profile?.profile_completed === 1 ||
+    profile?.profile_completed === true ||
+    profile?.profileCompleted === true;
+
+  const raw = profile?.profile_completion_percentage;
+  const hasRaw = typeof raw === 'number' && !Number.isNaN(raw);
+  const percent = flag ? 100 : hasRaw ? Math.max(0, Math.min(100, raw)) : 0;
+  const complete = flag || percent >= 100;
+  const missing: string[] = Array.isArray(profile?.profile_completion_missing)
+    ? profile.profile_completion_missing
+    : [];
+
+  return { complete, percent, hasPercent: hasRaw || flag, missing };
+}
+
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, onSelectTab, justCompleted }) => {
   const { user } = useAuth();
   const toast = useToast();
@@ -592,216 +628,241 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
       )}
 
       {/* Overview Tab */}
-      {currentTab === 'overview' && (
-        <div>
+      {currentTab === 'overview' && (() => {
+        const pc = getProfileCompletion(profile);
+        const meetingNotice = getMeetingNotice(schedule);
+        const mentor = profile?.currentMentor || null;
+        return (
+        <div className="sd-overview">
           <PageHeader
             eyebrow="Student"
             title="Overview"
             subtitle="A snapshot of your academic standing, mentor allocation, and recent mentoring activity."
           />
-          {/* Welcome Banner */}
-          <div
-            className="card"
-            style={{
-              marginBottom: '1.5rem',
-              background: 'linear-gradient(135deg, var(--color-navy-800) 0%, var(--color-navy-700) 100%)',
-              color: '#ffffff',
-              border: 'none',
-              padding: '1.75rem',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-              <div>
-                <span className="badge badge-warning" style={{ marginBottom: '8px' }}>
-                  Permanent Institutional Record
-                </span>
-                <h2 style={{ fontSize: '1.5rem', fontWeight: 800, margin: '4px 0' }}>
-                  Welcome, {profile?.full_name}
-                </h2>
-                <div style={{ fontSize: '0.875rem', color: '#CBD5E1', display: 'flex', gap: '0.75rem' }}>
-                  <span>Register No: <strong>{profile?.register_number}</strong></span>
-                  <span>•</span>
-                  <span>{profile?.department_name}</span>
-                  <span>•</span>
-                  <span>Batch {profile?.batch_name}</span>
-                </div>
-              </div>
 
-              {/* Prominent PDF Download */}
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '0.5rem' }}>
+          {/* Welcome Banner */}
+          <div className="sd-banner">
+            <div className="sd-banner__identity">
+              <span className="badge badge-warning">Permanent Institutional Record</span>
+              <h2 className="sd-banner__title">Welcome, {profile?.full_name}</h2>
+              <div className="sd-banner__meta">
+                <span>
+                  Register No: <strong>{profile?.register_number}</strong>
+                </span>
+                {profile?.department_name && (
+                  <>
+                    <span className="sd-dot">•</span>
+                    <span>{profile.department_name}</span>
+                  </>
+                )}
+                {profile?.batch_name && (
+                  <>
+                    <span className="sd-dot">•</span>
+                    <span>Batch {profile.batch_name}</span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Record Book actions */}
+            <div className="sd-banner__actions">
+              <button
+                className="btn btn-pdf"
+                onClick={() => handleDownloadPdf('full')}
+                disabled={pdfDownloading}
+                style={{ padding: '0.7rem 1.25rem', fontSize: '0.88rem' }}
+              >
+                <FileText size={18} />
+                {pdfDownloading ? 'Generating...' : 'Download My Record Book (PDF)'}
+              </button>
+              <div className="sd-banner__actions-row">
                 <button
-                  className="btn btn-pdf"
-                  onClick={() => handleDownloadPdf('full')}
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => handleDownloadPdf('internal')}
                   disabled={pdfDownloading}
-                  style={{ padding: '0.65rem 1.5rem', fontSize: '0.9rem' }}
+                  title="Download the internal assessment (IA1 / IA2 / End Sem) PDF"
                 >
-                  <FileText size={18} />
-                  {pdfDownloading ? 'Generating...' : 'DOWNLOAD MY RECORD BOOK (PDF)'}
+                  Internal Assessment
                 </button>
-                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => handleDownloadPdf('internal')}
-                    disabled={pdfDownloading}
-                    title="Download the internal assessment (IA1 / IA2 / End Sem) PDF"
-                  >
-                    Internal Assessment
-                  </button>
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => handleDownloadPdf('mentor-documents')}
-                    disabled={pdfDownloading}
-                    title="Download the mentor documents (meetings / counselling / evidence) PDF"
-                  >
-                    Mentor Documents
-                  </button>
-                </div>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => handleDownloadPdf('mentor-documents')}
+                  disabled={pdfDownloading}
+                  title="Download the mentor documents (meetings / counselling / evidence) PDF"
+                >
+                  Mentor Documents
+                </button>
               </div>
             </div>
           </div>
 
           {/* Quick Metrics */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
-            <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: 'var(--color-navy-50)', color: 'var(--color-navy-800)' }}>
-                <GraduationCap size={24} />
+          <div className="sd-stats">
+            <div className="sd-stat">
+              <div className="sd-stat__icon" style={{ backgroundColor: 'var(--color-navy-50)', color: 'var(--color-navy-800)' }}>
+                <GraduationCap size={22} />
               </div>
-              <div className="stat-info">
-                <h3>Cumulative CGPA</h3>
-                <div className="stat-value">{latestCgpa > 0 ? latestCgpa.toFixed(2) : 'N/A'}</div>
+              <div className="sd-stat__body">
+                <h3 className="sd-stat__label">Cumulative CGPA</h3>
+                <div className="sd-stat__value">{latestCgpa > 0 ? latestCgpa.toFixed(2) : 'N/A'}</div>
               </div>
             </div>
 
-            <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: activeArrears > 0 ? '#FEF2F2' : '#ECFDF5', color: activeArrears > 0 ? '#DC2626' : '#059669' }}>
-                <Clock size={24} />
+            <div className="sd-stat">
+              <div
+                className="sd-stat__icon"
+                style={{ backgroundColor: activeArrears > 0 ? '#FEF2F2' : '#ECFDF5', color: activeArrears > 0 ? '#DC2626' : '#059669' }}
+              >
+                <Clock size={22} />
               </div>
-              <div className="stat-info">
-                <h3>Current Active Arrears</h3>
-                <div className="stat-value" style={{ color: activeArrears > 0 ? '#DC2626' : '#059669' }}>
+              <div className="sd-stat__body">
+                <h3 className="sd-stat__label">Current Active Arrears</h3>
+                <div className="sd-stat__value" style={{ color: activeArrears > 0 ? '#DC2626' : '#059669' }}>
                   {activeArrears}
                 </div>
-                <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '2px' }}>
-                  {activeArrears === 0 ? '🟢 No Active Arrears' : '🔴 Uncleared Subjects'}
-                </div>
+                <div className="sd-stat__hint">{activeArrears === 0 ? 'No active arrears' : 'Uncleared subjects'}</div>
               </div>
             </div>
 
-            <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: 'var(--color-slate-100)', color: 'var(--color-slate-700)' }}>
-                <BookOpen size={24} />
+            <div className="sd-stat">
+              <div className="sd-stat__icon" style={{ backgroundColor: 'var(--color-slate-100)', color: 'var(--color-slate-600)' }}>
+                <BookOpen size={22} />
               </div>
-              <div className="stat-info">
-                <h3>Total Arrear History</h3>
-                <div className="stat-value" style={{ color: '#1E293B' }}>
-                  {historicalArrears}
-                </div>
-                <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '2px' }}>
-                  Preserved Records
-                </div>
+              <div className="sd-stat__body">
+                <h3 className="sd-stat__label">Total Arrear History</h3>
+                <div className="sd-stat__value">{historicalArrears}</div>
+                <div className="sd-stat__hint">Preserved records</div>
               </div>
             </div>
 
-            <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#ECFDF5', color: '#059669' }}>
-                <CheckCircle2 size={24} />
+            <div className="sd-stat">
+              <div className="sd-stat__icon" style={{ backgroundColor: '#ECFDF5', color: '#059669' }}>
+                <CheckCircle2 size={22} />
               </div>
-              <div className="stat-info">
-                <h3>Cleared Arrears</h3>
-                <div className="stat-value" style={{ color: '#059669' }}>
-                  {clearedArrears}
-                </div>
-                <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '2px' }}>
-                  Successfully Cleared
-                </div>
+              <div className="sd-stat__body">
+                <h3 className="sd-stat__label">Cleared Arrears</h3>
+                <div className="sd-stat__value" style={{ color: '#059669' }}>{clearedArrears}</div>
+                <div className="sd-stat__hint">Successfully cleared</div>
               </div>
             </div>
 
-            <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#EFF6FF', color: '#1D4ED8' }}>
-                <CheckCircle2 size={24} />
+            <div className="sd-stat">
+              <div
+                className="sd-stat__icon"
+                style={{ backgroundColor: pc.complete ? '#ECFDF5' : '#FFFBEB', color: pc.complete ? '#059669' : '#B45309' }}
+              >
+                {pc.complete ? <CheckCircle2 size={22} /> : <AlertCircle size={22} />}
               </div>
-              <div className="stat-info">
-                <h3>Profile Completion</h3>
-                <div className="stat-value" style={{ color: profile?.profileCompleted ? '#059669' : '#D97706' }}>
-                  {profile?.profileCompleted ? '100%' : 'Incomplete'}
+              <div className="sd-stat__body">
+                <h3 className="sd-stat__label">Profile Completion</h3>
+                <div className="sd-stat__value" style={{ color: pc.complete ? '#059669' : '#B45309' }}>
+                  {pc.complete ? 'Complete' : 'Incomplete'}
                 </div>
+                {pc.hasPercent && (
+                  <div
+                    className="sd-progress"
+                    role="progressbar"
+                    aria-valuenow={pc.percent}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-label="Profile completion"
+                  >
+                    <div
+                      className="sd-progress__fill"
+                      style={{
+                        width: `${pc.percent}%`,
+                        background: pc.complete ? undefined : 'var(--color-warning-600)',
+                      }}
+                    />
+                  </div>
+                )}
+                {!pc.complete && pc.hasPercent && <div className="sd-stat__hint">{pc.percent}% complete</div>}
+                {!pc.complete && pc.missing.length > 0 && (
+                  <div className="sd-stat__hint">Missing: {pc.missing.join(', ')}</div>
+                )}
               </div>
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
+          <div className="sd-grid-2">
             {/* Dynamic Date-Based Meeting Notice Card */}
-            {(() => {
-              const notice = getMeetingNotice(schedule);
-              if (notice.isPast) {
-                return (
-                  <div className="card" style={{ borderLeft: '4px solid var(--color-slate-500)' }}>
-                    <div className="card-header">
-                      <h3 className="card-title"><CalendarCheck2 size={18} /> Meeting Schedule</h3>
-                      <span className="badge badge-secondary">All Caught Up</span>
-                    </div>
-                    <div style={{ padding: '0.5rem 0', color: '#64748B', fontSize: '0.85rem' }}>
-                      No upcoming meetings scheduled at this time. Past meetings are archived under the Meetings tab.
-                    </div>
+            <div className={`card sd-card ${meetingNotice.isPast ? 'sd-card--muted' : 'sd-card--gold'}`}>
+              <div className="card-header">
+                <h3 className="sd-card__title"><CalendarCheck2 size={18} /> {meetingNotice.title}</h3>
+                <span className={`badge ${meetingNotice.isPast ? 'badge-secondary' : 'badge-warning'}`}>{meetingNotice.badge}</span>
+              </div>
+              {meetingNotice.isPast ? (
+                <div className="sd-empty">
+                  <CalendarCheck2 size={26} />
+                  <span>No upcoming meetings scheduled at this time. Past meetings are archived under the Meetings tab.</span>
+                </div>
+              ) : (
+                <div>
+                  <div className="sd-meeting__when">
+                    {schedule?.day || 'Saturday'} at {schedule?.time || '10:30 AM'}
                   </div>
-                );
-              }
-              return (
-                <div className="card" style={{ borderLeft: '4px solid var(--color-gold-500)' }}>
-                  <div className="card-header">
-                    <h3 className="card-title"><CalendarCheck2 size={18} /> {notice.title}</h3>
-                    <span className="badge badge-warning">{notice.badge}</span>
+                  <div className="sd-meeting__where">
+                    Location: <strong>{profile?.currentMentor?.cabin_location || schedule?.location || 'Faculty Cabin'}</strong>
                   </div>
-                  <div style={{ padding: '0.5rem 0' }}>
-                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0B2545', marginBottom: '4px' }}>
-                      {schedule?.day || 'Saturday'} at {schedule?.time || '10:30 AM'}
+                  <div className="sd-meeting__note">
+                    Scheduled Date: <strong>{schedule?.nextSaturdayDate}</strong>. Attendance is mandatory as per college mentoring regulations.
+                  </div>
+                  {schedule?.meetingDescription && (
+                    <div className="sd-meeting__note" style={{ marginTop: '0.5rem' }}>
+                      {schedule.meetingDescription}
                     </div>
-                    <div style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '0.75rem' }}>
-                      Location: <strong>{profile?.currentMentor?.cabin_location || schedule?.location || 'Faculty Cabin'}</strong>
-                    </div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--color-slate-500)', backgroundColor: 'var(--color-slate-50)', padding: '0.6rem 0.8rem', borderRadius: '8px' }}>
-                      Scheduled Date: <strong>{schedule?.nextSaturdayDate}</strong>. Attendance is mandatory as per college mentoring regulations.
-                    </div>
-                    {schedule?.meetingDescription && (
-                      <div style={{ marginTop: '0.5rem', fontSize: '0.78rem', color: '#0B2545' }}>
-                        {schedule.meetingDescription}
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Assigned Mentor Card */}
+            <div className="card sd-card">
+              <div className="card-header">
+                <h3 className="sd-card__title"><User size={18} /> Assigned Faculty Mentor</h3>
+                {mentor && <span className="badge badge-success">Active Mentor</span>}
+              </div>
+              {mentor ? (
+                <div>
+                  <div className="sd-mentor__name">{mentor.mentor_name}</div>
+                  <div className="sd-mentor__sub">
+                    {[mentor.designation, mentor.cabin_location ? `Cabin: ${mentor.cabin_location}` : '']
+                      .filter(Boolean)
+                      .join(' • ')}
+                  </div>
+                  <div className="sd-mentor__rows">
+                    {mentor.phone_number && (
+                      <div className="sd-mentor__row">
+                        <Phone size={15} />
+                        <span>{mentor.phone_number}</span>
+                      </div>
+                    )}
+                    {mentor.mentor_email && (
+                      <div className="sd-mentor__row">
+                        <Mail size={15} />
+                        <span>{mentor.mentor_email}</span>
                       </div>
                     )}
                   </div>
                 </div>
-              );
-            })()}
-
-            {/* Assigned Mentor Card */}
-            <div className="card">
-              <div className="card-header">
-                <h3 className="card-title"><User size={18} /> Assigned Faculty Mentor</h3>
-                <span className="badge badge-success">Active Mentor</span>
-              </div>
-              {profile?.currentMentor ? (
-                <div>
-                  <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0B2545' }}>
-                    {profile.currentMentor.mentor_name}
-                  </div>
-                  <div style={{ fontSize: '0.825rem', color: '#64748B', marginTop: '2px' }}>
-                    {profile.currentMentor.designation} • Cabin: {profile.currentMentor.cabin_location}
-                  </div>
-                  <div style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: '#334155', lineHeight: 1.6 }}>
-                    <div><Phone size={14} style={{ verticalAlign: 'middle', marginRight: '6px' }} /> {profile.currentMentor.phone_number || 'N/A'}</div>
-                    <div><Mail size={14} style={{ verticalAlign: 'middle', marginRight: '6px' }} /> {profile.currentMentor.mentor_email || 'N/A'}</div>
-                  </div>
-                </div>
               ) : (
-                <div style={{ color: '#64748B', fontSize: '0.85rem' }}>Mentor allocation in progress.</div>
+                <div className="sd-empty">
+                  <User size={26} />
+                  <span>Mentor allocation in progress. Your assigned faculty mentor will appear here once allocated.</span>
+                </div>
               )}
             </div>
           </div>
 
-          {/* Recent Meetings */}
+          {/* Recent Saturday Mentoring Log */}
           <div className="card">
             <div className="card-header">
-              <h3 className="card-title"><CalendarCheck2 size={18} /> Recent Saturday Mentoring Log</h3>
+              <h3 className="sd-card__title"><CalendarCheck2 size={18} /> Recent Saturday Mentoring Log</h3>
+              {profile?.meetings && profile.meetings.length > 0 && (
+                <span className="badge badge-primary">
+                  {profile.meetings.length} {profile.meetings.length === 1 ? 'record' : 'records'}
+                </span>
+              )}
             </div>
             {profile?.meetings && profile.meetings.length > 0 ? (
               <div className="table-responsive">
@@ -833,13 +894,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
                 </table>
               </div>
             ) : (
-              <div style={{ textAlign: 'center', padding: '1.5rem', color: '#64748B', fontSize: '0.85rem' }}>
-                No meeting records available.
+              <div className="sd-empty">
+                <CalendarCheck2 size={26} />
+                <span>No Saturday mentoring sessions recorded yet. Sessions appear here once your mentor logs them.</span>
               </div>
             )}
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* My Profile Tab */}
       {currentTab === 'profile' && (

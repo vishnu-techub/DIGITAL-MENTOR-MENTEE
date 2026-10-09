@@ -55,30 +55,20 @@ const TABS = [
   { id: 'reports', label: '30-Day Report', icon: FileText },
 ] as const;
 
-const NEVER = 'â€”';
+const NEVER = '—';
 
 /* ------------------------------------------------------------------ charts */
 
 /**
- * College-wide PIE â€” Mentored vs Pending for the reporting month.
+ * College-wide coverage ring — Mentored vs Pending for the reporting month.
  *
- * Inline SVG (no charting dependency), matching the HOD dashboard. The two
- * slice values come straight from the server response, which de-duplicates by
- * student identity, so the two slices always sum to the student total.
+ * Inline SVG (no charting dependency). The two figures come straight from the
+ * server response, which de-duplicates by student identity, so they always sum
+ * to the student total. The ring only draws the coverage fraction; the two stat
+ * rows carry the mentored / pending counts and percentages.
  */
 const CoveragePie: React.FC<{ pie: AdminMentoringDashboardData['pie'] | undefined }> = ({ pie }) => {
   const total = pie ? Math.max(0, pie.mentored + pie.pending) : 0;
-  const radius = 60;
-  const cx = 70;
-  const cy = 70;
-
-  const arc = (fraction: number) => {
-    const angle = fraction * 2 * Math.PI - Math.PI / 2;
-    const x = cx + radius * Math.cos(angle);
-    const y = cy + radius * Math.sin(angle);
-    const largeArc = fraction > 0.5 ? 1 : 0;
-    return `M ${cx} ${cy} L ${cx} ${cy - radius} A ${radius} ${radius} 0 ${largeArc} 1 ${x} ${y} Z`;
-  };
 
   if (!pie || total === 0) {
     return (
@@ -91,51 +81,61 @@ const CoveragePie: React.FC<{ pie: AdminMentoringDashboardData['pie'] | undefine
     );
   }
 
-  const mentoredFraction = pie.mentored / total;
-  const pendingFraction = pie.pending / total;
+  const coverage = Math.round((pie.mentored / total) * 100);
+  const pendingPct = Math.round((pie.pending / total) * 100);
+  const R = 44;
+  const C = 2 * Math.PI * R;
+  const fraction = pie.mentored / total;
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flexWrap: 'wrap' }}>
-      <svg
-        width="140"
-        height="140"
-        viewBox="0 0 140 140"
-        role="img"
-        aria-label={`Mentored ${pie.mentored}, pending ${pie.pending} for ${pie.month}`}
-      >
-        <circle cx={cx} cy={cy} r={radius} fill="#F1F5F9" />
-        {mentoredFraction > 0 && <path d={arc(mentoredFraction)} fill="#059669" />}
-        {pendingFraction > 0 && <path d={arc(1 - mentoredFraction)} fill="#E11D48" />}
-        <text
-          x={cx}
-          y={cy - 4}
-          textAnchor="middle"
-          style={{ fontSize: '20px', fontWeight: 800, fill: '#0B2545' }}
+    <div className="mentoring-panel">
+      <div className="split-visual">
+        <svg
+          width="108"
+          height="108"
+          viewBox="0 0 108 108"
+          role="img"
+          aria-label={`Coverage ${coverage}% — ${pie.mentored} mentored, ${pie.pending} pending for ${pie.month}`}
         >
-          {Math.round(mentoredFraction * 100)}%
-        </text>
-        <text x={cx} y={cy + 13} textAnchor="middle" style={{ fontSize: '9px', fill: '#64748B' }}>
-          COVERAGE
-        </text>
-      </svg>
+          <circle className="ring-track" cx="54" cy="54" r={R} />
+          {coverage > 0 && (
+            <circle
+              className="ring-fill"
+              cx="54"
+              cy="54"
+              r={R}
+              strokeDasharray={C.toFixed(2)}
+              strokeDashoffset={(C * (1 - fraction)).toFixed(2)}
+            />
+          )}
+          <text x="54" y="58" textAnchor="middle" className="ring-pct">
+            {coverage}%
+          </text>
+          <text x="54" y="69" textAnchor="middle" className="ring-label">
+            COVERAGE
+          </text>
+        </svg>
+      </div>
 
-      <div style={{ display: 'grid', gap: '0.75rem' }}>
-        <div>
-          <span className="badge badge-success">Mentored â€” {pie.mentored}</span>
-          <div style={{ fontSize: '0.75rem', color: 'var(--color-slate-500)', marginTop: '0.25rem' }}>
-            {Math.round(mentoredFraction * 100)}% of {pie.total} students
-          </div>
+      <div className="split-stats">
+        <div className="split-stat split-stat-good">
+          <span className="split-indicator" aria-hidden="true" />
+          <span className="split-stat-label">Mentored</span>
+          <span className="split-stat-count">{pie.mentored}</span>
+          <span className="split-stat-pct">{coverage}%</span>
         </div>
-        <div>
-          <span className="badge badge-danger">Pending â€” {pie.pending}</span>
-          <div style={{ fontSize: '0.75rem', color: 'var(--color-slate-500)', marginTop: '0.25rem' }}>
-            {Math.round(pendingFraction * 100)}% of {pie.total} students
-          </div>
-        </div>
-        <div style={{ fontSize: '0.72rem', color: 'var(--color-slate-400)' }}>
-          Reporting month: {pie.month} Â· each student counted once
+        <div className="split-stat split-stat-pending">
+          <span className="split-indicator" aria-hidden="true" />
+          <span className="split-stat-label">Pending</span>
+          <span className="split-stat-count">{pie.pending}</span>
+          <span className="split-stat-pct">{pendingPct}%</span>
         </div>
       </div>
+
+      <p className="split-foot">
+        Reporting month: <strong>{pie.month}</strong>
+        <span aria-hidden="true">·</span> {total} students, each counted once
+      </p>
     </div>
   );
 };
@@ -158,35 +158,61 @@ const CoverageBar: React.FC<{ percent: number }> = ({ percent }) => (
   </div>
 );
 
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
+
+/** `YYYY-MM-DD` → `Aug 17`. Presentation only — the range still comes from the API. */
+function formatShortDay(iso: string): string {
+  const parts = iso.split('-');
+  if (parts.length !== 3) return iso;
+  const month = MONTHS_SHORT[Number(parts[1]) - 1];
+  const day = Number(parts[2]);
+  if (!month || !Number.isFinite(day)) return iso;
+  return `${month} ${day}`;
+}
+
+/** Compact week range, e.g. `Aug 17 – Aug 23`; falls back to the API label. */
+function formatWeekRange(w: AdminWeeklyProgress): string {
+  const startParts = w.weekStart.split('-');
+  const endParts = w.weekEnd.split('-');
+  if (startParts.length === 3 && endParts.length === 3) {
+    const start = formatShortDay(w.weekStart);
+    const end = formatShortDay(w.weekEnd);
+    const sameYear = startParts[0] === endParts[0];
+    if (start !== w.weekStart && end !== w.weekEnd) {
+      return sameYear ? `${start} – ${end}` : `${start} – ${end}, ${endParts[0]}`;
+    }
+  }
+  return w.weekLabel;
+}
+
 const WeeklyProgressList: React.FC<{ weeks: AdminWeeklyProgress[] }> = ({ weeks }) => {
   if (!weeks || weeks.length === 0) return null;
-  const max = Math.max(1, ...weeks.map((w) => w.sessions));
+  const topSessions = Math.max(1, ...weeks.map((w) => w.sessions));
   return (
-    <div style={{ display: 'grid', gap: '0.6rem' }}>
-      {weeks.map((w) => (
-        <div
-          key={w.weekStart}
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '150px 1fr 62px',
-            gap: '0.75rem',
-            alignItems: 'center',
-          }}
-        >
-          <span style={{ fontSize: '0.72rem', color: 'var(--color-slate-600)' }}>{w.weekLabel}</span>
-          <div className="progress-track">
-            <div
-              className="progress-fill"
-              style={{ width: `${(w.sessions / max) * 100}%`, background: '#0B2545' }}
-            />
+    <div className="weekly-list">
+      {weeks.map((w) => {
+        const label = formatWeekRange(w);
+        const pct = Math.round((w.sessions / topSessions) * 100);
+        const busiest = w.sessions > 0 && w.sessions === topSessions;
+        return (
+          <div key={w.weekStart} className="weekly-row">
+            <span className="week-date" title={label}>
+              {label}
+            </span>
+            {w.sessions > 0 ? (
+              <div className="week-track">
+                <div
+                  className={`week-fill${busiest ? ' is-busiest' : ''}`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            ) : (
+              <div className="week-zero" />
+            )}
+            <span className={`week-count${w.sessions === 0 ? ' is-zero' : ''}`}>{w.sessions}</span>
           </div>
-          <span
-            style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-navy-800)', textAlign: 'right' }}
-          >
-            {w.sessions}
-          </span>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 };
@@ -222,7 +248,7 @@ const Day: React.FC<{ value: string | null | undefined }> = ({ value }) => (
  * Explains the metric definitions once, at the top of the dashboard.
  *
  * Coverage / mentored / pending are defined on the server and shipped in the
- * response precisely so this screen never re-derives them â€” that is what keeps
+ * response precisely so this screen never re-derives them — that is what keeps
  * the college figure and a department's own HOD figure identical.
  */
 const DefinitionsNote: React.FC<{ data: AdminMentoringDashboardData | null }> = ({ data }) => {
@@ -490,7 +516,7 @@ export const AdminMentoringDashboard: React.FC<AdminMentoringDashboardProps> = (
               {statCard(<TrendingUp size={24} />, '#ECFEFF', '#0E7490', 'Sessions (all time)', deptDetail.summary.totalMentoringSessions)}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 1fr) 2fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
+            <div className="mentoring-split-wide">
               <div className="card">
                 <div className="card-header">
                   <h3 className="card-title"><PieChartIcon size={18} /> {deptDetail.department.departmentName} Split</h3>
@@ -601,7 +627,7 @@ export const AdminMentoringDashboard: React.FC<AdminMentoringDashboardProps> = (
           <div className="card">
             <div className="card-header">
               <h3 className="card-title">
-                <UserCheck size={18} /> {mentorDetail.mentor.fullName} Â· Mentees
+                <UserCheck size={18} /> {mentorDetail.mentor.fullName} · Mentees
               </h3>
               <span className="badge badge-neutral">{mentorDetail.mentor.departmentName}</span>
             </div>
@@ -704,7 +730,7 @@ export const AdminMentoringDashboard: React.FC<AdminMentoringDashboardProps> = (
             {statCard(<BarChart3 size={24} />, '#FFFBEB', '#D97706', 'Overall Coverage', `${summary?.overallMentoringCoverage ?? 0}%`)}
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 1fr) 2fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
+          <div className="mentoring-split-wide">
             <div className="card">
               <div className="card-header">
                 <h3 className="card-title"><PieChartIcon size={18} /> College Mentoring Split</h3>
@@ -959,7 +985,7 @@ export const AdminMentoringDashboard: React.FC<AdminMentoringDashboardProps> = (
           />
           <div className="card" style={{ marginBottom: '1.5rem' }}>
             <div className="card-header">
-              <h3 className="card-title"><Award size={18} /> Department Comparison â€” current month</h3>
+              <h3 className="card-title"><Award size={18} /> Department Comparison — current month</h3>
               <span className="badge badge-success">
                 Highest: {comparison?.highestCoveragePercent ?? 0}%
               </span>
@@ -977,7 +1003,7 @@ export const AdminMentoringDashboard: React.FC<AdminMentoringDashboardProps> = (
                     <div>
                       <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-navy-800)' }}>{d.departmentName}</div>
                       <div style={{ fontSize: '0.72rem', color: 'var(--color-slate-400)' }}>
-                        {d.students} students Â· {d.totalMentoringSessions} sessions
+                        {d.students} students · {d.totalMentoringSessions} sessions
                       </div>
                     </div>
                     <div className="progress-track">
@@ -1064,8 +1090,8 @@ export const AdminMentoringDashboard: React.FC<AdminMentoringDashboardProps> = (
               <>
                 <div className="card-body">
                   <div style={{ fontSize: '0.78rem', color: 'var(--color-slate-500)', marginBottom: '1rem' }}>
-                    Reporting window: <strong>{report.from}</strong> to <strong>{report.to}</strong> Â·{' '}
-                    {report.totals.mentoringSessions} sessions Â· {report.totals.coveredStudents} of{' '}
+                    Reporting window: <strong>{report.from}</strong> to <strong>{report.to}</strong> ·{' '}
+                    {report.totals.mentoringSessions} sessions · {report.totals.coveredStudents} of{' '}
                     {report.totals.totalStudents} students covered ({report.totals.coveragePercent}%)
                   </div>
                   <WeeklyProgressList weeks={report.weekly} />

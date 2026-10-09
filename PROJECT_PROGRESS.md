@@ -109,7 +109,16 @@ Status legend: `PASS` | `PARTIAL` | `FAIL` | `PENDING`
   Authentication" info banner from `LoginPage.tsx` (icon, background, border and its reserved
   spacing) so the sign-in form flows straight after the card header; every other login-page
   element (brand panel, logo, fields, toggle, Sign In, Download/Install, footer) is untouched
-  and the generic `alert-info` style remains available. No auth/API/routing change.
+  and the generic `alert-info` style remains available. No auth/API/routing change. A scoped
+  **login premium-polish pass** (same day) refined the page without changing layout or palette:
+  Cinzel serif confirmed on the college name + hero heading (gold-accented span), Inter sans for
+  every form/description label, a deeper card with a 3px gold top accent and 24px radius, 46px
+  touch-friendly inputs with a navy border + gold focus ring at `:focus`, a 46px navy Sign In
+  button (hover lift + shadow, `btn-loading` spinner and `disabled` duplicate-submission guard
+  unchanged), the PWA button restyled as a gold-outline secondary action, improved
+  legal/footer contrast, restrained gold glows on the navy gradient, plus tablet (961–1180px)
+  and mobile (≤640px) refinements and a login-scoped `prefers-reduced-motion` guard.
+- **Admin Mentoring Dashboard — College Mentoring Split + Weekly Progress focused refinement:** PASS (2026-10-09) — a presentation-only second pass over exactly those two cards. **Split card:** refined circular coverage ring with a clear % (server `pie` figures, de-duplicated), two restrained stat rows (green **Mentored**, amber/red **Pending**) each showing count + % in one consistent format, and a subtle footer naming the reporting month + the de-duplicated student total; inline SVG, decorative-but-labelled. **Weekly card:** consistent `DATE RANGE | BAR | COUNT` rows — compact one-line ranges (`Aug 17 – Aug 23`) with a fixed date-label column width, low-attention flexible bars on a subtle track with the theme fill, a clean zero-state with visible dashed stubs, subtle separators + row hover, and every value straight from the API `weeklyProgress`. **Responsive:** desktop shows two equal-height side-by-side panels; tablet and mobile stack cleanly with no horizontal overflow. No API, route, RBAC, calculation, data-fetching or unrelated card changed. Verified end-to-end on an isolated backend (`verify-data2`, seeded 21 counselling records) + rebuilt SPA at 1440×900 / 1024×768 / 390×844 — 0 failures. **Pre-existing issue found (NOT fixed — out of scope):** the 30-Day Report tab never loads its data because the mount effect tests `currentTab === 'reports'` while the parent supplies `'mentoring-reports'`; the tab shows the "Report unavailable" empty state. See the Completed entry + Log for details.
 - **Demo HOD accounts:** PASS (2026-10-09) — the five demo/verification HOD accounts (origin proven by
   name + audit trail, not by department) are now **permanently deleted** through the new Admin-only
   delete path (1 via the browser UI E2E, 4 via the API); the live store holds 8 genuine HOD accounts
@@ -140,6 +149,80 @@ Status legend: `PASS` | `PARTIAL` | `FAIL` | `PENDING`
 ---
 
 ## Completed
+
+### Admin Mentoring Dashboard — College Mentoring Split + Weekly Progress — focused refinement PASS (2026-10-09)
+
+**Scope:** a presentation-only **second pass** over exactly two panels on `AdminMentoringDashboard.tsx`
+(`CoveragePie` + `WeeklyProgressList`, both college and dept drill-down contexts). No API call, route,
+RBAC rule, calculation, data-fetching path, dependency or unrelated card changed; every figure still
+comes straight from the `/api/admin/overview/*` response.
+
+- **Split card (`CoveragePie`):** refined the coverage ring — clear centered percentage
+  (`.ring-pct`) + `COVERAGE` label, track + gold `stroke-dashoffset` fill computed from the server's
+  de-duplicated `pie`; two stat rows in a restrained palette — green **Mentored** and
+  red/amber **Pending** — each carrying the server count and its percentage in one consistent
+  format, and a subtle footer naming the reporting month and the de-duplicated student total
+  (`Reporting month: 2026-10 · 1 students, each counted once`). No malformed characters.
+- **Weekly card (`WeeklyProgressList`):** consistent `DATE RANGE | BAR | COUNT` rows — compact
+  one-line ranges (`Aug 17 – Aug 23`, derived from `weekStart`/`weekEnd` via `formatWeekRange`,
+  server `weekLabel` as fallback) in a fixed-width date label column; flexible low-attention bars on
+  a subtle track with the theme fill scaled to the busiest week (gold `is-busiest` accent);
+  a clean zero-session state with a visible dashed stub (never a missing row); subtle row
+  separators + hover feedback; counts straight from the backend.
+- **Layout/CSS:** the two split blocks share one `.mentoring-split-wide` grid
+  (`minmax(300px, 1fr) 1.6fr`), cards stretch to **equal height**, and the grid collapses to a
+  single column at ≤1024px; the scoped CSS block (`.mentoring-split-wide`, `.mentoring-panel`,
+  `.split-*`, `.weekly-*`, `.ring-*`) lives in `frontend/src/styles/index.css`.
+- **Verification (performed on the real pipeline, isolated backend):**
+  - `frontend` `npx tsc --noEmit` PASS; `npm run build` (`tsc && vite build`) PASS.
+  - Headless-Chromium over desktop 1440×900 / tablet 1024×768 / mobile 390×844 against a rebuilt
+    SPA pointed at an isolated backend on :5090 using a seeded copy of the store (21 counselling
+    records → pie `1/0/1` at 100% coverage, weekly sessions `[2,3,0,5,1,0,4,6]`, zero weeks on
+    Aug 31–Sep 6 and Sep 21–27) — **all assertions PASS, 0 failures**: equal card heights
+    (394.72/394.72), ring % = API coverage (100%), ring arc offset = expected, Mentored/Pending
+    count+pct rows match the API, 8 rows, one-line date labels matching API-derived ranges, zero
+    stubs = 2, bar widths = count/busiest %, busiest highlighted, row hover feedback, no horizontal
+    overflow on any viewport, tablet/mobile stacked layouts, no mojibake on the overview or the
+    Comparison / 30-Day tabs, bundle-level `·` + mojibake scan clean, **0 page errors / 0 console
+    errors per viewport**. Dept drill-down (Information Technology, the populated dept) re-verifies
+    the same components: ring 100%, 8 rows, counts/zeros/busiest identical to the dept detail API.
+    The empty dept (AIDS) drill shows the intended `EmptyState`.
+  - **Pre-existing issue found during verification (NOT fixed — outside this pass's scope):** the
+    30-Day Report tab never loads its content. The `loadReport` effect compares
+    `currentTab === 'reports'` but the parent (`AdminDashboard.tsx`) supplies prefixed values
+    (`currentTab.startsWith('mentoring-')`, tab click maps `reports` → `mentoring-reports`), so the
+    effect never fires and the report stays null → the tab renders the "Report unavailable" empty
+    state. The API itself is fine (`/api/admin/overview/report-30-day?weeks=5` → 200 with full
+    payload). This predates this pass and touches the reports tab (out of scope); flagged for the
+    user to decide.
+- Staged with `git add -A` only; **no commit/push made**.
+
+### Admin Mentoring Dashboard — split ring + weekly progress polish — PASS (2026-10-09)
+
+**Scope:** presentation-only refinement of two panels on `AdminMentoringDashboard.tsx`. No API call,
+route, RBAC rule, calculation or stored field was changed; every figure still comes straight from the
+`/api/admin/overview/*` response.
+
+- **College / department split (`CoveragePie`):** replaced the two-slice pie with a **coverage ring**
+  (inline SVG, no charting dependency) that draws only the mentored fraction of the reporting month,
+  plus two stat rows — **Mentored** and **Pending** — each showing the server count and its
+  percentage, and a foot line naming the reporting month and the de-duplicated student total. The
+  ring is decorative-but-labelled (`role="img"`, descriptive `aria-label`) and renders an
+  `EmptyState` when there is nothing to report.
+- **Weekly progress (`WeeklyProgressList`):** new list presentation — bars scaled against the busiest
+  week of the window (busiest week accent-highlighted in gold), a dashed placeholder for a
+  zero-session week, and compact `Aug 17 – Aug 23` labels derived from `weekStart`/`weekEnd` with the
+  server `weekLabel` as a fallback.
+- **Layout:** both `minmax(280px, 1fr) 2fr` inline-grid split blocks (department drill-down and
+  college overview) now share one `.mentoring-split-wide` class; cards stretch to equal height and
+  collapse to a single column at ≤1024px.
+- **Styles:** one scoped block appended to `frontend/src/styles/index.css`
+  (`.mentoring-split-wide`, `.mentoring-panel`, `.ring-*`, `.split-*`, `.weekly-*`) with ≤1024px and
+  ≤480px refinements, all in existing design tokens.
+- **Encoding:** the remaining mojibake in this file (`â€"`, `Â·`) was replaced with the real `—` / `·`.
+
+**Verification:** frontend `npx tsc --noEmit` PASS; `npx vite build` PASS (1659 modules, CSS
+89.20 kB); the new selectors were confirmed present in the emitted CSS bundle. No commit/push made.
 
 ### Admin-only permanent HOD deletion + live demo-account cleanup — PASS (2026-10-09)
 
@@ -1964,6 +2047,9 @@ drives `setHodStatus` with no `deleteHod` route; `AdminStudentDocuments` viewer 
 
 | Date | Status | Summary |
 |------|--------|---------|
+| 2026-10-09 | PASS | Admin Mentoring Dashboard — "College Mentoring Split" + "Weekly Progress" **focused refinement** (presentation only, second pass over exactly these two cards). **Split (`CoveragePie`):** refined circular coverage ring with a clear centered % + `COVERAGE` label, track + gold fill from the server's de-duplicated `pie`; two restrained stat rows (green Mentored, red/amber Pending) each showing server count + % in one consistent format; subtle footer `Reporting month: 2026-10 · 1 students, each counted once`; no malformed characters. **Weekly (`WeeklyProgressList`):** consistent `DATE RANGE | BAR | COUNT` rows — compact one-line ranges (`Aug 17 – Aug 23` via `formatWeekRange`, fixed date-label width), low-attention flexible bars on a subtle track with theme fill scaled to the busiest week (gold `is-busiest`), clean zero-session dashed stubs, subtle separators + hover, counts straight from the API. **Layout:** shared `.mentoring-split-wide` grid, equal-height cards, single column ≤1024px; scoped CSS block in `index.css`. **No API/route/RBAC/calculation/data-fetch/unrelated card changed.** Verified on the real pipeline with an isolated backend (:5090, seeded `verify-data2`: pie 1/0/1 = 100%, weekly `[2,3,0,5,1,0,4,6]`, 2 zero weeks) + rebuilt SPA across desktop 1440 / tablet 1024 / mobile 390: equal card heights (394.72/394.72), ring %/arc match API, stat rows match, 8 rows, one-line API-derived date labels, stubs/bar-widths/busiest match, hover feedback, no horizontal overflow on any viewport, no mojibake (overview + Comparison + 30-Day tabs, bundle `·` scan), 0 page/console errors; dept drill-down re-verifies the same components (ring 100%, 8 rows, counts match dept API); empty dept shows the intended EmptyState. **Found (pre-existing, NOT fixed — out of scope):** the 30-Day Report tab never loads data — `loadReport` tests `currentTab === 'reports'` while the parent supplies `mentoring-reports`, so the tab always shows "Report unavailable"; the API itself returns 200 with a full payload. `tsc --noEmit` + `npm run build` PASS. `git add -A` only; no commit/push. |
+| 2026-10-09 | PASS | Admin Mentoring Dashboard — "College Mentoring Split" + "Weekly Progress" polish (presentation only). **Split:** `CoveragePie` in `frontend/src/pages/admin/AdminMentoringDashboard.tsx` no longer draws a two-slice pie — it renders a 108px coverage **ring** (inline SVG, `stroke-dasharray`/`stroke-dashoffset` on a track + fill, `role="img"` with an aria-label carrying coverage %, mentored and pending) and two stat rows (Mentored / Pending) whose counts and percentages come straight from the server payload (`pie.mentored`, `pie.pending`; the server de-duplicates, so they always sum to the total), with a `Reporting month: … · N students, each counted once` foot. **Weekly progress:** new `WeeklyProgressList` renders a token-styled list — relative bars scaled to the busiest week (gold `is-busiest` highlight), dashed placeholder for zero-session weeks, and compact `Aug 17 – Aug 23` date labels from `weekStart`/`weekEnd` with the API's `weekLabel` as fallback. **Layout:** the two inline `gridTemplateColumns: 'minmax(280px, 1fr) 2fr'` split blocks (dept drill-down + college overview) now use one `.mentoring-split-wide` class; the dept panel's `.card`s stretch to equal height. **CSS:** new scoped block in `frontend/src/styles/index.css` (`.mentoring-split-wide`, `.mentoring-panel`, `.ring-*`, `.split-*`, `.weekly-*`) with responsive rules at ≤1024px (single column) and ≤480px. **Encoding:** replaced the last mojibake (`â€"`, `Â·`) in this file's comments/labels with the real `—` / `·`. No API, data, route, RBAC, calculation or workflow change; no dependency added. **Verified:** `npx tsc --noEmit` PASS; `npx vite build` PASS (1659 modules, CSS 89.20 kB); all new selectors confirmed present in the emitted CSS bundle. No commit/push. |
+| 2026-10-09 | PASS | Login page — premium UI polish (presentation only). **Typography:** college name (`.login-crest-name`) and hero heading (`.login-hero-title`, `clamp(1.55rem,2.6vw,2.25rem)`, `text-wrap: balance`) stay in the already-loaded Cinzel serif with the gold `Mentor–Mentee` span highlighted; every form label, input, button, description and helper uses Inter (`--font-sans`), consistent weights/sizes/leading/spacing. **Card:** gold 3px top accent, `--radius-2xl` (24px), deeper `0 20px 50px -12px` shadow, `2.5rem 2.25rem` padding, `font-family` pinned to sans. **Fields:** login-scoped `.login-card .form-control` = 46px min-height, slate-300 border, slate-400 placeholder, `:hover` slate-400 border, `:focus` navy-700 border + 3px gold `rgba(197,155,39,.18)` ring (120ms transitions); labels stay 0.8rem/600/clear; password toggle, `autocomplete="username"` / `"current-password"` and required attributes untouched. **Buttons:** Sign In keeps its classes but its inline style moved to `.login-card .btn-primary` (46px, weight 700, navy-800 bg, hover navy-700 + lift -1px + shadow; `btn-loading` spinner + `disabled` duplicate-submission guard unchanged); the PWA button was de-inlined into `.login-pwa-btn` — gold-500 outline secondary (white bg, navy text, gold icon), hover gold-50 with lift. **Other:** `.login-legal`/`.login-foot` contrast raised, restrained gold glows (`login-page::before` top-right + faint bottom-right navy depth over the existing radial), tablet `961–1180px` padding/type reduction, `≤640px` card/panel/logo/button polish, and a scoped `prefers-reduced-motion` block disabling the hover/press transforms (the global reduce rule already collapses animations to 0.01ms). **Banner:** the "Institutional Portal Access • Role-Based Authentication" `.alert.alert-info` banner remains fully removed (0 nodes, 0 text in bundle) and no new banner was added. No auth/API/routes/validation/PWA logic changed; no dependencies added. **Verified:** `tsc --noEmit` PASS; `vite build` PASS (1659 modules). Headless-Chromium on the built dist at 1440×900, 1024×768 and 390×844: 0 banner nodes/text, all content present, brand panel flex ≥961px / none on mobile, card fits with no horizontal overflow (`scrollWidth == innerWidth`), Cinzel computed on hero+crest and Inter on card/labels/inputs, inputs 46px with navy+gold `:focus` ring (and no ring on blur), Sign In navy 46px, PWA button gold-outline navy-text, gold `:focus-visible` outlines on Sign In + PWA (blue on the toggle, matching the app-wide focus style), hover = navy-700/gold-50 + lift, reduced-motion context = card animation 1e-05s and hover transforms none, autocomplete/toggle/required all intact, **0 page errors and 0 console errors** on every viewport. No commit/push. |
 | 2026-10-09 | PASS | Login page — authentication info banner removed. Removed **only** the "Institutional Portal Access • Role-Based Authentication" `.alert.alert-info` banner from `frontend/src/pages/auth/LoginPage.tsx` — its `ShieldCheck` icon, blue background/border and inline 1.25rem bottom margin are gone, so the sign-in form follows the card header's own 1.6rem spacing directly (layout adjusts naturally; no leftover reserved space). Every other login-page element unchanged (brand panel + features, crest logo, "Sign in to your portal" head, Username/Password fields + visibility toggle, Sign In button, Download/Install KSRCE Web App, footer). No authentication logic, API request, validation, session handling or routing touched; no dependency added; the generic `.alert-info` CSS variant is retained for other potential alert users. Verified: `tsc --noEmit` PASS, `vite build` PASS (1659 modules), banner text absent from source and emitted bundle; headless-Chromium checks on the built dist — desktop 1440×900 and mobile 390×844 both show 0 `alert-info` nodes and 0 banner text, brand panel `flex` on desktop / hidden on mobile, card fits the viewport with no horizontal overflow (`scrollWidth == innerWidth`), username/password/toggle/Sign In/Download buttons all present, and **0 page errors and 0 console errors**. No commit/push. |
 | 2026-10-09 | PASS | Admin-only permanent HOD deletion + live demo-account cleanup. **Backend:** new `DELETE /api/admin/hods/:hodId` (ADMIN-only, re-checked in handler) — validates id, refuses non-HOD roles (403), active HODs (409 — deactivate first) and deletion while any dependent record references the account (full User-id reference scan; `AuditLog` deliberately excluded); writes a preserved `DELETE_HOD` audit (no secrets, details `{username, fullName, departmentId, reason}`) **before** narrow `user.deleteOne()` (no cascade, no broad deletion functions). Deletion extra-gated to inactive HODs on an explicit allowlist (`VERIFIED_DEMO_HOD_IDS` export — never matched by username/department/name). **Frontend:** `Delete HOD` action only on inactive verified-demo rows (`is_active===0 && is_verified_demo===1`) — the 8 active genuine HODs keep only View/Edit/Deactivate/Remove — with a permanent-delete confirm modal ("cannot be undone"), toasts + list refresh; `client.ts` gains `is_verified_demo` + `api.admin.deleteHod`. **Live cleanup executed on a fresh 5052 instance (user's stale 5050 dev watcher untouched):** all 5 demo HODs deleted — `hookrepro.hod` via the browser UI E2E (`DELETE …→200`, list 13→12 HODs, buttons 5→4, toast), `hookrepro.it`/`hod.it`/`vhod.verify.cse001`/`vhod.live883485` via API; final list 8 HODs all active, 5 deleted usernames → 401; 166 pre-existing audit records preserved (0 missing) + 5 new `DELETE_HOD`. **No reappearance:** restarted twice on 5052 — list stays 8/8/0, logins 401, clean no-login restart leaves `audit_logs.json` byte-identical and `users.json` changed only by the bootstrap's admin `updatedAt` touch. **Finding:** the built SPA ignores the 4173 proxy — `frontend/.env` bakes `VITE_API_URL=http://localhost:5050` into dist, which is why the browser still saw the stale 5050 watcher; E2E ran on a dist rebuilt with a temporary 5052 override and the canonical dist was rebuilt afterwards (back to `index-CCHU7sU1.js`). New `test:hod-delete` 17/17 (port 5117); re-run `test:hod-admin` 22/22, `test:admin-routes` 8/8, `test:admin-auth` 13/13; backend `tsc --noEmit` clean; frontend `tsc` + `vite build` clean; 20 backend suites. PROJECT_PROGRESS.md updated; no commit/push. |
 | — | PASS | UTF-8 mojibake / CSV charset fixes; both builds green. |
