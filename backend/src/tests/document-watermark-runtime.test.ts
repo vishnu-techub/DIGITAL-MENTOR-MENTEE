@@ -14,6 +14,8 @@
  *   E. An uploaded PNG is watermarked without changing its dimensions.
  *   F. Authentication is still enforced: an unrelated mentor is refused.
  *   G. Deleting the document removes BOTH the original and the watermarked copy.
+ *   H. A record that predates the watermark (no watermarked copy) is regenerated
+ *      on access, from the untouched original, and then served watermarked.
  *
  * Run: npx tsx src/tests/document-watermark-runtime.test.ts
  */
@@ -63,7 +65,7 @@ async function http(
   method: string,
   urlPath: string,
   opts: { token?: string; body?: any } = {}
-): Promise<{ status: number; body: any; bytes: number; contentType: string }> {
+): Promise<{ status: number; body: any; bytes: number; contentType: string; cacheControl: string }> {
   const headers: Record<string, string> = {};
   if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
   let body: any;
@@ -73,6 +75,7 @@ async function http(
   }
   const res = await fetch(`${BASE}${urlPath}`, { method, headers, body });
   const contentType = res.headers.get('content-type') || '';
+  const cacheControl = res.headers.get('cache-control') || '';
   let parsed: any = null;
   let bytes = 0;
   if (contentType.includes('application/json')) {
@@ -88,7 +91,7 @@ async function http(
     bytes = buf.length;
     parsed = buf;
   }
-  return { status: res.status, body: parsed, bytes, contentType };
+  return { status: res.status, body: parsed, bytes, contentType, cacheControl };
 }
 
 async function uploadDoc(
@@ -287,10 +290,20 @@ async function main() {
     check('preview succeeds', preview.status === 200, `status=${preview.status}`);
     check('preview is served as a PDF', preview.contentType.includes('application/pdf'), preview.contentType);
     check('preview serves the WATERMARKED bytes', Buffer.isBuffer(preview.body) && Buffer.from(preview.body).equals(wmBytes));
+    check(
+      'preview forbids caching, so a stale unwatermarked copy can never be reused',
+      /no-store/.test(preview.cacheControl),
+      preview.cacheControl
+    );
 
     const download = await http('GET', `/api/documents/${singleId}/download`, { token: mentorToken });
     check('download succeeds', download.status === 200, `status=${download.status}`);
     check('download serves the WATERMARKED bytes', Buffer.isBuffer(download.body) && Buffer.from(download.body).equals(wmBytes));
+    check(
+      'download forbids caching, so a stale unwatermarked copy can never be reused',
+      /no-store/.test(download.cacheControl),
+      download.cacheControl
+    );
 
     // Listing reports the watermark status without breaking older flows.
     const list = await http('GET', `/api/documents/student/${studentId}`, { token: mentorToken });
@@ -376,6 +389,67 @@ async function main() {
     check('the delete succeeds', del.status === 200, `status=${del.status} ${JSON.stringify(del.body)}`);
     check('the original file is removed from disk', !fs.existsSync(originalPath));
     check('the watermarked copy is also removed from disk', !fs.existsSync(watermarkedPath));
+  }
+
+  // ---------------------------------------------------------------------------
+  console.log('\nH. A document that predates the fix is regenerated on access');
+  // ---------------------------------------------------------------------------
+  {
+    const original = await makePdf(2);
+    const snapshot = Buffer.from(original);
+    const res = await uploadDoc(
+      mentorToken,
+      studentId,
+      { name: 'legacy.pdf', type: 'application/pdf', buffer: original },
+      { title: 'Pre-fix Certificate', category: 'Other' }
+    );
+    check('the upload for the pre-fix simulation succeeds', res.status === 201, `status=${res.status}`);
+
+    const id = String(res.body?.data?._id || '');
+    const doc: any = await StudentDocument.findById(id);
+    const originalPath = storedPathFor(doc.fileUrl)!;
+    const wmPathBefore = storedPathFor(doc.watermarkedFileUrl)!;
+
+    // Simulate a record created BEFORE watermarking existed: the original is on
+    // disk but there is no watermarked companion and no watermark metadata.
+    if (wmPathBefore && fs.existsSync(wmPathBefore)) fs.unlinkSync(wmPathBefore);
+    doc.watermarkedFileUrl = '';
+    doc.watermarkStatus = 'unsupported';
+    doc.watermarkText = '';
+    doc.watermarkAppliedAt = null;
+    await doc.save();
+    check('the simulated pre-fix record has no watermarked copy on disk', !fs.existsSync(wmPathBefore));
+    check(
+      'the original is still present and byte-for-byte unchanged',
+      fs.existsSync(originalPath) && fs.readFileSync(originalPath).equals(snapshot)
+    );
+
+    // First access must derive the watermarked copy from the untouched original.
+    const preview = await http('GET', `/api/documents/${id}/file`, { token: mentorToken });
+    check('preview of a pre-fix record succeeds', preview.status === 200, `status=${preview.status}`);
+
+    const refreshed: any = await StudentDocument.findById(id);
+    check('the pre-fix record now records a watermarked copy', !!refreshed?.watermarkedFileUrl, String(refreshed?.watermarkedFileUrl));
+    check('the record now reports the watermark as applied', refreshed?.watermarkStatus === 'applied', String(refreshed?.watermarkStatus));
+
+    const regenPath = storedPathFor(refreshed.watermarkedFileUrl)!;
+    check('the regenerated copy exists on disk', !!regenPath && fs.existsSync(regenPath), String(regenPath));
+
+    const wmBytes = fs.readFileSync(regenPath);
+    const wmDoc = await PDFDocument.load(wmBytes);
+    check(
+      'the regenerated copy carries the KSRCE watermark on EVERY page',
+      wmDoc.getPages().every((p) => pageContentText(wmDoc, p).includes(WATERMARK_HEX))
+    );
+    check('preview serves the regenerated watermarked bytes', Buffer.isBuffer(preview.body) && Buffer.from(preview.body).equals(wmBytes));
+    check('the regenerated copy is a different file from the original', regenPath !== originalPath);
+
+    const download = await http('GET', `/api/documents/${id}/download`, { token: mentorToken });
+    check('download also serves the regenerated watermarked bytes', Buffer.isBuffer(download.body) && Buffer.from(download.body).equals(wmBytes));
+    check(
+      'the ORIGINAL is still byte-for-byte unchanged after regeneration',
+      fs.readFileSync(originalPath).equals(snapshot)
+    );
   }
 
   console.log(`\n=== ${pass} passed, ${fail} failed ===\n`);

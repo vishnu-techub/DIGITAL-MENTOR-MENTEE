@@ -29,9 +29,18 @@ import sharp from 'sharp';
 /** Exact watermark text mandated by the institution. */
 export const WATERMARK_TEXT = 'K S R C E';
 
-/** Watermark text colour (a neutral mid-grey) and opacity. */
-const WATERMARK_COLOR = rgb(0.45, 0.45, 0.45);
-const WATERMARK_OPACITY = 0.17;
+/**
+ * Watermark text colour (a neutral graphite grey) and opacity.
+ *
+ * Visibility note: the earlier 0.17 opacity over a mid-grey rendered at about
+ * luminance 231 on white (contrast ~1.10:1) — present in the bytes but almost
+ * invisible on screen, which is what users reported. 0.32 over this darker
+ * graphite composites to ~luminance 205 (~1.24:1): clearly legible and still
+ * light enough to read the document underneath. Covered by a rendered-output
+ * regression test in tests/document-watermark.test.ts.
+ */
+const WATERMARK_COLOR = rgb(0.35, 0.35, 0.35);
+const WATERMARK_OPACITY = 0.32;
 const WATERMARK_ANGLE_DEGREES = -45;
 
 export type WatermarkStatus = 'applied' | 'unsupported' | 'failed';
@@ -126,13 +135,15 @@ export async function watermarkImageBuffer(input: Buffer, mime: string): Promise
   const isPng = rawMime.includes('png') || String(meta.format || '').toLowerCase() === 'png';
 
   // Let sharp infer the output format from the source; the SVG overlay is scaled
-  // to the exact pixel dimensions so nothing is resized.
+  // to the exact pixel dimensions so nothing is resized. The overlay uses the
+  // SAME colour/opacity as the PDF path so images and PDFs read identically.
   const fontSize = Math.max(18, Math.round(Math.min(width, height) * 0.12));
+  const grey255 = Math.round(Number(WATERMARK_COLOR.red) * 255);
   const svg = Buffer.from(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
       `<text x="${width / 2}" y="${height / 2}" ` +
       `font-family="sans-serif" font-size="${fontSize}" font-weight="700" ` +
-      `fill="rgba(115,115,115,0.22)" text-anchor="middle" dominant-baseline="middle" ` +
+      `fill="rgba(${grey255},${grey255},${grey255},${WATERMARK_OPACITY})" text-anchor="middle" dominant-baseline="middle" ` +
       `transform="rotate(${WATERMARK_ANGLE_DEGREES} ${width / 2} ${height / 2})">${WATERMARK_TEXT}</text>` +
       `</svg>`
   );

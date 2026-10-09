@@ -22,6 +22,8 @@ import {
   PDFArray,
   PDFStream,
   PDFRawStream,
+  PDFDict,
+  PDFName,
   decodePDFRawStream,
 } from 'pdf-lib';
 import {
@@ -84,6 +86,44 @@ async function makePdf(pageSizes: Array<[number, number]>): Promise<Buffer> {
     page.drawText('Existing original content', { x: 40, y: h - 60, size: 12 });
   }
   return Buffer.from(await doc.save());
+}
+
+/**
+ * Read the two operators that decide how dark the watermark actually LOOKS when
+ * a PDF renderer paints the page:
+ *   - the fill alpha (`ca`) from the ExtGState applied with `gs`, and
+ *   - the grey level of the text fill colour (`r g b rg`) drawn last, which is
+ *     the watermark because pdf-lib appends it over the existing content.
+ *
+ * This is the rendered appearance expressed from the document itself, and it is
+ * what a pixel test would otherwise measure: compositing the fill onto white
+ * gives 255 - alpha * (255 - grey*255).
+ */
+function watermarkAppearance(doc: PDFDocument, page: any): { alpha: number | null; grey: number | null } {
+  let alpha: number | null = null;
+  const resources = page.node.Resources();
+  const extGStateRef = resources?.lookup(PDFName.of('ExtGState'));
+  const extGState = doc.context.lookup(extGStateRef);
+  if (extGState instanceof PDFDict) {
+    for (const [, ref] of extGState.entries()) {
+      const state = doc.context.lookup(ref);
+      if (state instanceof PDFDict) {
+        const ca: any = state.get(PDFName.of('ca'));
+        if (ca && typeof ca.asNumber === 'function') alpha = ca.asNumber();
+      }
+    }
+  }
+
+  const text = pageContentText(doc, page);
+  const fills = [...text.matchAll(/([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+rg/g)];
+  const last = fills.length ? fills[fills.length - 1] : null;
+  const grey = last ? (Number(last[1]) + Number(last[2]) + Number(last[3])) / 3 : null;
+  return { alpha, grey };
+}
+
+/** Luminance on white (0=black, 255=white) of the watermark as actually painted. */
+function compositedLuminance(alpha: number, grey: number): number {
+  return 255 - alpha * (255 - grey * 255);
 }
 
 async function main() {
@@ -156,8 +196,15 @@ async function main() {
 
     const raw = await sharp(result.buffer!).raw().toBuffer();
     let nonWhite = 0;
-    for (let i = 0; i < raw.length; i += 1) if (raw[i] < 250) nonWhite += 1;
+    let darkest = 255;
+    for (let i = 0; i < raw.length; i += 1) {
+      if (raw[i] < 250) nonWhite += 1;
+      if (raw[i] < darkest) darkest = raw[i];
+    }
     check('the watermark really added pixels (not a no-op overlay)', nonWhite > 100, `${nonWhite} non-white samples`);
+    // A watermark that is present but almost white is what users reported as
+    // "not visible". The stroke must be dark enough to read on white paper.
+    check('the image watermark is visibly dark, not near-white', darkest <= 215, `darkest=${darkest}`);
   }
 
   {
@@ -191,6 +238,50 @@ async function main() {
     const result = await watermarkDocumentBuffer(notAPdf, 'application/pdf');
     check('a corrupt PDF reports a failure instead of throwing', result.status === 'failed', result.status);
     check('a failure still never returns corrupt bytes', !result.buffer);
+  }
+
+  // ---------------------------------------------------------------------------
+  console.log('\nE. Rendered appearance: the watermark is actually VISIBLE, not just present');
+  // ---------------------------------------------------------------------------
+  {
+    // The reported bug: the watermark was in the bytes but too faint to see.
+    // These assertions read the operators a renderer paints and reproduce the
+    // composited stroke luminance on white. The old 0.17-opacity/0.45-grey
+    // watermark composited to ~231 (contrast ~1.10:1) and fails this test.
+    const sizes: Array<[number, number]> = [
+      [595, 842],
+      [842, 595],
+    ];
+    const original = await makePdf(sizes);
+    const watermarked = await watermarkPdfBuffer(original);
+    const out = await PDFDocument.load(watermarked);
+
+    for (const [index, page] of out.getPages().entries()) {
+      const { alpha, grey } = watermarkAppearance(out, page);
+      check(`page ${index + 1}: the renderer's fill alpha is readable`, alpha !== null, String(alpha));
+      check(
+        `page ${index + 1}: the watermark is semi-transparent but not near-invisible (alpha >= 0.28)`,
+        (alpha ?? 0) >= 0.28,
+        `alpha=${alpha}`
+      );
+      check(
+        `page ${index + 1}: the watermark never becomes a solid block (alpha <= 0.45)`,
+        (alpha ?? 1) <= 0.45,
+        `alpha=${alpha}`
+      );
+      check(
+        `page ${index + 1}: the text fill is clearly darker than white (grey <= 0.40)`,
+        (grey ?? 1) <= 0.4,
+        `grey=${grey}`
+      );
+
+      const luminance = compositedLuminance(alpha ?? 0, grey ?? 1);
+      check(
+        `page ${index + 1}: composited on white the stroke is clearly visible (luminance <= 215)`,
+        luminance <= 215,
+        `luminance=${luminance.toFixed(1)} (255=invisible white)`
+      );
+    }
   }
 
   console.log(`\n=== ${pass} passed, ${fail} failed ===\n`);

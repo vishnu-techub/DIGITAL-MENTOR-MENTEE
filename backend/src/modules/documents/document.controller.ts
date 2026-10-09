@@ -20,7 +20,7 @@ import {
 } from '../../utils/record-permission.util.js';
 import { syncStudentDetailsPdf } from './student-details-pdf.service.js';
 import { resolveWritableUploadsDir, locateStoredUpload } from '../../config/storage.js';
-import { watermarkDocumentBuffer, WATERMARK_TEXT } from '../../services/document-watermark.service.js';
+import { watermarkDocumentBuffer, isWatermarkableMime, WATERMARK_TEXT } from '../../services/document-watermark.service.js';
 import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
 
 // Ensure a writable upload directory exists (safe on read-only hosts such as Render)
@@ -112,6 +112,17 @@ function resolveStoredPath(
 }
 
 /**
+ * Deterministic on-disk name of the watermarked companion for a stored file.
+ * Kept in one place so the upload path, the Student Details Form path and the
+ * lazy regeneration path can never disagree about where the copy lives.
+ */
+function watermarkedFileNameFor(storedFilename: string): string {
+  const ext = path.extname(storedFilename);
+  const stem = ext ? storedFilename.slice(0, -ext.length) : storedFilename;
+  return `${stem}-watermarked${ext || ''}`;
+}
+
+/**
  * Generate (and write) a separate watermarked copy of an uploaded document,
  * leaving the ORIGINAL bytes on disk untouched.
  *
@@ -143,9 +154,7 @@ async function createWatermarkedCopy(
       };
     }
 
-    const ext = path.extname(storedFilename);
-    const stem = ext ? storedFilename.slice(0, -ext.length) : storedFilename;
-    const watermarkedName = `${stem}-watermarked${ext || ''}`;
+    const watermarkedName = watermarkedFileNameFor(storedFilename);
     const watermarkedPath = path.join(UPLOADS_DIR, watermarkedName);
     fs.writeFileSync(watermarkedPath, result.buffer);
 
@@ -166,6 +175,66 @@ async function createWatermarkedCopy(
   }
 }
 
+/**
+ * Return the watermarked copy for a document, generating it on demand when the
+ * record predates watermarking (or its copy was lost).
+ *
+ * Records created before this feature have no `watermarkedFileUrl`, so preview
+ * and download used to fall back to the untouched original and the institutional
+ * watermark was invisible for everything already on file. This lazily derives
+ * the copy from the ORIGINAL — which is never modified — and persists the new
+ * reference, so old and new records behave identically from then on. It is safe
+ * to call on every file request: an existing copy is returned immediately and an
+ * unsupported format or a corrupt original simply falls back to the original.
+ */
+async function ensureWatermarkedCopy(doc: any): Promise<string | null> {
+  // Already generated: prefer it, as long as the bytes are actually on disk.
+  if (doc?.watermarkedFileUrl) {
+    const existing = resolveStoredPath(doc.watermarkedFileUrl, {
+      fileName: path.basename(doc.watermarkedFileUrl),
+      fileType: doc.fileType,
+    });
+    if (existing && fs.existsSync(existing)) return existing;
+  }
+
+  // Only formats the watermark service can handle safely are regenerated; an
+  // unsupported record keeps serving its original untouched file.
+  if (!isWatermarkableMime(doc?.fileType)) return null;
+
+  const originalPath = resolveStoredPath(doc.fileUrl, {
+    fileName: doc.fileName,
+    fileSize: doc.fileSize,
+    fileType: doc.fileType,
+  });
+  if (!originalPath || !fs.existsSync(originalPath)) return null;
+
+  try {
+    const result = await watermarkDocumentBuffer(fs.readFileSync(originalPath), doc.fileType);
+    if (result.status !== 'applied' || !result.buffer) {
+      // Record the honest outcome so the UI can explain it, but still serve the
+      // original: a watermark failure must never hide the document.
+      doc.watermarkStatus = result.status;
+      await doc.save?.();
+      return null;
+    }
+
+    const watermarkedName = watermarkedFileNameFor(path.basename(originalPath));
+    const watermarkedPath = path.join(UPLOADS_DIR, watermarkedName);
+    fs.writeFileSync(watermarkedPath, result.buffer);
+
+    doc.watermarkedFileUrl = `/uploads/documents/${watermarkedName}`;
+    doc.watermarkStatus = 'applied';
+    doc.watermarkText = WATERMARK_TEXT;
+    doc.watermarkAppliedAt = new Date();
+    await doc.save?.();
+
+    return watermarkedPath;
+  } catch (err: any) {
+    console.error('ensureWatermarkedCopy failed:', err?.message);
+    return null;
+  }
+}
+
 /** Locate a Student by ObjectId or register number. */
 /**
  * Resolve the file that should actually be SHOWN for a document.
@@ -175,14 +244,13 @@ async function createWatermarkedCopy(
  * version. The original stays on disk untouched as the permanent source of
  * truth, and every file endpoint still passes the same ownership check first.
  */
-function resolveServedDocumentPath(doc: any): string | null {
-  if (doc?.watermarkedFileUrl) {
-    const watermarked = resolveStoredPath(doc.watermarkedFileUrl, {
-      fileName: path.basename(doc.watermarkedFileUrl),
-      fileType: doc.fileType,
-    });
-    if (watermarked && fs.existsSync(watermarked)) return watermarked;
-  }
+async function resolveServedDocumentPath(doc: any): Promise<string | null> {
+  // A watermarked copy — existing or freshly generated from the untouched
+  // original — is always preferred, so old and new records both display the
+  // KSRCE watermark. Every file endpoint still passes its ownership check first.
+  const watermarked = await ensureWatermarkedCopy(doc);
+  if (watermarked) return watermarked;
+
   return resolveStoredPath(doc.fileUrl, {
     fileName: doc.fileName,
     fileSize: doc.fileSize,
@@ -486,7 +554,7 @@ async function streamDocumentFile(req: AuthRequest, res: Response, disposition: 
     return sendError(res, access.message, access.status);
   }
 
-  const filePath = resolveServedDocumentPath(doc);
+  const filePath = await resolveServedDocumentPath(doc);
   if (!filePath || !fs.existsSync(filePath)) {
     return sendError(res, 'Physical file not found on server.', 404);
   }
@@ -498,6 +566,10 @@ async function streamDocumentFile(req: AuthRequest, res: Response, disposition: 
   res.setHeader('Content-Disposition', `${disposition}; filename="${safeName}"`);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  // Private student data, and the served bytes can change (a watermark is
+  // generated on access for pre-fix records). Never let a browser reuse a
+  // previously cached copy.
+  res.setHeader('Cache-Control', 'no-store');
   return res.sendFile(filePath);
 }
 
@@ -545,7 +617,7 @@ export async function serveLegacyUpload(req: AuthRequest, res: Response) {
       return sendError(res, access.message, access.status);
     }
 
-    const filePath = resolveServedDocumentPath(doc);
+    const filePath = await resolveServedDocumentPath(doc);
     if (!filePath || !fs.existsSync(filePath)) {
       return sendError(res, 'Physical file not found on server.', 404);
     }
@@ -559,6 +631,7 @@ export async function serveLegacyUpload(req: AuthRequest, res: Response) {
       `${wantsDownload ? 'attachment' : 'inline'}; filename="${safeName}"`
     );
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'no-store');
     return res.sendFile(filePath);
   } catch (err: any) {
     console.error('serveLegacyUpload error:', err);
