@@ -54,6 +54,15 @@ export async function downloadStudentPdf(req: AuthRequest, res: Response) {
       }
     }
 
+    // The Principal is institutionally READ-ONLY: it views summaries and
+    // drill-downs but never downloads or exports individual student reports.
+    // Without this explicit check the download fell through to "no rule → allow",
+    // which would let a Principal (or any future role) pull any student's
+    // complete record-book PDF.
+    if (req.user?.role === ROLES.PRINCIPAL) {
+      return sendError(res, 'Access denied: the Principal role is read-only and may not download student reports.', 403);
+    }
+
     const pdfBytes = await generateStudentPdf(student._id.toString(), mode);
 
     await logAudit({

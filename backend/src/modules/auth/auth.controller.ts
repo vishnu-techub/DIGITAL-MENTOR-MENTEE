@@ -7,6 +7,42 @@ import { toIdString } from '../../utils/access.util.js';
 import { JWT_SECRET, AuthRequest } from '../../middleware/auth.middleware.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
 
+/**
+ * Build the JWT claim set shared by login and a successful password change.
+ * `mustChangePassword` is included so the server can enforce the first-login
+ * change on every subsequent request without a database read, and so the
+ * client can route the user to the change-password screen.
+ */
+async function buildTokenPayload(user: any) {
+  let facultyId: string | null = null;
+  let studentId: string | null = null;
+  let profileCompleted = false;
+
+  if (user.role === 'FACULTY' || user.role === 'HOD') {
+    const fac = await Faculty.findOne({ user: user._id });
+    if (fac) facultyId = fac._id.toString();
+  } else if (user.role === 'STUDENT') {
+    const stu = await Student.findOne({ user: user._id });
+    if (stu) {
+      studentId = stu._id.toString();
+      profileCompleted = stu.profileCompleted === true;
+    }
+  }
+
+  return {
+    id: user._id.toString(),
+    username: user.username,
+    role: user.role,
+    email: user.email,
+    fullName: user.fullName,
+    departmentId: toIdString(user.department),
+    facultyId,
+    studentId,
+    profileCompleted,
+    mustChangePassword: user.mustChangePassword === true,
+  };
+}
+
 export async function login(req: Request, res: Response) {
   const { username, password } = req.body;
 
@@ -59,32 +95,7 @@ export async function login(req: Request, res: Response) {
     user.lastLoginAt = new Date();
     await user.save();
 
-    let facultyId: string | null = null;
-    let studentId: string | null = null;
-    let profileCompleted = false;
-
-    if (user.role === 'FACULTY' || user.role === 'HOD') {
-      const fac = await Faculty.findOne({ user: user._id });
-      if (fac) facultyId = fac._id.toString();
-    } else if (user.role === 'STUDENT') {
-      const stu = await Student.findOne({ user: user._id });
-      if (stu) {
-        studentId = stu._id.toString();
-        profileCompleted = stu.profileCompleted === true;
-      }
-    }
-
-    const tokenPayload = {
-      id: user._id.toString(),
-      username: user.username,
-      role: user.role,
-      email: user.email,
-      fullName: user.fullName,
-      departmentId: toIdString(user.department),
-      facultyId,
-      studentId,
-      profileCompleted,
-    };
+    const tokenPayload = await buildTokenPayload(user);
 
     const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '30d' });
 
@@ -147,6 +158,7 @@ export async function getMe(req: AuthRequest, res: Response) {
       dept_name: deptAny?.name || null,
       dept_code: deptAny?.code || null,
       isActive: user.isActive,
+      mustChangePassword: user.mustChangePassword === true,
       ...extraDetails,
     });
   } catch (err: any) {
@@ -156,14 +168,22 @@ export async function getMe(req: AuthRequest, res: Response) {
 }
 
 export async function changePassword(req: AuthRequest, res: Response) {
-  const { currentPassword, newPassword } = req.body;
+  const { currentPassword, newPassword, confirmPassword } = req.body || {};
 
-  if (!currentPassword || !newPassword) {
-    return sendError(res, 'Current password and new password are required.', 400);
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    return sendError(res, 'Current password, new password and confirmation are required.', 400);
   }
 
-  if (newPassword.length < 6) {
+  if (typeof newPassword !== 'string' || newPassword.length < 6) {
     return sendError(res, 'New password must be at least 6 characters long.', 400);
+  }
+
+  if (newPassword !== confirmPassword) {
+    return sendError(res, 'New password and confirmation do not match.', 400);
+  }
+
+  if (newPassword === currentPassword) {
+    return sendError(res, 'New password must be different from the current password.', 400);
   }
 
   try {
@@ -178,6 +198,8 @@ export async function changePassword(req: AuthRequest, res: Response) {
     }
 
     user.passwordHash = await bcrypt.hash(newPassword, 10);
+    // The mandatory-change flag is cleared ONLY after the new hash is applied.
+    user.mustChangePassword = false;
     await user.save();
 
     await logAudit({
@@ -188,7 +210,14 @@ export async function changePassword(req: AuthRequest, res: Response) {
       req,
     });
 
-    return sendSuccess(res, null, 'Password updated successfully.');
+    // Issue a fresh token whose claim reflects the cleared flag. The previous
+    // token still carries mustChangePassword=true and is therefore inert for
+    // every protected route, so handing back a new one is both a refresh and
+    // an invalidation of the old credential.
+    const tokenPayload = await buildTokenPayload(user);
+    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '30d' });
+
+    return sendSuccess(res, { token, user: tokenPayload }, 'Password updated successfully.');
   } catch (err: any) {
     console.error('changePassword error:', err);
     return sendError(res, 'Failed to change password.', 500);

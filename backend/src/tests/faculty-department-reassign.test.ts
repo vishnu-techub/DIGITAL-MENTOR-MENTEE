@@ -128,9 +128,15 @@ function verifyFrontendContracts() {
   for (const needle of ['Remove HOD', 'confirmRemoveHod', 'setHodStatus']) {
     assert(hod.includes(needle), `AdminHodManagement.tsx is missing "${needle}"`);
   }
+  // "Remove HOD" de-activates (setHodStatus), never deletes. The backend also
+  // deliberately ships a separate DELETE /api/admin/hods/:hodId safety valve
+  // restricted to INACTIVE verified demo accounts (DELETE_HOD audit + dependent
+  // record scan). So the ONLY deleteHod reference allowed in this file is the
+  // explicitly gated confirmDeleteHod path for inactive verified demo HODs, and
+  // that gate must be visibly wired (is_verified_demo).
   assert(
-    !hod.includes('api.admin.deleteHod'),
-    'AdminHodManagement.tsx references a deleted-HOD API; Remove HOD must de-activate'
+    hod.includes('confirmDeleteHod') && hod.includes('is_verified_demo'),
+    'AdminHodManagement.tsx must gate any deleteHod reference behind the inactive-verified-demo safety valve (is_verified_demo)'
   );
 
   // Feature 2 — the client ships the reassign route + binding.

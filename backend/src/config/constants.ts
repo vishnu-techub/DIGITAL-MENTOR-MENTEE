@@ -3,6 +3,13 @@ export const ROLES = {
   HOD: 'HOD',
   FACULTY: 'FACULTY',
   STUDENT: 'STUDENT',
+  /**
+   * College-wide, READ-ONLY leadership role. A Principal may view the
+   * institution-wide mentoring summaries and drill-downs but never creates,
+   * edits, deletes, approves, exports or manages accounts. It holds no Admin
+   * privileges and is granted only the `/api/admin/overview/*` read surface.
+   */
+  PRINCIPAL: 'PRINCIPAL',
 } as const;
 
 export type Role = (typeof ROLES)[keyof typeof ROLES];

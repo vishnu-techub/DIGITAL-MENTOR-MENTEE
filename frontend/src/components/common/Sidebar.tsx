@@ -28,6 +28,8 @@ import {
   Upload,
   ChevronsLeft,
   ChevronsRight,
+  Building2,
+  Building,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -109,6 +111,21 @@ const NAV_BY_ROLE: Record<string, NavSection[]> = {
       ],
     },
   ],
+  PRINCIPAL: [
+    {
+      label: 'MAIN',
+      items: [{ key: 'mentoring-dashboard', label: 'College Dashboard', icon: LayoutDashboard }],
+    },
+    {
+      label: 'INSIGHTS',
+      items: [
+        { key: 'mentoring-hods', label: 'HOD Coverage', icon: UserCog },
+        { key: 'mentoring-departments', label: 'Department Overview', icon: Building2 },
+        { key: 'mentoring-comparison', label: 'Department Comparison', icon: BarChart3 },
+        { key: 'mentoring-reports', label: 'Institutional Reports', icon: FileText },
+      ],
+    },
+  ],
   HOD: [
     {
       label: 'MAIN',
@@ -119,6 +136,8 @@ const NAV_BY_ROLE: Record<string, NavSection[]> = {
       items: [
         { key: 'students', label: 'Department Mentees', icon: GraduationCap },
         { key: 'faculty', label: 'Faculty Mentors', icon: Users },
+        { key: 'marks', label: 'Marks Management', icon: ClipboardList },
+        { key: 'class-management', label: 'Class Management', icon: Building },
         { key: 'reassignment', label: 'Mentor Reassignment', icon: UserCog },
       ],
     },

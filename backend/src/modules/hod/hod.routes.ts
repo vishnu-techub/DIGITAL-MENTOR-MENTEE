@@ -20,6 +20,19 @@ import {
   removeHodAssignment,
   getFacultyNotifications,
   getDepartmentNotifications,
+  getSubjectsForClass,
+  getStudentsByClassSubject,
+  getMarksForClassSubject,
+  saveMarksForClassSubject,
+  downloadMarksTemplate,
+  getMarksReport,
+  downloadMarksTemplateEnhanced,
+  validateMarksUpload,
+  importMarksUpload,
+  exportMarksReport,
+  marksUploadMiddleware,
+  getClassesForYear,
+  getClassStudents,
 } from './hod.controller.js';
 
 const router = Router();
@@ -73,5 +86,22 @@ router.get('/faculty-notifications', getFacultyNotifications);
 // Department scope + recipient scope are both applied inside the controller's
 // Mongo filter; a HOD can never read another department's notices here.
 router.get('/notifications', getDepartmentNotifications);
+
+// --- Marks Management (own department only) --------------------------------
+router.get('/marks/subjects', getSubjectsForClass);
+router.get('/marks/students', getStudentsByClassSubject);
+router.get('/marks/class-subject', getMarksForClassSubject);
+router.post('/marks/class-subject/save', saveMarksForClassSubject);
+router.get('/marks/template', downloadMarksTemplateEnhanced);
+router.get('/marks/report', getMarksReport);
+
+// --- Class Management (own department only) --------------------------------
+router.get('/class-management/classes', getClassesForYear);
+router.get('/class-management/students', getClassStudents);
+
+// --- Marks Bulk Upload (Excel .xlsx only, HOD only) ------------------------
+router.post('/marks/upload/validate', marksUploadMiddleware, validateMarksUpload);
+router.post('/marks/upload/import', marksUploadMiddleware, importMarksUpload);
+router.get('/marks/export', exportMarksReport);
 
 export default router;

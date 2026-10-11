@@ -33,6 +33,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
 import { useTemporaryLocalStore } from './helpers/local-test-store.js';
+import { pdfText } from './helpers/pdf-text.js';
 
 // The store resolves its directory at import time, so this must come first.
 const store = useTemporaryLocalStore('mentoring-evidence');
@@ -748,7 +749,7 @@ async function main() {
 
     const pdf = await http('GET', `/api/pdf/student/${studentA._id}`, { token: mentorToken });
     check('the student PDF still generates', pdf.status === 200 && pdf.bytes > 0, `status=${pdf.status} bytes=${pdf.bytes}`);
-    const text = pdfBytesToText(pdf.body as Buffer);
+    const text = await pdfBytesToText(pdf.body as Buffer);
     check('the PDF prints the "Discussion With" column', text.includes('Discussion With'), 'column header not found');
     check('the PDF prints a discussion participant', /Student & Parent|Student|Parent/.test(text), 'no participant text found');
     check('the PDF records the evidence size against the 200 KB ceiling', /\d+\.\d\s?KB/.test(text), 'no KB value found');
@@ -801,13 +802,20 @@ function resolveStored(doc: any): string | null {
   return null;
 }
 
-/** Best-effort text extraction from a PDF buffer, for content assertions. */
-function pdfBytesToText(buf: Buffer): string {
+/**
+ * Best-effort text extraction from a PDF buffer, for content assertions.
+ *
+ * The record book is rendered by the HTML/CSS → PDF pipeline (headless
+ * Chromium), which emits content as subset-font hex `Tj` operands rather than
+ * editable `(...)` literals, so text is read through MuPDF instead — and the
+ * same helper keeps working on pages produced by the legacy jsPDF fallback.
+ */
+async function pdfBytesToText(buf: Buffer): Promise<string> {
   if (!Buffer.isBuffer(buf)) return String(buf || '');
-  const raw = buf.toString('latin1');
-  const parts: string[] = [];
-  const re = /\(((?:[^()\\]|\\.)*)\)\s*Tj/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(raw)) !== null) parts.push(m[1].replace(/\\([()\\])/g, '$1'));
-  return parts.join(' ');
+  try {
+    return await pdfText(buf);
+  } catch {
+    // Unreadable/absent page content degrades to no text, never an exception.
+    return '';
+  }
 }

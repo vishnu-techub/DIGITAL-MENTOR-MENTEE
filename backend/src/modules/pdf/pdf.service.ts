@@ -27,6 +27,8 @@ import {
 } from '../../config/storage.js';
 import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
 import { buildEvidenceViews, normaliseEvidenceRefs } from '../counselling/evidence.service.js';
+import { renderRecordBookHtmlToPdf } from './record-book-html.service.js';
+import { collectRecordBookData } from './record-book-html.data.js';
 
 let logoBase64: string | null = null;
 try {
@@ -55,11 +57,42 @@ export function isStudentPdfMode(value: unknown): value is StudentPdfMode {
   return typeof value === 'string' && (STUDENT_PDF_MODES as string[]).includes(value);
 }
 
+export interface GenerateStudentPdfOptions {
+  /**
+   * Whether the document carries the K S R C E watermark.
+   *
+   * Direct record-book downloads (full / internal / mentor-documents) bake the
+   * watermark into the HTML/CSS background layer of every page. The Student
+   * Details Form copy stored by syncStudentDetailsPdf passes `false` and relies
+   * on the existing document-watermark service instead, so a stored form copy
+   * is watermarked exactly once — never twice.
+   */
+  watermark?: boolean;
+}
+
 export async function generateStudentPdf(
   studentIdOrRegNo: string,
-  mode: StudentPdfMode = 'full'
+  mode: StudentPdfMode = 'full',
+  opts: GenerateStudentPdfOptions = {}
 ): Promise<Uint8Array> {
   if (!isStudentPdfMode(mode)) mode = 'full';
+
+  // Primary path — the record book is authored as a structured HTML document
+  // with print CSS and rendered to PDF through the installed headless browser.
+  // The `K S R C E` watermark is a fixed CSS background layer painted strictly
+  // beneath the content on every page. Environments without a browser fall
+  // through to the historical jsPDF renderer below (which is left untouched).
+  try {
+    const data = await collectRecordBookData(studentIdOrRegNo, mode);
+    const htmlPdf = await renderRecordBookHtmlToPdf(data, {
+      watermark: opts.watermark !== false,
+    });
+    if (htmlPdf) return htmlPdf;
+  } catch (err) {
+    console.error('generateStudentPdf: HTML/CSS renderer failed, falling back to jsPDF:', (err as Error)?.message);
+  }
+
+  // ---- legacy jsPDF renderer (kept as the always-available fallback) --------
   // 1. Fetch Student Master
   let studentDoc: any = null;
   if (isValidId(studentIdOrRegNo)) {

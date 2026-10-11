@@ -1,4 +1,5 @@
 ﻿import { Response } from 'express';
+import multer from 'multer';
 import bcrypt from 'bcryptjs';
 import {
   User,
@@ -10,6 +11,7 @@ import {
   Meeting,
   Notification,
   CounsellingRecord,
+  InternalMark,
 } from '../../models/index.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
@@ -29,6 +31,15 @@ import {
   weeklyBuckets as buildWeeklyBuckets,
   type NormalisedSession,
 } from '../../utils/mentoring-analytics.util.js';
+import { parseStrictNumber, parseSemesterNumber, joinErrors } from '../../utils/validation.util.js';
+import { MARK_TYPES, MARK_TYPE_MAX, MARK_TYPE_LABEL, MARK_TYPE_FIELD, type InternalMarkType, isMarkType } from '../../models/InternalMark.model.js';
+import {
+  generateMarksTemplate,
+  validateMarksExcel,
+  executeMarksImport,
+  exportMarksExcel,
+  type MarksBulkPreviewRow,
+} from './marks-bulk-upload.service.js';
 
 /**
  * ============================================================================
@@ -1112,5 +1123,960 @@ export async function getDepartmentNotifications(req: AuthRequest, res: Response
   } catch (err: any) {
     console.error('getDepartmentNotifications error:', err);
     return sendError(res, 'Failed to fetch department notifications.', 500);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Marks Management — HOD department-scoped
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /marks/subjects
+ * List subjects for a given academic year, year (1-4), and class/section.
+ * The HOD can only see subjects relevant to their department's students.
+ */
+export async function getSubjectsForClass(req: AuthRequest, res: Response): Promise<any> {
+  try {
+    const scope = await loadScope(req, res);
+    if (!scope) return;
+
+    const academicYear = String(req.query.academicYear || '').trim();
+    const year = Number(req.query.year);
+    const section = String(req.query.section || '').trim().toUpperCase();
+
+    if (!academicYear || !year || !section) {
+      return sendError(res, 'academicYear, year, and section are required.', 400);
+    }
+
+    // Get students in this department matching the academic context
+    const studentIds = scope.students
+      .filter((s: any) => {
+        const batchName = s.batch?.name || '';
+        return s.year === year && s.section === section && batchName.includes(academicYear);
+      })
+      .map((s: any) => String(s._id));
+
+    if (studentIds.length === 0) {
+      return sendSuccess(res, []);
+    }
+
+    // Get unique subjects from internal marks for these students
+    const marks = await InternalMark.find({
+      student: { $in: studentIds },
+    }).select('subjectCode subjectName semesterNumber').lean();
+
+    const subjectMap = new Map<string, { subjectCode: string; subjectName: string; semesterNumber: number }>();
+    for (const m of marks as any[]) {
+      const key = `${m.subjectCode}|${m.semesterNumber}`;
+      if (!subjectMap.has(key)) {
+        subjectMap.set(key, {
+          subjectCode: m.subjectCode,
+          subjectName: m.subjectName,
+          semesterNumber: m.semesterNumber,
+        });
+      }
+    }
+
+    const subjects = Array.from(subjectMap.values()).sort((a, b) => {
+      if (a.semesterNumber !== b.semesterNumber) return a.semesterNumber - b.semesterNumber;
+      return a.subjectCode.localeCompare(b.subjectCode);
+    });
+
+    return sendSuccess(res, subjects);
+  } catch (err: any) {
+    console.error('getSubjectsForClass error:', err);
+    return sendError(res, 'Failed to fetch subjects.', 500);
+  }
+}
+
+/**
+ * Derive the cohort session label (e.g. "2024-2028") from a batch name.
+ * Falls back to the raw batch name so a class is never labelled with a value
+ * that cannot be used to re-select the same students.
+ */
+function deriveAcademicYear(batchName: string): string {
+  const match = String(batchName || '').match(/(\d{4}-\d{4})/);
+  return match ? match[1] : String(batchName || '').trim();
+}
+
+/**
+ * GET /class-management/classes
+ * List classes (year + section) for the caller's department.
+ *
+ * `academicYear` and `year` are both optional filters:
+ *   - no filters  -> every year (I–IV) grouped with every section
+ *   - `year` only -> every section for that study year
+ *   - `academicYear` only -> every year/section for that cohort
+ * Each class reports its student count, the cohort session it belongs to and
+ * the subjects that already have recorded marks (department-scoped).
+ */
+export async function getClassesForYear(req: AuthRequest, res: Response): Promise<any> {
+  try {
+    const scope = await loadScope(req, res);
+    if (!scope) return;
+
+    const academicYear = String(req.query.academicYear || '').trim();
+    const rawYear = req.query.year;
+    const hasYear = rawYear !== undefined && rawYear !== null && String(rawYear).trim() !== '';
+    const year = hasYear ? Number(rawYear) : undefined;
+
+    if (hasYear && (!Number.isFinite(year) || (year as number) <= 0)) {
+      return sendError(res, 'year must be a positive number.', 400);
+    }
+
+    // Department-scoped students matching the optional filters.
+    const students = scope.students.filter((s: any) => {
+      const batchName = s.batch?.name || '';
+      const yearOk = year === undefined || s.year === year;
+      const batchOk = !academicYear || batchName.includes(academicYear);
+      return yearOk && batchOk;
+    });
+
+    if (students.length === 0) {
+      return sendSuccess(res, []);
+    }
+
+    // Group by (study year, section). A section appears exactly once per year.
+    const groupMap = new Map<string, any[]>();
+    students.forEach((s: any) => {
+      const sec = (s.section || 'A').toString().toUpperCase();
+      const key = `${s.year}|${sec}`;
+      if (!groupMap.has(key)) groupMap.set(key, []);
+      groupMap.get(key)!.push(s);
+    });
+
+    const classList = [];
+    for (const [key, groupStudents] of groupMap.entries()) {
+      const separator = key.indexOf('|');
+      const groupYear = Number(key.slice(0, separator));
+      const section = key.slice(separator + 1);
+
+      // The class cohort label = the most common session among its students.
+      const sessionCounts = new Map<string, number>();
+      for (const s of groupStudents) {
+        const label = deriveAcademicYear(s.batch?.name || '');
+        if (!label) continue;
+        sessionCounts.set(label, (sessionCounts.get(label) || 0) + 1);
+      }
+      let cohort = '';
+      let bestCount = -1;
+      for (const [label, count] of sessionCounts.entries()) {
+        if (count > bestCount) {
+          bestCount = count;
+          cohort = label;
+        }
+      }
+
+      const subjectsRes = await InternalMark.find({
+        student: { $in: groupStudents.map((s: any) => String(s._id)) },
+      }).select('subjectCode subjectName semesterNumber').lean();
+
+      const subjectMap = new Map<string, { subjectCode: string; subjectName: string; semesterNumber: number }>();
+      for (const m of subjectsRes as any[]) {
+        const subjectKey = `${m.subjectCode}|${m.semesterNumber}`;
+        if (!subjectMap.has(subjectKey)) {
+          subjectMap.set(subjectKey, {
+            subjectCode: m.subjectCode,
+            subjectName: m.subjectName,
+            semesterNumber: m.semesterNumber,
+          });
+        }
+      }
+
+      const subjects = Array.from(subjectMap.values()).sort((a, b) => {
+        if (a.semesterNumber !== b.semesterNumber) return a.semesterNumber - b.semesterNumber;
+        return a.subjectCode.localeCompare(b.subjectCode);
+      });
+
+      classList.push({
+        year: groupYear,
+        section,
+        studentCount: groupStudents.length,
+        academicYear: cohort || academicYear,
+        subjects,
+      });
+    }
+
+    classList.sort((a, b) => a.year - b.year || a.section.localeCompare(b.section));
+
+    return sendSuccess(res, classList);
+  } catch (err: any) {
+    console.error('getClassesForYear error:', err);
+    return sendError(res, 'Failed to fetch classes.', 500);
+  }
+}
+
+/**
+ * GET /class-management/students
+ * List the students belonging to one class (study year + section) in the
+ * caller's department. `academicYear` optionally narrows to a single cohort.
+ * Used by the "View Class" roster — no marks are returned here.
+ */
+export async function getClassStudents(req: AuthRequest, res: Response): Promise<any> {
+  try {
+    const scope = await loadScope(req, res);
+    if (!scope) return;
+
+    const academicYear = String(req.query.academicYear || '').trim();
+    const year = Number(req.query.year);
+    const section = String(req.query.section || '').trim().toUpperCase();
+
+    if (!year || !section) {
+      return sendError(res, 'year and section are required.', 400);
+    }
+
+    const students = scope.students
+      .filter((s: any) => {
+        const batchName = s.batch?.name || '';
+        const batchOk = !academicYear || batchName.includes(academicYear);
+        return s.year === year && (s.section || '').toString().toUpperCase() === section && batchOk;
+      })
+      .map((s: any) => ({
+        id: String(s._id),
+        registerNumber: s.registerNumber,
+        fullName: s.fullName,
+        batch: s.batch?.name || '',
+        year: s.year,
+        section: s.section,
+      }))
+      .sort((a: any, b: any) => String(a.registerNumber).localeCompare(String(b.registerNumber)));
+
+    return sendSuccess(res, students);
+  } catch (err: any) {
+    console.error('getClassStudents error:', err);
+    return sendError(res, 'Failed to fetch class students.', 500);
+  }
+}
+
+/**
+ * GET /marks/students
+ * List students for a given academic year, year, section, and subject.
+ * Returns students with their existing marks for the subject.
+ */
+export async function getStudentsByClassSubject(req: AuthRequest, res: Response): Promise<any> {
+  try {
+    const scope = await loadScope(req, res);
+    if (!scope) return;
+
+    const academicYear = String(req.query.academicYear || '').trim();
+    const year = Number(req.query.year);
+    const section = String(req.query.section || '').trim().toUpperCase();
+    const subjectCode = String(req.query.subjectCode || '').trim().toUpperCase();
+    const semesterNumber = Number(req.query.semesterNumber);
+
+    if (!academicYear || !year || !section || !subjectCode || !semesterNumber) {
+      return sendError(res, 'academicYear, year, section, subjectCode, and semesterNumber are required.', 400);
+    }
+
+    // Get students in this department matching the academic context
+    const students = scope.students.filter((s: any) => {
+      const batchName = s.batch?.name || '';
+      return s.year === year && s.section === section && batchName.includes(academicYear);
+    });
+
+    if (students.length === 0) {
+      return sendSuccess(res, []);
+    }
+
+    const studentIds = students.map((s: any) => String(s._id));
+
+    // Get existing marks for this subject and semester
+    const marks = await InternalMark.find({
+      student: { $in: studentIds },
+      subjectCode,
+      semesterNumber,
+    }).lean();
+
+    const marksByStudent = new Map<string, any>();
+    for (const m of marks as any[]) {
+      marksByStudent.set(String(m.student), m);
+    }
+
+    const result = students.map((s: any) => {
+      const mark = marksByStudent.get(String(s._id));
+      return {
+        id: String(s._id),
+        registerNumber: s.registerNumber,
+        fullName: s.fullName,
+        batch: s.batch?.name || '',
+        year: s.year,
+        section: s.section,
+        ia1: mark?.ia1 ?? null,
+        ia2: mark?.ia2 ?? null,
+        endSem: mark?.endSem ?? null,
+        markId: mark?._id ? String(mark._id) : null,
+      };
+    });
+
+    return sendSuccess(res, result);
+  } catch (err: any) {
+    console.error('getStudentsByClassSubject error:', err);
+    return sendError(res, 'Failed to fetch students.', 500);
+  }
+}
+
+/**
+ * GET /marks/class-subject
+ * Get marks for a class and subject with max marks info.
+ */
+export async function getMarksForClassSubject(req: AuthRequest, res: Response): Promise<any> {
+  try {
+    const scope = await loadScope(req, res);
+    if (!scope) return;
+
+    const academicYear = String(req.query.academicYear || '').trim();
+    const year = Number(req.query.year);
+    const section = String(req.query.section || '').trim().toUpperCase();
+    const subjectCode = String(req.query.subjectCode || '').trim().toUpperCase();
+    const semesterNumber = Number(req.query.semesterNumber);
+
+    if (!academicYear || !year || !section || !subjectCode || !semesterNumber) {
+      return sendError(res, 'academicYear, year, section, subjectCode, and semesterNumber are required.', 400);
+    }
+
+    const students = scope.students.filter((s: any) => {
+      const batchName = s.batch?.name || '';
+      return s.year === year && s.section === section && batchName.includes(academicYear);
+    });
+
+    if (students.length === 0) {
+      return sendSuccess(res, { students: [], subject: null, maxMarks: { ia1: 50, ia2: 50, endSem: 100 } });
+    }
+
+    const studentIds = students.map((s: any) => String(s._id));
+
+    const marks = await InternalMark.find({
+      student: { $in: studentIds },
+      subjectCode,
+      semesterNumber,
+    }).lean();
+
+    const marksByStudent = new Map<string, any>();
+    for (const m of marks as any[]) {
+      marksByStudent.set(String(m.student), m);
+    }
+
+    // Get subject name from first mark record
+    const subjectName = marks.length > 0 ? (marks[0] as any).subjectName : '';
+
+    const result = students.map((s: any) => {
+      const mark = marksByStudent.get(String(s._id));
+      return {
+        id: String(s._id),
+        registerNumber: s.registerNumber,
+        fullName: s.fullName,
+        batch: s.batch?.name || '',
+        year: s.year,
+        section: s.section,
+        ia1: mark?.ia1 ?? null,
+        ia2: mark?.ia2 ?? null,
+        endSem: mark?.endSem ?? null,
+        markId: mark?._id ? String(mark._id) : null,
+      };
+    });
+
+    return sendSuccess(res, {
+      students: result,
+      subject: { subjectCode, subjectName, semesterNumber },
+      maxMarks: { ia1: MARK_TYPE_MAX.IA1, ia2: MARK_TYPE_MAX.IA2, endSem: MARK_TYPE_MAX.END_SEM },
+    });
+  } catch (err: any) {
+    console.error('getMarksForClassSubject error:', err);
+    return sendError(res, 'Failed to fetch marks.', 500);
+  }
+}
+
+/**
+ * POST /marks/class-subject/save
+ * Save marks for multiple students in a class and subject.
+ * Validates marks against max values and prevents silent overwrites.
+ */
+export async function saveMarksForClassSubject(req: AuthRequest, res: Response): Promise<any> {
+  try {
+    const scope = await loadScope(req, res);
+    if (!scope) return;
+
+    const body = req.body ?? {};
+    const academicYear = String(body.academicYear || '').trim();
+    const year = Number(body.year);
+    const section = String(body.section || '').trim().toUpperCase();
+    const subjectCode = String(body.subjectCode || '').trim().toUpperCase();
+    const subjectName = String(body.subjectName || '').trim();
+    const semesterNumber = Number(body.semesterNumber);
+    const marksData = body.marks || [];
+
+    if (!academicYear || !year || !section || !subjectCode || !subjectName || !semesterNumber || !Array.isArray(marksData)) {
+      return sendError(res, 'All fields are required: academicYear, year, section, subjectCode, subjectName, semesterNumber, marks[].', 400);
+    }
+
+    // Verify students belong to this department and match the academic context
+    const students = scope.students.filter((s: any) => {
+      const batchName = s.batch?.name || '';
+      return s.year === year && s.section === section && batchName.includes(academicYear);
+    });
+
+    if (students.length === 0) {
+      return sendError(res, 'No students found for the selected class.', 404);
+    }
+
+    const studentIds = new Set(students.map((s: any) => String(s._id)));
+
+    const errors: string[] = [];
+    const results: Array<{ registerNumber: string; studentId: string; saved: boolean; error?: string }> = [];
+
+    for (const markData of marksData) {
+      const { studentId, registerNumber, ia1, ia2, endSem } = markData || {};
+
+      if (!studentId || !registerNumber) {
+        errors.push(`Missing studentId or registerNumber in row.`);
+        continue;
+      }
+
+      if (!studentIds.has(String(studentId))) {
+        errors.push(`Student ${registerNumber} does not belong to this department/class.`);
+        results.push({ registerNumber, studentId, saved: false, error: 'Not in this department/class' });
+        continue;
+      }
+
+      // Validate marks
+      const rowErrors: string[] = [];
+      const set: Record<string, any> = {
+        student: toLocalId(studentId),
+        registerNumber,
+        semesterNumber,
+        subjectCode,
+        subjectName,
+        updatedBy: req.user!.id,
+        updatedByName: req.user!.fullName,
+      };
+
+      if (ia1 !== undefined && ia1 !== null && ia1 !== '') {
+        const parsed = parseStrictNumber(ia1, { field: 'IA1', min: 0, max: MARK_TYPE_MAX.IA1 });
+        if (!parsed.ok) rowErrors.push(parsed.error!);
+        else set.ia1 = parsed.value;
+      }
+      if (ia2 !== undefined && ia2 !== null && ia2 !== '') {
+        const parsed = parseStrictNumber(ia2, { field: 'IA2', min: 0, max: MARK_TYPE_MAX.IA2 });
+        if (!parsed.ok) rowErrors.push(parsed.error!);
+        else set.ia2 = parsed.value;
+      }
+      if (endSem !== undefined && endSem !== null && endSem !== '') {
+        const parsed = parseStrictNumber(endSem, { field: 'End Semester', min: 0, max: MARK_TYPE_MAX.END_SEM });
+        if (!parsed.ok) rowErrors.push(parsed.error!);
+        else set.endSem = parsed.value;
+      }
+
+      if (rowErrors.length > 0) {
+        errors.push(`${registerNumber}: ${rowErrors.join(', ')}`);
+        results.push({ registerNumber, studentId, saved: false, error: rowErrors.join(', ') });
+        continue;
+      }
+
+      // Check if mark entry is allowed (permission window)
+      const { getMarkEntryPermissionState, markTypeRefusal } = await import('../internal-marks/mark-entry-permission.service.js');
+      const permission = await getMarkEntryPermissionState();
+      
+      // Check each mark type being set
+      for (const type of Object.keys(set).filter(k => MARK_TYPES.includes(k as InternalMarkType)) as InternalMarkType[]) {
+        const refusal = markTypeRefusal(permission, type);
+        if (refusal) {
+          rowErrors.push(`${MARK_TYPE_LABEL[type]}: ${refusal}`);
+        }
+      }
+
+      if (rowErrors.length > 0) {
+        errors.push(`${registerNumber}: ${rowErrors.join(', ')}`);
+        results.push({ registerNumber, studentId, saved: false, error: rowErrors.join(', ') });
+        continue;
+      }
+
+      // Save the marks
+      const row = await InternalMark.findOneAndUpdate(
+        { student: toLocalId(studentId), semesterNumber, subjectCode },
+        { $set: set },
+        { upsert: true, new: true }
+      );
+
+      await logAudit({
+        userId: req.user!.id,
+        action: 'UPDATE_INTERNAL_MARK_HOD',
+        entity: 'INTERNAL_MARK',
+        entityId: row?._id?.toString() ?? null,
+        details: {
+          registerNumber,
+          semesterNumber,
+          subjectCode,
+          marks: { ia1: set.ia1, ia2: set.ia2, endSem: set.endSem },
+        },
+        req,
+      } as any);
+
+      results.push({ registerNumber, studentId, saved: true });
+    }
+
+    return sendSuccess(res, {
+      saved: results.filter(r => r.saved).length,
+      failed: results.filter(r => !r.saved).length,
+      results,
+      errors: errors.length > 0 ? errors : undefined,
+    }, errors.length === 0 ? 'All marks saved successfully.' : 'Some marks could not be saved.');
+  } catch (err: any) {
+    console.error('saveMarksForClassSubject error:', err);
+    return sendError(res, 'Failed to save marks.', 500);
+  }
+}
+
+/**
+ * GET /marks/template
+ * Download Excel template for marks entry.
+ */
+export async function downloadMarksTemplate(req: AuthRequest, res: Response): Promise<any> {
+  try {
+    const scope = await loadScope(req, res);
+    if (!scope) return;
+
+    const academicYear = String(req.query.academicYear || '').trim();
+    const year = Number(req.query.year);
+    const section = String(req.query.section || '').trim().toUpperCase();
+    const subjectCode = String(req.query.subjectCode || '').trim().toUpperCase();
+    const subjectName = String(req.query.subjectName || '').trim();
+    const semesterNumber = Number(req.query.semesterNumber);
+
+    if (!academicYear || !year || !section || !subjectCode || !subjectName || !semesterNumber) {
+      return sendError(res, 'All query parameters are required.', 400);
+    }
+
+    const students = scope.students.filter((s: any) => {
+      const batchName = s.batch?.name || '';
+      return s.year === year && s.section === section && batchName.includes(academicYear);
+    });
+
+    if (students.length === 0) {
+      return sendError(res, 'No students found for the selected class.', 404);
+    }
+
+    // Generate Excel file
+    const ExcelJS = await import('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Marks Entry');
+
+    // Add metadata rows
+    worksheet.addRow(['KSRCE - Marks Entry Template']);
+    worksheet.addRow(['Academic Year', academicYear]);
+    worksheet.addRow(['Year', year]);
+    worksheet.addRow(['Section', section]);
+    worksheet.addRow(['Subject Code', subjectCode]);
+    worksheet.addRow(['Subject Name', subjectName]);
+    worksheet.addRow(['Semester', semesterNumber]);
+    worksheet.addRow(['Max Marks', 'IA1: 50', 'IA2: 50', 'End Sem: 100']);
+    worksheet.addRow([]);
+
+    // Header row
+    const headerRow = worksheet.addRow([
+      'Register Number',
+      'Student Name',
+      'Subject Code',
+      'Subject Name',
+      'Semester',
+      'IA1 (Max 50)',
+      'IA2 (Max 50)',
+      'End Sem (Max 100)',
+    ]);
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '0B2545' } };
+      cell.font = { ...cell.font, color: { argb: 'FFFFFF' } };
+      cell.alignment = { horizontal: 'center' };
+    });
+
+    // Data rows
+    for (const s of students) {
+      worksheet.addRow([
+        s.registerNumber,
+        s.fullName,
+        subjectCode,
+        subjectName,
+        semesterNumber,
+        '', // IA1
+        '', // IA2
+        '', // End Sem
+      ]);
+    }
+
+    // Style data rows
+    worksheet.columns = [
+      { key: 'reg', width: 20 },
+      { key: 'name', width: 30 },
+      { key: 'subCode', width: 15 },
+      { key: 'subName', width: 30 },
+      { key: 'sem', width: 10 },
+      { key: 'ia1', width: 15 },
+      { key: 'ia2', width: 15 },
+      { key: 'endSem', width: 18 },
+    ];
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Marks_Template_${academicYear}_Y${year}_${section}_${subjectCode}.xlsx"`);
+    
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err: any) {
+    console.error('downloadMarksTemplate error:', err);
+    return sendError(res, 'Failed to generate template.', 500);
+  }
+}
+
+/**
+ * GET /marks/report
+ * Get marks report with filters for academic year, class, section, subject, student.
+ */
+export async function getMarksReport(req: AuthRequest, res: Response): Promise<any> {
+  try {
+    const scope = await loadScope(req, res);
+    if (!scope) return;
+
+    const academicYear = String(req.query.academicYear || '').trim();
+    const year = req.query.year ? Number(req.query.year) : undefined;
+    const section = String(req.query.section || '').trim().toUpperCase() || undefined;
+    const subjectCode = String(req.query.subjectCode || '').trim().toUpperCase() || undefined;
+    const studentId = String(req.query.studentId || '').trim() || undefined;
+    const semesterNumber = req.query.semesterNumber ? Number(req.query.semesterNumber) : undefined;
+
+    if (!academicYear) {
+      return sendError(res, 'academicYear is required.', 400);
+    }
+
+    // Build student filter
+    let students = scope.students.filter((s: any) => {
+      const batchName = s.batch?.name || '';
+      const matchYear = !year || s.year === year;
+      const matchSection = !section || s.section === section;
+      const matchBatch = batchName.includes(academicYear);
+      return matchYear && matchSection && matchBatch;
+    });
+
+    if (students.length === 0) {
+      return sendSuccess(res, { marks: [], total: 0 });
+    }
+
+    let studentIds = students.map((s: any) => String(s._id));
+
+    if (studentId) {
+      if (!studentIds.includes(studentId)) {
+        return sendError(res, 'Student not found in your department.', 404);
+      }
+      studentIds = [studentId];
+    }
+
+    // Build marks filter
+    const markFilter: Record<string, any> = { student: { $in: studentIds } };
+    if (subjectCode) markFilter.subjectCode = subjectCode;
+    if (semesterNumber) markFilter.semesterNumber = semesterNumber;
+
+    const marks = await InternalMark.find(markFilter).sort({ semesterNumber: 1, subjectCode: 1 }).lean();
+
+    const studentMap = new Map(students.map((s: any) => [String(s._id), s]));
+
+    const result = (marks as any[]).map((m) => {
+      const student = studentMap.get(String(m.student));
+      return {
+        id: String(m._id),
+        registerNumber: m.registerNumber,
+        studentName: student?.fullName || '',
+        batch: student?.batch?.name || '',
+        year: student?.year,
+        section: student?.section,
+        semesterNumber: m.semesterNumber,
+        subjectCode: m.subjectCode,
+        subjectName: m.subjectName,
+        ia1: m.ia1 ?? null,
+        ia2: m.ia2 ?? null,
+        endSem: m.endSem ?? null,
+        updatedByName: m.updatedByName || '',
+        updatedAt: m.updatedAt,
+      };
+    });
+
+    return sendSuccess(res, { marks: result, total: result.length });
+  } catch (err: any) {
+    console.error('getMarksReport error:', err);
+    return sendError(res, 'Failed to fetch marks report.', 500);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Multer configuration for marks Excel uploads
+// ---------------------------------------------------------------------------
+
+const marksUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10 MB cap
+    files: 1,
+  },
+  fileFilter: (_req, file, cb) => {
+    const isXlsxExt = /\.xlsx$/i.test(file.originalname);
+    const validMimes = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
+      'application/octet-stream',
+      'application/zip',
+    ];
+    if (isXlsxExt || validMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only Excel (.xlsx) files are supported. CSV and other formats are not accepted.'));
+    }
+  },
+});
+
+export const marksUploadMiddleware = (req: any, res: Response, next: any) => {
+  marksUpload.single('file')(req, res, (err: any) => {
+    if (err) {
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return sendError(res, 'File exceeds the maximum 10 MB upload ceiling.', 400);
+        }
+        return sendError(res, `Upload error: ${err.message}`, 400);
+      }
+      return sendError(res, err.message || 'Invalid file uploaded.', 400);
+    }
+    next();
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Marks Bulk Upload Endpoints
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /marks/template
+ * Download Excel template for marks entry.
+ * Enhanced version with full context.
+ */
+export async function downloadMarksTemplateEnhanced(req: AuthRequest, res: Response): Promise<any> {
+  try {
+    const scope = await loadScope(req, res);
+    if (!scope) return;
+
+    const academicYear = String(req.query.academicYear || '').trim();
+    const year = Number(req.query.year);
+    const section = String(req.query.section || '').trim().toUpperCase();
+    const subjectCode = String(req.query.subjectCode || '').trim().toUpperCase();
+    const subjectName = String(req.query.subjectName || '').trim();
+    const semesterNumber = Number(req.query.semesterNumber);
+    const assessmentType = String(req.query.assessmentType || 'IA1').toUpperCase() as 'IA1' | 'IA2' | 'END_SEM';
+
+    if (!academicYear || !year || !section || !subjectCode || !subjectName || !semesterNumber) {
+      return sendError(res, 'All query parameters are required.', 400);
+    }
+
+    if (!MARK_TYPES.includes(assessmentType)) {
+      return sendError(res, 'Invalid assessment type. Must be IA1, IA2, or END_SEM.', 400);
+    }
+
+    const students = scope.students.filter((s: any) => {
+      const batchName = s.batch?.name || '';
+      return s.year === year && s.section === section && batchName.includes(academicYear);
+    });
+
+    if (students.length === 0) {
+      return sendError(res, 'No students found for the selected class.', 404);
+    }
+
+    const buffer = await generateMarksTemplate({
+      academicYear,
+      year,
+      section,
+      subjectCode,
+      subjectName,
+      semesterNumber,
+      assessmentType,
+      departmentId: scope.departmentId,
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Marks_Template_${academicYear}_Y${year}_${section}_${subjectCode}_${assessmentType}.xlsx"`);
+    return res.send(buffer);
+  } catch (err: any) {
+    console.error('downloadMarksTemplateEnhanced error:', err);
+    return sendError(res, 'Failed to generate template.', 500);
+  }
+}
+
+/**
+ * POST /marks/upload/validate
+ * Validate Excel file for marks upload.
+ */
+export async function validateMarksUpload(req: AuthRequest, res: Response): Promise<any> {
+  try {
+    const scope = await loadScope(req, res);
+    if (!scope) return;
+
+    if (!req.file || !req.file.buffer) {
+      return sendError(res, 'Please select an Excel (.xlsx) file to upload.', 400);
+    }
+    if (!/\.xlsx$/i.test(req.file.originalname)) {
+      return sendError(res, 'Only .xlsx files are supported. CSV and other formats are not accepted.', 400);
+    }
+
+    const academicYear = String(req.body.academicYear || '').trim();
+    const year = Number(req.body.year);
+    const section = String(req.body.section || '').trim().toUpperCase();
+    const subjectCode = String(req.body.subjectCode || '').trim().toUpperCase();
+    const subjectName = String(req.body.subjectName || '').trim();
+    const semesterNumber = Number(req.body.semesterNumber);
+
+    if (!academicYear || !year || !section || !subjectCode || !subjectName || !semesterNumber) {
+      return sendError(res, 'All context parameters are required: academicYear, year, section, subjectCode, subjectName, semesterNumber.', 400);
+    }
+
+    const result = await validateMarksExcel(req.file.buffer, {
+      academicYear,
+      year,
+      section,
+      subjectCode,
+      subjectName,
+      semesterNumber,
+      hodDepartmentId: scope.departmentId,
+    });
+
+    return sendSuccess(res, result, 'Marks Excel file validated successfully.');
+  } catch (err: any) {
+    console.error('validateMarksUpload error:', err);
+    return sendError(res, err.message || 'Failed to parse marks Excel file.', 400);
+  }
+}
+
+/**
+ * POST /marks/upload/import
+ * Import validated marks from Excel.
+ */
+export async function importMarksUpload(req: AuthRequest, res: Response): Promise<any> {
+  try {
+    const scope = await loadScope(req, res);
+    if (!scope) return;
+
+    let rowsToImport = req.body.rows;
+
+    // If a file was uploaded directly instead of pre-validated rows
+    if ((!rowsToImport || !Array.isArray(rowsToImport)) && req.file?.buffer) {
+      const academicYear = String(req.body.academicYear || '').trim();
+      const year = Number(req.body.year);
+      const section = String(req.body.section || '').trim().toUpperCase();
+      const subjectCode = String(req.body.subjectCode || '').trim().toUpperCase();
+      const subjectName = String(req.body.subjectName || '').trim();
+      const semesterNumber = Number(req.body.semesterNumber);
+
+      if (!academicYear || !year || !section || !subjectCode || !subjectName || !semesterNumber) {
+        return sendError(res, 'Context parameters required for direct file import.', 400);
+      }
+
+      const validation = await validateMarksExcel(req.file.buffer, {
+        academicYear,
+        year,
+        section,
+        subjectCode,
+        subjectName,
+        semesterNumber,
+        hodDepartmentId: scope.departmentId,
+      });
+      rowsToImport = validation.rows;
+    }
+
+    if (!rowsToImport || !Array.isArray(rowsToImport) || rowsToImport.length === 0) {
+      return sendError(res, 'No marks rows provided for import.', 400);
+    }
+
+    const result = await executeMarksImport(rowsToImport, req.user!.id, scope.departmentId, req);
+    return sendSuccess(res, result, 'Marks bulk import executed successfully.');
+  } catch (err: any) {
+    console.error('importMarksUpload error:', err);
+    return sendError(res, err.message || 'Failed to execute marks bulk import.', 500);
+  }
+}
+
+/**
+ * GET /marks/export
+ * Export marks report as Excel.
+ */
+export async function exportMarksReport(req: AuthRequest, res: Response): Promise<any> {
+  try {
+    const scope = await loadScope(req, res);
+    if (!scope) return;
+
+    const academicYear = String(req.query.academicYear || '').trim();
+    const year = req.query.year ? Number(req.query.year) : undefined;
+    const section = String(req.query.section || '').trim().toUpperCase() || undefined;
+    const subjectCode = String(req.query.subjectCode || '').trim().toUpperCase() || undefined;
+    const semesterNumber = req.query.semesterNumber ? Number(req.query.semesterNumber) : undefined;
+
+    if (!academicYear) {
+      return sendError(res, 'academicYear is required.', 400);
+    }
+
+    // Build student filter
+    let students = scope.students.filter((s: any) => {
+      const batchName = s.batch?.name || '';
+      const matchYear = !year || s.year === year;
+      const matchSection = !section || s.section === section;
+      const matchBatch = batchName.includes(academicYear);
+      return matchYear && matchSection && matchBatch;
+    });
+
+    if (students.length === 0) {
+      // Return empty workbook
+      const buffer = await exportMarksExcel([], { academicYear, year, section, subjectCode, semesterNumber });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="Marks_Export_${academicYear}_${new Date().toISOString().slice(0,10)}.xlsx"`);
+      return res.send(buffer);
+    }
+
+    let studentIds = students.map((s: any) => String(s._id));
+
+    // Build marks filter
+    const markFilter: Record<string, any> = { student: { $in: studentIds } };
+    if (subjectCode) markFilter.subjectCode = subjectCode;
+    if (semesterNumber) markFilter.semesterNumber = semesterNumber;
+
+    const marks = await InternalMark.find(markFilter).sort({ semesterNumber: 1, subjectCode: 1 }).lean();
+
+    const studentMap = new Map(students.map((s: any) => [String(s._id), s]));
+
+    const result = (marks as any[]).map((m) => {
+      const student = studentMap.get(String(m.student));
+      return {
+        registerNumber: m.registerNumber,
+        studentName: student?.fullName || '',
+        department: scope.department?.name || '',
+        year: student?.year,
+        section: student?.section || '',
+        batch: student?.batch?.name || '',
+        semesterNumber: m.semesterNumber,
+        subjectCode: m.subjectCode,
+        subjectName: m.subjectName,
+        ia1: m.ia1 ?? null,
+        ia2: m.ia2 ?? null,
+        endSem: m.endSem ?? null,
+        updatedByName: m.updatedByName || '',
+        updatedAt: m.updatedAt,
+      };
+    });
+
+    const buffer = await exportMarksExcel(result, { academicYear, year, section, subjectCode, semesterNumber });
+    
+    const filenameParts = ['Marks_Export', academicYear];
+    if (year) filenameParts.push(`Y${year}`);
+    if (section) filenameParts.push(section);
+    if (subjectCode) filenameParts.push(subjectCode);
+    if (semesterNumber) filenameParts.push(`Sem${semesterNumber}`);
+    filenameParts.push(new Date().toISOString().slice(0,10));
+    
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filenameParts.join('_')}.xlsx"`);
+    return res.send(buffer);
+  } catch (err: any) {
+    console.error('exportMarksReport error:', err);
+    return sendError(res, 'Failed to export marks.', 500);
   }
 }

@@ -1,15 +1,18 @@
-import React, { useState } from 'react';
-import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { Routes, Route, useNavigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { LoginPage } from './pages/auth/LoginPage';
+import { ChangePasswordPage } from './pages/auth/ChangePasswordPage';
 import { Navbar } from './components/common/Navbar';
 import { Sidebar, getNavLabel } from './components/common/Sidebar';
 import { AdminDashboard } from './pages/admin/AdminDashboard';
+import { PrincipalDashboard } from './pages/principal/PrincipalDashboard';
 import { HodDashboard } from './pages/hod/HodDashboard';
 import { FacultyDashboard } from './pages/faculty/FacultyDashboard';
 import { StudentDashboard } from './pages/student/StudentDashboard';
 import { CompleteProfileWizard } from './pages/student/CompleteProfileWizard';
 import { PwaInstallBanner } from './components/common/PwaInstallBanner';
+import { AiAssistant } from './components/ai/AiAssistant';
 import { NotFoundPage } from './pages/error/NotFoundPage';
 import { AccessDeniedState } from './pages/error/AccessDeniedState';
 import { SessionExpiredState } from './pages/error/SessionExpiredState';
@@ -24,6 +27,16 @@ export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<string>('overview');
   const [justCompletedProfile, setJustCompletedProfile] = useState<boolean>(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
+
+  // Keep the Principal on a valid read-only tab: the app-wide default `overview`
+  // is not part of the Principal's surface, so normalise it to the college
+  // dashboard. (PrincipalDashboard also guards this, but doing it here keeps the
+  // sidebar highlight and topbar label in sync.)
+  useEffect(() => {
+    if (user?.role === 'PRINCIPAL' && !currentTab.startsWith('mentoring-')) {
+      setCurrentTab('mentoring-dashboard');
+    }
+  }, [user?.role, currentTab]);
 
   if (isLoading) {
     return (
@@ -54,6 +67,18 @@ export const App: React.FC = () => {
           <Route path="/network-error" element={<NetworkErrorState onRetry={() => window.location.reload()} />} />
           <Route path="*" element={<NotFoundPage onGoDashboard={() => navigate('/login')} onGoBack={() => navigate('/login')} />} />
         </Routes>
+        <PwaInstallBanner />
+      </>
+    );
+  }
+
+  // Mandatory first-login password change (provisioned accounts such as the
+  // Principal). While the flag is set the backend refuses every protected route,
+  // so this is a hard gate rather than a cosmetic redirect.
+  if (user?.mustChangePassword === true) {
+    return (
+      <>
+        <ChangePasswordPage />
         <PwaInstallBanner />
       </>
     );
@@ -102,6 +127,8 @@ export const App: React.FC = () => {
     switch (user?.role) {
       case 'ADMIN':
         return <AdminDashboard currentTab={currentTab} onSelectTab={setCurrentTab} />;
+      case 'PRINCIPAL':
+        return <PrincipalDashboard currentTab={currentTab} onSelectTab={setCurrentTab} />;
       case 'HOD':
         return <HodDashboard currentTab={currentTab} onSelectTab={setCurrentTab} />;
       case 'FACULTY':
@@ -144,8 +171,9 @@ export const App: React.FC = () => {
   );
 
   return (
-    <Routes>
-      <Route path="/" element={MainDashboardLayout} />
+    <>
+      <Routes>
+        <Route path="/" element={MainDashboardLayout} />
       <Route path="/dashboard" element={MainDashboardLayout} />
 
       {/* Direct routes for student & mentor detail views */}
@@ -156,6 +184,10 @@ export const App: React.FC = () => {
       <Route
         path="/admin/*"
         element={user?.role === 'ADMIN' ? MainDashboardLayout : <AccessDeniedState onGoDashboard={() => navigate('/')} />}
+      />
+      <Route
+        path="/principal/*"
+        element={user?.role === 'PRINCIPAL' ? MainDashboardLayout : <AccessDeniedState onGoDashboard={() => navigate('/')} />}
       />
       <Route
         path="/hod/*"
@@ -180,8 +212,10 @@ export const App: React.FC = () => {
       <Route path="/network-error" element={<NetworkErrorState onRetry={() => window.location.reload()} />} />
 
       {/* Catch-all 404 Route (Requirement 14) */}
-      <Route path="*" element={<NotFoundPage onGoDashboard={() => navigate('/')} onGoBack={() => navigate(-1)} />} />
-    </Routes>
+        <Route path="*" element={<NotFoundPage onGoDashboard={() => navigate('/')} onGoBack={() => navigate(-1)} />} />
+      </Routes>
+      <AiAssistant />
+    </>
   );
 };
 

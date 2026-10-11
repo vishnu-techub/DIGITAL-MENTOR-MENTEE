@@ -79,8 +79,12 @@ export async function syncStudentDetailsPdf(
       return null;
     }
 
-    // Generate KSRCE Student Details PDF Buffer
-    const pdfBytes = await generateStudentPdf(student._id.toString());
+    // Generate KSRCE Student Details PDF Buffer. The HTML/CSS renderer already
+    // knows how to bake the watermark into the page background, but the stored
+    // form copy keeps the existing document-watermark service workflow (below)
+    // so the file is watermarked exactly once — the record book download is the
+    // one that carries the in-renderer CSS watermark.
+    const pdfBytes = await generateStudentPdf(student._id.toString(), 'full', { watermark: false });
 
     const UPLOADS_DIR = resolveWritableUploadsDir('documents');
 

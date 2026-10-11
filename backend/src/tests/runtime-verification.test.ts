@@ -19,6 +19,7 @@ import bcrypt from 'bcryptjs';
 import { calculateArrearStatistics } from '../utils/arrears.util';
 import { isValidId, toLocalId, newLocalId, type LocalId } from '../services/localId.js';
 import { useTemporaryLocalStore } from './helpers/local-test-store.js';
+import { pdfText, pdfPageTexts, pdfPageImages } from './helpers/pdf-text.js';
 
 // The store resolves its directory at import time, so this must come first.
 const store = useTemporaryLocalStore('runtime-verify');
@@ -952,29 +953,17 @@ async function main() {
     const buf = book.body as Buffer;
     assert(buf.subarray(0, 5).toString() === '%PDF-', 'record book is not a PDF');
 
-    // Metadata must be in the dossier text (section 8 is jsPDF-generated, so its
-    // content stream is compressed and must be inflated to be read).
-    const zlib = await import('node:zlib');
-    const raw = buf.toString('latin1');
-    let text = '';
-    const re = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(raw))) {
-      try {
-        text += zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1');
-      } catch {
-        text += m[1];
-      }
-    }
-    const literals = [...text.matchAll(/\((?:\\.|[^\\()])*\)/g)]
-      .map((x) => x[0].slice(1, -1).replace(/\\([()\\])/g, '$1'))
-      .join(' ');
-    const metaInBook = literals.includes('Academic Order of Merit AO2026-1395');
-    const catInBook = literals.includes('Award Certificate');
-    // The event metadata typed at upload must reach the record book too. Cell
-    // text is wrapped into one literal per line, and the literals are joined with
-    // a space, so a phrase spanning a line break still matches.
-    const eventInBook = literals.includes('Annual Awards 2026');
+    // Metadata must be in the dossier text. The record book is now rendered by
+    // the HTML/CSS → PDF pipeline (headless Chromium), which emits content as
+    // subset-font hex `Tj` strings, and the annexure pages pdf-lib appends emit
+    // literal strings — MuPDF text extraction reads both.
+    const text = await pdfText(buf);
+    const metaInBook = text.includes('Academic Order of Merit AO2026-1395');
+    const catInBook = text.includes('Award Certificate');
+    // The event metadata typed at upload must reach the record book too. MuPDF
+    // joins text runs on one line with spaces, so a phrase spanning a line
+    // break still matches after whitespace is normalised.
+    const eventInBook = text.replace(/\s+/g, ' ').includes('Annual Awards 2026');
     assert(metaInBook, 'document title missing from Section 8 of the record book');
     assert(catInBook, 'document category missing from Section 8 of the record book');
     assert(eventInBook, 'uploaded event name missing from Section 8 of the record book');
@@ -991,13 +980,9 @@ async function main() {
       `expected the 2 uploaded certificate pages in the output, found ${certPages.length} (page sizes: ${sizes.join(',')})`
     );
 
-    // The certificate's own content came across, not just blank pages. pdf-lib
-    // serialises copied pages with FlateDecode streams and writes drawn text as a
-    // hex string, so the text is only visible after inflating and hex-decoding.
-    const upText = text.toUpperCase();
-    const hexOf = (s: string) => Buffer.from(s, 'latin1').toString('hex').toUpperCase();
+    // The certificate's own content came across, not just blank pages.
     const certTextPresent =
-      upText.includes(hexOf('AO2026-1395-CERT-PAGE-ONE')) && upText.includes(hexOf('AO2026-1395-CERT-PAGE-TWO'));
+      text.includes('AO2026-1395-CERT-PAGE-ONE') && text.includes('AO2026-1395-CERT-PAGE-TWO');
     assert(certTextPresent, 'uploaded certificate page content not found in the generated PDF');
 
     // (d) another student's record book must NOT contain this document. Compared
@@ -1013,15 +998,8 @@ async function main() {
       .map((p: any) => { const s = p.getSize(); return `${Math.round(s.width)}x${Math.round(s.height)}`; });
     const leaked = adminSizes.filter((s: string) => s === '400x600');
     assert(leaked.length === 0, `certificate pages leaked into another student's record book (${leaked.length} found)`);
-    let adminText = '';
-    const adminRaw = (adminBook.body as Buffer).toString('latin1');
-    const re2 = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
-    let m2: RegExpExecArray | null;
-    while ((m2 = re2.exec(adminRaw))) {
-      try { adminText += zlib.inflateSync(Buffer.from(m2[1], 'latin1')).toString('latin1'); }
-      catch { adminText += m2[1]; }
-    }
-    assert(!adminText.toUpperCase().includes(hexOf('AO2026-1395-CERT-PAGE-ONE')), 'certificate text leaked into another student record book');
+    const adminText = await pdfText(adminBook.body as Buffer);
+    assert(!adminText.includes('AO2026-1395-CERT-PAGE-ONE'), 'certificate text leaked into another student record book');
 
     // (e) existing documents were not lost by generating the book.
     const stillThere = await StudentDocument.countDocuments({ studentId: stuA._id });
@@ -1039,13 +1017,14 @@ async function main() {
     assert(delOk.status === 200, `admin housekeeping delete after generation -> ${delOk.status}`);
 
     return { status: 'PASS',
-      evidence: `upload AO2026-1395.pdf (2 pages, 400x600) -> ${up.status}, 1 record linked to student ${String(stuA._id).slice(-6)} with eventName/organizer/eventDate persisted; listed in Student Documents with category "${listed.category}"; record book -> 200 ${buf.length} B, Section 8 lists the title, category and event name, output has ${sizes.length} pages of which ${certPages.length} are the 400x600 certificate pages and both certificate page texts are present after inflation; student->other student ${otherBook.status}, admin->stuB book ${adminBook.status} with 0 400x600 pages and no certificate text; document still viewable (${viewOk.status}) after generation, student delete of the PENDING record correctly refused (${studentDel.status}) and admin housekeeping delete succeeded (${delOk.status})`,
-      fix: 'pdf.service.generateStudentPdf now reads StudentDocument for the student and renders Section 8 metadata plus embedded annexures (images inline, PDFs appended via pdf-lib)' };
+      evidence: `upload AO2026-1395.pdf (2 pages, 400x600) -> ${up.status}, 1 record linked to student ${String(stuA._id).slice(-6)} with eventName/organizer/eventDate persisted; listed in Student Documents with category "${listed.category}"; record book -> 200 ${buf.length} B, Section 8 lists the title, category and event name, output has ${sizes.length} pages of which ${certPages.length} are the 400x600 certificate pages and both certificate page texts are present; student->other student ${otherBook.status}, admin->stuB book ${adminBook.status} with 0 400x600 pages and no certificate text; document still viewable (${viewOk.status}) after generation, student delete of the PENDING record correctly refused (${studentDel.status}) and admin housekeeping delete succeeded (${delOk.status})`,
+      fix: 'pdf.service.generateStudentPdf reads StudentDocument for the student and renders the documents section metadata plus embedded annexures (images inlined into the HTML/CSS render, PDFs appended via pdf-lib)' };
   });
 
-  // 20c. Image documents take a different branch (jsPDF addImage, not pdf-lib
-  // copyPages). A failure there is caught and reported rather than thrown, so it
-  // would fail silently -- hence an explicit check.
+  // 20c. Image documents take a different branch (inlined into the HTML/CSS
+  // render, not appended as pdf-lib copyPages). A failure there is caught and
+  // reported rather than thrown, so it would fail silently -- hence an explicit
+  // check that the bytes really contain the uploaded image XObject.
   await check('Image documents are embedded inline in the record book', async () => {
     const zlib = await import('node:zlib');
     const { PDFDocument: PDFLib } = await import('pdf-lib');
@@ -1095,51 +1074,28 @@ async function main() {
     assert(book.status === 200, `record book -> ${book.status}`);
     const buf = book.body as Buffer;
 
-    // jsPDF writes images as a FlateDecode XObject; inflate to inspect.
-    const rawBuf = buf.toString('latin1');
-    let text = '';
-    const re = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(rawBuf))) {
-      try { text += zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1'); }
-      catch { text += m[1]; }
-    }
-    // jsPDF stores the image as an indirect /XObject object in the raw file (the
-    // page content stream only references it via /I0 Do), so the dictionary is
-    // matched against the raw bytes, not the inflated streams.
-    const squashed = rawBuf.replace(/\s+/g, '');
-    const xobjRe = /\/Type\/XObject\/Subtype\/Image\/Width137\/Height89\//;
+    // The image must be physically embedded as a real /Subtype /Image XObject at
+    // its original pixel dimensions. This is renderer-agnostic: the HTML/CSS
+    // renderer inlines uploaded images and the legacy jsPDF renderer addImage()s
+    // them, and both keep the uploaded file's size.
+    const images = await pdfPageImages(buf);
     assert(
-      xobjRe.test(squashed),
-      `embedded image XObject (${W}x${H}) not found in the generated record book`
+      images.some((im) => im.width === W && im.height === H),
+      `embedded image XObject (${W}x${H}) not found in the generated record book (found ${JSON.stringify(images)})`
     );
-    // The page must actually reference it.
-    assert(/\/I0\s*Do/.test(text), 'no page content stream draws the image');
 
-    // And its caption metadata must be in Section 8.
-    const literals = [...text.matchAll(/\((?:\\.|[^\\()])*\)/g)]
-      .map((x) => x[0].slice(1, -1).replace(/\\([()\\])/g, '$1'))
-      .join(' ');
-    assert(literals.includes('NSS Activity Camp Photo'), 'image document title missing from Section 8');
+    // And its caption metadata must be in the documents section.
+    const text = await pdfText(buf);
+    assert(text.includes('NSS Activity Camp Photo'), 'image document title missing from the documents section');
 
     // Un-embeddable files must be reported, never silently dropped -- but a valid
     // PNG must not be among them. Other checks leave deliberately malformed stub
     // PDFs in the database which legitimately raise the notice, so the notice
-    // page is located first and the PNG asserted absent from that page alone (its
-    // file name also appears in its own image caption, by design).
-    const hexOf = (s: string) => Buffer.from(s, 'latin1').toString('hex').toUpperCase();
-    const streams: string[] = [];
-    const reS = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
-    let ms: RegExpExecArray | null;
-    while ((ms = reS.exec(rawBuf))) {
-      let decoded = '';
-      try { decoded = zlib.inflateSync(Buffer.from(ms[1], 'latin1')).toString('latin1'); }
-      catch { decoded = ms[1]; }
-      streams.push(decoded.toUpperCase());
-    }
-    const noticeIdx = streams.findIndex((s) => s.includes(hexOf('ANNEXURE EMBEDDING NOTICE')));
-    const noticeHasPng =
-      noticeIdx >= 0 && streams[noticeIdx].includes(hexOf('nss-activity-photo.png'));
+    // page is located by its title first and the PNG asserted absent from that
+    // page alone (its file name also appears in its own image caption, by design).
+    const pageTexts = await pdfPageTexts(buf);
+    const noticeIdx = pageTexts.findIndex((t) => /ANNEXURE EMBEDDING NOTICE/i.test(t));
+    const noticeHasPng = noticeIdx >= 0 && pageTexts[noticeIdx].includes('nss-activity-photo.png');
     assert(!noticeHasPng, 'a valid PNG was reported in the annexure embedding notice');
 
     // Still a structurally valid PDF.
@@ -1154,8 +1110,8 @@ async function main() {
     assert(delOk.status === 200, `admin housekeeping delete -> ${delOk.status}`);
 
     return { status: 'PASS',
-      evidence: `upload nss-activity-photo.png (genuine ${W}x${H} PNG) -> ${up.status}; record book -> 200 ${buf.length} B containing a /Subtype/Image XObject of exactly ${W}x${H}, drawn via /I0 Do (inline jsPDF addImage), plus the Section 8 caption "NSS Activity Camp Photo"; annexure embedding notice ${noticeIdx >= 0 ? 'present (for pre-existing malformed stub PDFs) and does not list the PNG' : 'absent'}; ${loaded.getPageCount()} pages, valid PDF; student delete of the PENDING record correctly refused (${studentDel.status}), admin housekeeping delete (${delOk.status})`,
-      fix: 'generateStudentPdf embeds image documents inline with doc.addImage, aspect-fitted, and only reports the annexure notice for files it genuinely could not embed' };
+      evidence: `upload nss-activity-photo.png (genuine ${W}x${H} PNG) -> ${up.status}; record book -> 200 ${buf.length} B containing a /Subtype/Image XObject of exactly ${W}x${H} (inlined by the HTML/CSS renderer), plus the documents-section caption "NSS Activity Camp Photo"; annexure embedding notice ${noticeIdx >= 0 ? 'present (for pre-existing malformed stub PDFs) and does not list the PNG' : 'absent'}; ${loaded.getPageCount()} pages, valid PDF; student delete of the PENDING record correctly refused (${studentDel.status}), admin housekeeping delete (${delOk.status})`,
+      fix: 'generateStudentPdf inlines uploaded image documents into the record book (data URI in the HTML/CSS render; doc.addImage on the jsPDF fallback), aspect-fitted, and only reports the annexure notice for files it genuinely could not embed' };
   });
 
   // 21. Delete All retains the Student Details Form
@@ -1216,24 +1172,12 @@ async function main() {
     assert(buf.length > 2000, `pdf too small (${buf.length} B)`);
     assert(buf.subarray(0, 5).toString() === '%PDF-', 'not a PDF stream');
 
-    // jspdf compresses its content streams; inflate them so we can prove the
-    // stored values really reach the document.
-    const zlib = await import('node:zlib');
-    let text = '';
-    const raw = buf.toString('latin1');
-    const re = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(raw))) {
-      try {
-        text += zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1');
-      } catch {
-        text += m[1];
-      }
-    }
-    const literalsRaw = [...text.matchAll(/\((?:\\.|[^\\()])*\)/g)].map((x) =>
-      x[0].slice(1, -1).replace(/\\([()\\])/g, '$1')
-    );
-    const literals = literalsRaw.join(' ');
+    // MuPDF text extraction proves the stored values really reach the document
+    // regardless of how the pages were produced (the HTML/CSS renderer emits
+    // subset-font hex strings rather than editable literals).
+    const text = await pdfText(buf);
+    const textFlat = text.replace(/\s+/g, ' ');
+    const textTokens = textFlat.split(' ').filter((t) => t.length > 0);
     const diploma = 'DIPLOMA IN COMPUTER ENGINEERING';
     // Derive the expectation from the stored record instead of hardcoding, because earlier
     // scenarios legitimately republished this student's semester-1 grades.
@@ -1244,7 +1188,7 @@ async function main() {
     const expectedCgpa = rec!.cgpa > 0 ? Number(rec!.cgpa).toFixed(2) : null;
     const storedSgpa = rec!.sgpa > 0 ? Number(rec!.sgpa).toFixed(2) : null;
     const occurrences = expectedCgpa
-      ? literalsRaw.filter((s) => s.trim() === expectedCgpa).length
+      ? textTokens.filter((s) => s.trim() === expectedCgpa).length
       : 0;
     const cgpaInPdf = expectedCgpa ? occurrences >= 1 : false;
     // A mirrored SGPA would put the same number in a second cell of the same row.
@@ -1256,12 +1200,12 @@ async function main() {
       unitSem1.cgpa === 8.5 && unitSem1.sgpa === 0,
       `arrears.util fabricated sgpa=${unitSem1.sgpa} from cgpa=8.5`
     );
-    const gradeRuns = literalsRaw
+    const gradeRuns = textTokens
       .filter((s) => /CGPA|SGPA|Semester 0\d|ARREAR/i.test(s))
       .slice(0, 40);
     return {
-      status: literals.includes(diploma) && cgpaInPdf && !sgpaMirrorsCgpa ? 'PASS' : 'PARTIAL',
-      evidence: `GET /api/pdf/student/:id -> 200 ${buf.length} B ${r.contentType}, %PDF header ok; inflated ${literalsRaw.length} literal text runs contain the lateral diploma "${diploma}"=${literals.includes(diploma)}; stored sem1 cgpa=${rec!.cgpa} (sgpa=${rec!.sgpa ?? 'none'}) and the PDF prints the stored CGPA "${expectedCgpa}" ${occurrences}x (CGPA cell present=${cgpaInPdf}); SGPA mirrored from CGPA=${sgpaMirrorsCgpa} and calculateArrearStatistics({cgpa:8.5}) -> sgpa=${unitSem1.sgpa}, so an unrecorded SGPA is never fabricated; grade-related runs=${JSON.stringify(gradeRuns)}`,
+      status: textFlat.includes(diploma) && cgpaInPdf && !sgpaMirrorsCgpa ? 'PASS' : 'PARTIAL',
+      evidence: `GET /api/pdf/student/:id -> 200 ${buf.length} B ${r.contentType}, %PDF header ok; extracted ${textTokens.length} text tokens contain the lateral diploma "${diploma}"=${textFlat.includes(diploma)}; stored sem1 cgpa=${rec!.cgpa} (sgpa=${rec!.sgpa ?? 'none'}) and the PDF prints the stored CGPA "${expectedCgpa}" ${occurrences}x (CGPA cell present=${cgpaInPdf}); SGPA mirrored from CGPA=${sgpaMirrorsCgpa} and calculateArrearStatistics({cgpa:8.5}) -> sgpa=${unitSem1.sgpa}, so an unrecorded SGPA is never fabricated; grade-related runs=${JSON.stringify(gradeRuns)}`,
       fix: 'pdf.service reads academic_record.cgpa/sgpa via the shared arrears.util source of truth (which no longer falls back SGPA->CGPA) and school.lateralEntry.previousCourseDiploma',
     };
   });

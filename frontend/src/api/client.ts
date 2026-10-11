@@ -1054,8 +1054,12 @@ export const api = {
         body: JSON.stringify(credentials),
       }),
     me: () => request('/auth/me'),
-    changePassword: (passwords: { currentPassword: string; newPassword: string }) =>
-      request('/auth/change-password', {
+    changePassword: (passwords: {
+      currentPassword: string;
+      newPassword: string;
+      confirmPassword: string;
+    }) =>
+      request<{ token: string; user: any }>('/auth/change-password', {
         method: 'POST',
         body: JSON.stringify(passwords),
       }),
@@ -1885,6 +1889,180 @@ return { success: true, filename: fileName };
     /** HOD only: the notices this HOD's department faculty have sent. */
     departmentNotifications: () =>
       request<HodDepartmentNotificationPayload>('/hod/notifications'),
+    // Marks Management
+    marks: {
+      getSubjects: (params: { academicYear: string; year: number; section: string }) => {
+        const q = new URLSearchParams({ academicYear: params.academicYear, year: String(params.year), section: params.section }).toString();
+        return request<Array<{ subjectCode: string; subjectName: string; semesterNumber: number }>>(`/hod/marks/subjects${q ? `?${q}` : ''}`);
+      },
+      getClasses: (params: { academicYear?: string; year?: number } = {}) => {
+        const q = new URLSearchParams();
+        if (params.academicYear) q.set('academicYear', params.academicYear);
+        if (params.year !== undefined && params.year !== null) q.set('year', String(params.year));
+        const qs = q.toString();
+        return request<Array<{ year: number; section: string; studentCount: number; academicYear: string; subjects: Array<{ subjectCode: string; subjectName: string; semesterNumber: number }> }>>(`/hod/class-management/classes${qs ? `?${qs}` : ''}`);
+      },
+      getClassStudents: (params: { academicYear?: string; year: number; section: string }) => {
+        const q = new URLSearchParams({ year: String(params.year), section: params.section });
+        if (params.academicYear) q.set('academicYear', params.academicYear);
+        return request<Array<{ id: string; registerNumber: string; fullName: string; batch: string; year: number; section: string }>>(`/hod/class-management/students?${q.toString()}`);
+      },
+      getStudents: (params: { academicYear: string; year: number; section: string; subjectCode: string; semesterNumber: number }) => {
+        const q = new URLSearchParams({ academicYear: params.academicYear, year: String(params.year), section: params.section, subjectCode: params.subjectCode, semesterNumber: String(params.semesterNumber) }).toString();
+        return request<Array<{ id: string; registerNumber: string; fullName: string; batch: string; year: number; section: string; ia1: number | null; ia2: number | null; endSem: number | null; markId: string | null }>>(`/hod/marks/students${q ? `?${q}` : ''}`);
+      },
+      getClassSubjectMarks: (params: { academicYear: string; year: number; section: string; subjectCode: string; semesterNumber: number }) => {
+        const q = new URLSearchParams({ academicYear: params.academicYear, year: String(params.year), section: params.section, subjectCode: params.subjectCode, semesterNumber: String(params.semesterNumber) }).toString();
+        return request<{ students: Array<{ id: string; registerNumber: string; fullName: string; batch: string; year: number; section: string; ia1: number | null; ia2: number | null; endSem: number | null; markId: string | null }>; subject: { subjectCode: string; subjectName: string; semesterNumber: number }; maxMarks: { ia1: number; ia2: number; endSem: number } }>(`/hod/marks/class-subject${q ? `?${q}` : ''}`);
+      },
+      saveMarks: (data: { academicYear: string; year: number; section: string; subjectCode: string; subjectName: string; semesterNumber: number; marks: Array<{ studentId: string; registerNumber: string; ia1?: number | null; ia2?: number | null; endSem?: number | null }> }) =>
+        request<{ saved: number; failed: number; results: Array<{ registerNumber: string; studentId: string; saved: boolean; error?: string }>; errors?: string[] }>('/hod/marks/class-subject/save', {
+          method: 'POST',
+          body: JSON.stringify(data),
+        }),
+      downloadTemplate: async (params: { academicYear: string; year: number; section: string; subjectCode: string; subjectName: string; semesterNumber: number }) => {
+        const token = getAuthToken();
+        const q = new URLSearchParams({ academicYear: params.academicYear, year: String(params.year), section: params.section, subjectCode: params.subjectCode, subjectName: params.subjectName, semesterNumber: String(params.semesterNumber) }).toString();
+        const res = await fetch(`${API_BASE}/hod/marks/template${q ? `?${q}` : ''}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) throw new Error('Failed to download template.');
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Marks_Template_${params.academicYear}_Y${params.year}_${params.section}_${params.subjectCode}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      },
+      downloadTemplateEnhanced: async (params: { academicYear: string; year: number; section: string; subjectCode: string; subjectName: string; semesterNumber: number; assessmentType?: 'IA1' | 'IA2' | 'END_SEM' }) => {
+        const token = getAuthToken();
+        const q = new URLSearchParams({ 
+          academicYear: params.academicYear, 
+          year: String(params.year), 
+          section: params.section, 
+          subjectCode: params.subjectCode, 
+          subjectName: params.subjectName, 
+          semesterNumber: String(params.semesterNumber),
+          assessmentType: params.assessmentType || 'IA1'
+        }).toString();
+        const res = await fetch(`${API_BASE}/hod/marks/template${q ? `?${q}` : ''}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) throw new Error('Failed to download template.');
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Marks_Template_${params.academicYear}_Y${params.year}_${params.section}_${params.subjectCode}_${params.assessmentType || 'IA1'}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      },
+      validateUpload: async (file: File, params: { academicYear: string; year: number; section: string; subjectCode: string; subjectName: string; semesterNumber: number }) => {
+        const token = getAuthToken();
+        const form = new FormData();
+        form.append('file', file);
+        form.append('academicYear', params.academicYear);
+        form.append('year', String(params.year));
+        form.append('section', params.section);
+        form.append('subjectCode', params.subjectCode);
+        form.append('subjectName', params.subjectName);
+        form.append('semesterNumber', String(params.semesterNumber));
+        const res = await fetch(`${API_BASE}/hod/marks/upload/validate`, {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: form,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ message: 'Validation failed' }));
+          throw new Error(err.message || 'Validation failed');
+        }
+        return res.json();
+      },
+      importUpload: async (file: File, params: { academicYear: string; year: number; section: string; subjectCode: string; subjectName: string; semesterNumber: number }) => {
+        const token = getAuthToken();
+        const form = new FormData();
+        form.append('file', file);
+        form.append('academicYear', params.academicYear);
+        form.append('year', String(params.year));
+        form.append('section', params.section);
+        form.append('subjectCode', params.subjectCode);
+        form.append('subjectName', params.subjectName);
+        form.append('semesterNumber', String(params.semesterNumber));
+        const res = await fetch(`${API_BASE}/hod/marks/upload/import`, {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: form,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ message: 'Import failed' }));
+          throw new Error(err.message || 'Import failed');
+        }
+        return res.json();
+      },
+      importRows: async (rows: any[], params: { academicYear: string; year: number; section: string; subjectCode: string; subjectName: string; semesterNumber: number }) => {
+        const token = getAuthToken();
+        const res = await fetch(`${API_BASE}/hod/marks/upload/import`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ rows, ...params }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ message: 'Import failed' }));
+          throw new Error(err.message || 'Import failed');
+        }
+        return res.json();
+      },
+      exportReport: async (params: { academicYear: string; year?: number; section?: string; subjectCode?: string; semesterNumber?: number }) => {
+        const token = getAuthToken();
+        const q = new URLSearchParams({
+          academicYear: params.academicYear,
+          ...(params.year !== undefined && { year: String(params.year) }),
+          ...(params.section && { section: params.section }),
+          ...(params.subjectCode && { subjectCode: params.subjectCode }),
+          ...(params.semesterNumber !== undefined && { semesterNumber: String(params.semesterNumber) }),
+        }).toString();
+        const res = await fetch(`${API_BASE}/hod/marks/export${q ? `?${q}` : ''}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ message: 'Export failed' }));
+          throw new Error(err.message || 'Export failed');
+        }
+        const blob = await res.blob();
+        const filenameParts = ['Marks_Export', params.academicYear];
+        if (params.year) filenameParts.push(`Y${params.year}`);
+        if (params.section) filenameParts.push(params.section);
+        if (params.subjectCode) filenameParts.push(params.subjectCode);
+        filenameParts.push(new Date().toISOString().slice(0,10));
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${filenameParts.join('_')}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      },
+      getReport: (params: { academicYear: string; year?: number; section?: string; subjectCode?: string; studentId?: string; semesterNumber?: number }) => {
+        const q = new URLSearchParams({
+          academicYear: params.academicYear,
+          ...(params.year !== undefined && { year: String(params.year) }),
+          ...(params.section && { section: params.section }),
+          ...(params.subjectCode && { subjectCode: params.subjectCode }),
+          ...(params.studentId && { studentId: params.studentId }),
+          ...(params.semesterNumber !== undefined && { semesterNumber: String(params.semesterNumber) }),
+        }).toString();
+        return request<{ marks: Array<{ id: string; registerNumber: string; studentName: string; batch: string; year: number; section: string; semesterNumber: number; subjectCode: string; subjectName: string; ia1: number | null; ia2: number | null; endSem: number | null; updatedByName: string; updatedAt: string }>; total: number }>(`/hod/marks/report${q ? `?${q}` : ''}`);
+      },
+    },
   },
 
   // Placement Monitoring (final-year students; mentor/HOD/admin scope).
@@ -2031,6 +2209,34 @@ return { success: true, filename: fileName };
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
     },
+  },
+
+  // Ollama-backed AI Assistant (role-scoped, advisory only)
+  ai: {
+    status: (): Promise<ApiResponse<{ available: boolean; model: string; configured?: boolean }>> =>
+      request('/api/ai/status'),
+    listConversations: (): Promise<ApiResponse<{ conversations: Array<{
+      id: string;
+      title: string;
+      role: string;
+      createdAt: string;
+      updatedAt: string;
+      messageCount: number;
+      lastMessage?: string;
+    }> }>> =>
+      request('/api/ai/conversations'),
+    getConversation: (id: string): Promise<ApiResponse<{ conversation: any }>> =>
+      request(`/api/ai/conversations/${id}`),
+    createConversation: (): Promise<ApiResponse<{ conversation: any }>> =>
+      request('/api/ai/conversations', { method: 'POST' }),
+    deleteConversation: (id: string): Promise<ApiResponse<{ deleted: boolean }>> =>
+      request(`/api/ai/conversations/${id}`, { method: 'DELETE' }),
+    chat: (payload: { conversationId?: string; message: string }): Promise<ApiResponse<{
+      conversationId: string;
+      answer: string;
+      conversation?: any;
+    }>> =>
+      request('/api/ai/chat', { method: 'POST', body: JSON.stringify(payload) }),
   },
 };
 

@@ -69,12 +69,14 @@ const parseMonth = (m: any): Date => {
 /**
  * Defence in depth for every handler.
  *
- * The router already applies `authorize(ROLES.ADMIN)`; this re-check guarantees
- * a handler cannot be reached by HOD / FACULTY / STUDENT even if it is ever
- * re-mounted elsewhere. Authorisation is never a frontend concern.
+ * The router already applies `authorize(ROLES.ADMIN, ROLES.PRINCIPAL)`; this
+ * re-check guarantees a handler cannot be reached by HOD / FACULTY / STUDENT
+ * even if it is ever re-mounted elsewhere. Authorisation is never a frontend
+ * concern. PRINCIPAL is read-only by construction: this module exposes only GET
+ * routes, so allowing the role here grants no mutation capability.
  */
-function requireAdmin(req: AuthRequest, res: Response): boolean {
-  if (!req.user || req.user.role !== ROLES.ADMIN) {
+function requireAdminOrPrincipal(req: AuthRequest, res: Response): boolean {
+  if (!req.user || (req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.PRINCIPAL)) {
     sendError(res, 'You are not authorized to perform this operation.', 403);
     return false;
   }
@@ -345,7 +347,7 @@ function resolveDepartment(scope: CollegeScope, departmentId: string): any | nul
 // ---------------------------------------------------------------------------
 
 export async function getAdminMentoringDashboard(req: AuthRequest, res: Response): Promise<any> {
-  if (!requireAdmin(req, res)) return;
+  if (!requireAdminOrPrincipal(req, res)) return;
   try {
     const scope = await loadCollege();
     const now = parseMonth((req.query as any)?.month);
@@ -414,7 +416,7 @@ export async function getAdminMentoringDashboard(req: AuthRequest, res: Response
 // ---------------------------------------------------------------------------
 
 export async function getAdminHodOverview(req: AuthRequest, res: Response): Promise<any> {
-  if (!requireAdmin(req, res)) return;
+  if (!requireAdminOrPrincipal(req, res)) return;
   try {
     const scope = await loadCollege();
     const now = parseMonth((req.query as any)?.month);
@@ -435,7 +437,7 @@ export async function getAdminHodOverview(req: AuthRequest, res: Response): Prom
 // ---------------------------------------------------------------------------
 
 export async function getAdminDepartmentOverview(req: AuthRequest, res: Response): Promise<any> {
-  if (!requireAdmin(req, res)) return;
+  if (!requireAdminOrPrincipal(req, res)) return;
   try {
     const scope = await loadCollege();
     const now = parseMonth((req.query as any)?.month);
@@ -456,7 +458,7 @@ export async function getAdminDepartmentOverview(req: AuthRequest, res: Response
 // ---------------------------------------------------------------------------
 
 export async function getAdminDepartmentComparison(req: AuthRequest, res: Response): Promise<any> {
-  if (!requireAdmin(req, res)) return;
+  if (!requireAdminOrPrincipal(req, res)) return;
   try {
     const scope = await loadCollege();
     const now = parseMonth((req.query as any)?.month);
@@ -499,7 +501,7 @@ export async function getAdminDepartmentComparison(req: AuthRequest, res: Respon
 // ---------------------------------------------------------------------------
 
 export async function getAdminDepartmentDetail(req: AuthRequest, res: Response): Promise<any> {
-  if (!requireAdmin(req, res)) return;
+  if (!requireAdminOrPrincipal(req, res)) return;
   try {
     const scope = await loadCollege();
     const departmentId = String(req.params.departmentId || '');
@@ -571,7 +573,7 @@ export async function getAdminDepartmentDetail(req: AuthRequest, res: Response):
 // ---------------------------------------------------------------------------
 
 export async function getAdminDepartmentMentors(req: AuthRequest, res: Response): Promise<any> {
-  if (!requireAdmin(req, res)) return;
+  if (!requireAdminOrPrincipal(req, res)) return;
   try {
     const scope = await loadCollege();
     const department = resolveDepartment(scope, String(req.params.departmentId || ''));
@@ -610,7 +612,7 @@ export async function getAdminDepartmentMentors(req: AuthRequest, res: Response)
 // ---------------------------------------------------------------------------
 
 export async function getAdminMentorDetail(req: AuthRequest, res: Response): Promise<any> {
-  if (!requireAdmin(req, res)) return;
+  if (!requireAdminOrPrincipal(req, res)) return;
   try {
     const scope = await loadCollege();
     const mentorId = String(req.params.mentorId || '');
@@ -706,7 +708,7 @@ export async function getAdminMentorDetail(req: AuthRequest, res: Response): Pro
 // ---------------------------------------------------------------------------
 
 export async function getAdminReport30Day(req: AuthRequest, res: Response): Promise<any> {
-  if (!requireAdmin(req, res)) return;
+  if (!requireAdminOrPrincipal(req, res)) return;
   try {
     const scope = await loadCollege();
     const weeks = clampWeeks((req.query as any)?.weeks, 5, 12);

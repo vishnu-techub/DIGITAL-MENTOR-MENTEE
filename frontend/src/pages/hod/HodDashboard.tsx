@@ -18,6 +18,8 @@ import { useToast } from '../../context/ToastContext';
 import { HodPlacementPanel } from '../../components/placement/HodPlacementPanel';
 import { LeaderboardView } from '../../components/leaderboard/LeaderboardView';
 import { StudentDetailsView } from '../common/StudentDetailsView';
+import { HodMarksManagement } from './HodMarksManagement';
+import { HodClassManagement } from './HodClassManagement';
 import { Modal } from '../../components/common/Modal';
 import { PageHeader } from '../../components/common/PageHeader';
 import { EmptyState } from '../../components/common/EmptyState';
@@ -1147,6 +1149,12 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
         </div>
       )}
 
+      {/* ============================ MARKS ============================ */}
+      {currentTab === 'marks' && <HodMarksManagement />}
+
+      {/* ============================ CLASS MANAGEMENT ============================ */}
+      {currentTab === 'class-management' && <HodClassManagement />}
+
       {/* ============================ PLACEMENT ============================ */}
       {currentTab === 'placement' && <HodPlacementPanel />}
 
@@ -1228,40 +1236,42 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
             </div>
             {report ? (
               <>
-                <div className="overview-summary-grid">
-                  <div className="overview-summary-card">
-                    <span className="overview-summary-label">Sessions</span>
-                    <span className="overview-summary-value">{report.totals.sessions}</span>
+                <div className="report-metric-grid">
+                  <div className="report-metric-card">
+                    <span className="report-metric-label">Sessions</span>
+                    <span className="report-metric-value">{report.totals.sessions}</span>
                   </div>
-                  <div className="overview-summary-card">
-                    <span className="overview-summary-label">Students Mentored</span>
-                    <span className="overview-summary-value">{report.totals.studentsMentored}</span>
+                  <div className="report-metric-card">
+                    <span className="report-metric-label">Students Mentored</span>
+                    <span className="report-metric-value">{report.totals.studentsMentored}</span>
                   </div>
-                  <div className="overview-summary-card">
-                    <span className="overview-summary-label">Students Pending</span>
-                    <span className="overview-summary-value">{report.totals.studentsPending}</span>
+                  <div className="report-metric-card">
+                    <span className="report-metric-label">Students Pending</span>
+                    <span className="report-metric-value">{report.totals.studentsPending}</span>
                   </div>
-                  <div className="overview-summary-card">
-                    <span className="overview-summary-label">Coverage</span>
-                    <span className="overview-summary-value">{report.totals.coveragePercent}%</span>
+                  <div className="report-metric-card">
+                    <span className="report-metric-label">Coverage</span>
+                    <span className="report-metric-value">{report.totals.coveragePercent}%</span>
                   </div>
-                  <div className="overview-summary-card">
-                    <span className="overview-summary-label">Active Mentors</span>
-                    <span className="overview-summary-value">
+                  <div className="report-metric-card">
+                    <span className="report-metric-label">Active Mentors</span>
+                    <span className="report-metric-value">
                       {report.totals.mentorsActive} / {report.totals.mentorsWithMentees}
                     </span>
                   </div>
                 </div>
 
-                <div className="section-heading" style={{ marginTop: '1.5rem' }}>
-                  Weekly Progress (30-day window · 4 weeks)
+                <div className="weekly-progress-section">
+                  <div className="section-heading">
+                    Weekly Progress (30-day window · 4 weeks)
+                  </div>
+                  <WeeklyProgressList weeks={report.weekly} />
                 </div>
-                <WeeklyProgressList weeks={report.weekly} />
 
                 <div className="section-heading" style={{ marginTop: '1.5rem' }}>
                   Mentor-wise 30-day Report ({(report.reportMentors || []).length})
                 </div>
-                <div className="table-responsive">
+                <div className="mentor-report-table table-responsive">
                   <table className="table">
                     <thead>
                       <tr>

@@ -23,6 +23,7 @@
 import bcrypt from 'bcryptjs';
 import sharp from 'sharp';
 import { useTemporaryLocalStore } from './helpers/local-test-store.js';
+import { pdfText } from './helpers/pdf-text.js';
 
 // The store resolves its directory at import time, so this must come first.
 const store = useTemporaryLocalStore('internal-marks');
@@ -116,15 +117,22 @@ async function loginAs(role: string, username: string, password: string): Promis
   return token;
 }
 
-/** Best-effort text extraction from a PDF buffer, for content assertions. */
-function pdfBytesToText(buf: Buffer): string {
+/**
+ * Best-effort text extraction from a PDF buffer, for content assertions.
+ *
+ * The record book is rendered by the HTML/CSS → PDF pipeline (headless
+ * Chromium), which emits content as subset-font hex `Tj` operands rather than
+ * editable `(...)` literals, so text is read through MuPDF instead — and the
+ * same helper keeps working on pages produced by the legacy jsPDF fallback.
+ */
+async function pdfBytesToText(buf: Buffer): Promise<string> {
   if (!Buffer.isBuffer(buf)) return String(buf || '');
-  const raw = buf.toString('latin1');
-  const parts: string[] = [];
-  const re = /\(((?:[^()\\]|\\.)*)\)\s*Tj/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(raw)) !== null) parts.push(m[1].replace(/\\([()\\])/g, '$1'));
-  return parts.join(' ');
+  try {
+    return await pdfText(buf);
+  } catch {
+    // Unreadable/absent page content degrades to no text, never an exception.
+    return '';
+  }
 }
 
 function bodyText(body: any): string {
@@ -656,7 +664,7 @@ async function main() {
 
     // ---- default (full) ----------------------------------------------------
     const full = await http('GET', `/api/pdf/student/${studentA._id}`, { token: mentorAToken });
-    const fullText = full.status === 200 ? pdfBytesToText(full.body as Buffer) : '';
+    const fullText = full.status === 200 ? await pdfBytesToText(full.body as Buffer) : '';
     check('the default mode still generates the full record book', full.status === 200 && full.bytes > 1000 && (full.body as Buffer)?.slice(0, 5).toString('latin1') === '%PDF-', `status=${full.status} bytes=${full.bytes}`);
     check('full mode keeps the personal section', fullText.includes('PERSONAL & FAMILY'), 'not found');
     check('full mode keeps the internal assessment section', fullText.includes('4. INTERNAL ASSESSMENT MARKS'), 'not found');
@@ -669,7 +677,7 @@ async function main() {
 
     // ---- internal ----------------------------------------------------------
     const internal = await http('GET', `/api/pdf/student/${studentA._id}?mode=internal`, { token: mentorAToken });
-    const internalText = internal.status === 200 ? pdfBytesToText(internal.body as Buffer) : '';
+    const internalText = internal.status === 200 ? await pdfBytesToText(internal.body as Buffer) : '';
     check('mode=internal generates a PDF', internal.status === 200 && internal.bytes > 1000 && (internal.body as Buffer)?.slice(0, 5).toString('latin1') === '%PDF-', `status=${internal.status} bytes=${internal.bytes}`);
     check('mode=internal prints the internal assessment section', internalText.includes('INTERNAL ASSESSMENT MARKS'), 'not found');
     check('mode=internal prints every subject row', internalText.includes('CS8491') && internalText.includes('CS8401') && internalText.includes('IA1'), 'not found');
@@ -681,7 +689,7 @@ async function main() {
 
     // ---- mentor-documents --------------------------------------------------
     const mentorDocs = await http('GET', `/api/pdf/student/${studentA._id}?mode=mentor-documents`, { token: mentorAToken });
-    const mentorDocsText = mentorDocs.status === 200 ? pdfBytesToText(mentorDocs.body as Buffer) : '';
+    const mentorDocsText = mentorDocs.status === 200 ? await pdfBytesToText(mentorDocs.body as Buffer) : '';
     check('mode=mentor-documents generates a PDF', mentorDocs.status === 200 && mentorDocs.bytes > 1000 && (mentorDocs.body as Buffer)?.slice(0, 5).toString('latin1') === '%PDF-', `status=${mentorDocs.status} bytes=${mentorDocs.bytes}`);
     check('mode=mentor-documents opens with the student & mentor table', mentorDocsText.includes('1. STUDENT & MENTOR INFORMATION'), 'not found');
     check('mode=mentor-documents numbers counselling as Section 3', mentorDocsText.includes('3. 5-DOMAIN COUNSELLING'), 'not found');

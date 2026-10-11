@@ -4,7 +4,7 @@ import helmet from 'helmet';
 import dotenv from 'dotenv';
 import { connectDB, isDBConnected } from './config/database.js';
 import { ensureSystemBootstrap } from './database/bootstrap.js';
-import { authenticate } from './middleware/auth.middleware.js';
+import { authenticate, enforcePasswordChange } from './middleware/auth.middleware.js';
 import { serveLegacyUpload, UPLOADS_DIR } from './modules/documents/document.controller.js';
 
 import authRoutes from './modules/auth/auth.routes.js';
@@ -15,6 +15,7 @@ import studentRoutes from './modules/students/student.routes.js';
 import mentorshipRoutes from './modules/mentorship/mentorship.routes.js';
 import meetingRoutes from './modules/meetings/meeting.routes.js';
 import counsellingRoutes from './modules/counselling/counselling.routes.js';
+import aiAssistantRoutes from './modules/ai/ai-assistant.routes.js';
 import hodRoutes from './modules/hod/hod.routes.js';
 import progressRoutes from './modules/monthly-progress/progress.routes.js';
 import notificationRoutes from './modules/notifications/notification.routes.js';
@@ -93,6 +94,11 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+// Guard: an account flagged `mustChangePassword` may only reach the allow-listed
+// authentication routes until it sets a new password. Mounted before every
+// business router so it cannot be bypassed by any one module's own guard.
+app.use('/api', enforcePasswordChange);
+
 // Mount Institutional API Modules
 app.use('/api/auth', authRoutes);
 // College-wide mentoring dashboard. Registered BEFORE the general `/api/admin`
@@ -127,6 +133,11 @@ app.use('/api/marks', internalMarksRoutes);
 app.use('/api/placements', placementRoutes);
 app.use('/api/achievements', achievementRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
+
+// Ollama-backed AI assistant (role-scoped, advisory only, own-conversation
+// ownership enforced per request). Mounted after the password-change gate, so
+// flagged accounts are refused before reaching it.
+app.use('/api/ai', aiAssistantRoutes);
 
 // Catch-all 404 for unmatched API routes
 app.all('/api/*', (req, res) => {

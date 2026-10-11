@@ -155,6 +155,50 @@ export async function ensureSystemBootstrap(): Promise<void> {
     );
   }
 
+  // 5b. Default Principal account (college-wide, READ-ONLY role).
+  //
+  // Provisioned once, from environment overrides that fall back to the shipped
+  // defaults, and marked `mustChangePassword` so the first login is forced
+  // through a password change. On every later start the existing account and
+  // its stored credential are PRESERVED: the password is never re-hashed from
+  // the environment, the flag is never re-set, and no duplicate is created.
+  // Unlike the Admin block this never throws when the environment is unset —
+  // the defaults make a fresh install immediately usable.
+  const principalUsername = (process.env.PRINCIPAL_USERNAME || 'Principal').trim();
+  const principalEmail = (process.env.PRINCIPAL_EMAIL || 'Principal@ksrce.ac.in').trim();
+  const rawPrincipalPassword = (process.env.PRINCIPAL_PASSWORD || 'Ksrce@1234').trim();
+
+  let principalUser = await User.findOne({
+    $or: [
+      { role: 'PRINCIPAL' },
+      { username: { $regex: new RegExp(`^${principalUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
+      { email: { $regex: new RegExp(`^${principalEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } },
+    ],
+  });
+
+  if (!principalUser) {
+    principalUser = await User.create({
+      username: principalUsername,
+      email: principalEmail,
+      passwordHash: await bcrypt.hash(rawPrincipalPassword, saltRounds),
+      role: 'PRINCIPAL',
+      fullName: 'Principal',
+      isActive: true,
+      mustChangePassword: true,
+    });
+    // Never log the credential itself.
+    console.log(
+      `[Bootstrap] Initialized default Principal account (${principalUser.username}). First login requires a password change.`
+    );
+  } else {
+    // Preserve identity and credential; only guarantee the account remains a
+    // usable, active Principal. `mustChangePassword` is deliberately untouched.
+    if (principalUser.role !== 'PRINCIPAL') principalUser.role = 'PRINCIPAL';
+    if (principalUser.isActive !== true) principalUser.isActive = true;
+    await principalUser.save();
+    console.log(`[Bootstrap] Existing Principal account (${principalUser.username}) preserved (password unchanged).`);
+  }
+
   // 6. Institutional Master Lookups: Standard Feeder Schools (if empty)
   const schoolCount = await School.countDocuments();
   if (schoolCount === 0) {

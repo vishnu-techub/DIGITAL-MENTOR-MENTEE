@@ -22,8 +22,97 @@ Status legend: `PASS` | `PARTIAL` | `FAIL` | `PENDING`
 
 ## Current Status
 
-- **Overall project status:** PASS — Backend and frontend both build clean. All 19 backend test
-  suites green (see Verification). Full 6-state permission machine implemented and enforced
+- **Browser E2E verification + two UI defects fixed (2026-10-11):** a real headless-Chromium
+  click-through over a disposable sandbox (second backend on 5056 over a fresh temp store; SPA
+  rebuilt with a temp `VITE_API_URL`; the live 5050/3000 servers untouched) — **42/42 checks PASS**
+  across all five roles and every section (login/error, admin, student+RBAC, HOD class + marks +
+  Excel template + bulk import + persistence + corrupt-file rejection, ECE cross-department
+  isolation, faculty, Principal forced-password-change + read-only, responsive at three viewports,
+  console/page errors). Two confirmed defects found and fixed: **(G)** a failed login was silent —
+  `AuthContext.login` toggled the global `isLoading` before its `await`, so `App`'s boot gate
+  unmounted `LoginPage` and the 401 error never rendered (removed the global toggle; the button keeps
+  its local state); **(H)** any toast wiped the HOD Marks class/subject/semester selection —
+  `useToast()` returned a non-memoized value recreated on every render, re-running the `loadSubjects`
+  effect that reset the selection (fixed at the root: `ToastContext` value now memoized and
+  actions-only). Full backend matrix re-run: **29/29 EXIT 0** (incl. `runtime` 38/38, `ai-assistant`
+  47/47, `security-hardening` 8/8); backend `npm run build` exit 0; frontend `npm run build` exit 0.
+  Nothing committed; branch `temp` preserved.
+- **Full security, bug-fix & regression audit (2026-10-11):** project-wide pass across every role,
+  page, API, authz rule, upload/PDF/Excel path and the AI-assistant surface, with four confirmed
+  defects fixed and regression-verified end-to-end (nothing committed; branch `temp` preserved).
+  **(A)** Login brute-force protection — new dependency-free `login-rate-limit.middleware.ts`
+  (sliding window of failed attempts per `IP+username`, default 10 per 15 min, plus a per-IP ceiling
+  of 60 — env-tunable via `LOGIN_MAX_ATTEMPTS` / `LOGIN_MAX_IP_ATTEMPTS` / `LOGIN_WINDOW_MS`; only
+  401s push the window, a successful login resets it, 429 + `Retry-After` when full) wired onto
+  `POST /api/auth/login`. **(B)** Marks Excel template department isolation —
+  `generateMarksTemplate` now takes the HOD's `departmentId` and filters the roster inside the query,
+  so one department's template can never leak another department's students; the controller passes
+  `scope.departmentId`. **(C)** Marks bulk import re-validation — `executeMarksImport` re-checks
+  `isMarkType`, semester (integer 1–8) and mark range against stored max server-side and persists the
+  owning `student` on create, closing the client-trusting write path (cross-department rows still
+  refused). **(D)** JWT secret hardening — `JWT_SECRET` is read from the environment (dotenv first),
+  `NODE_ENV=production` fails the process at boot when unset, and the dev fallback is a fresh random
+  secret; the old hardcoded literal is gone. Also fixed a pre-existing record-book defect the audit
+  surfaced: the HTML/CSS PDF renderer passed the raw base64 string (not a Buffer) to `sharp()` in its
+  decode pre-check, so **every valid uploaded image was mislabelled "could not be decoded" and
+  dropped from the record book**; the check now decodes the payload into a Buffer and images embed
+  again (`test:runtime` back to **38/38**). One stale source-contract assertion in
+  `test:faculty-dept-reassign` was updated to match the deliberate, backend-supported permanent
+  deletion safety valve for inactive verified demo HODs (the `DELETE /api/admin/hods/:hodId` endpoint
+  existed; the assertion predated it) — suite back to **18/18**. New `test:security-hardening`
+  (7/7, port 5119) locks in the login throttle (429 + Retry-After, reset on success, per-identity
+  isolation), template department isolation, import persistence + cross-department refusal, the JWT
+  source contract and the middleware wiring. Full affected-suite re-run: **all green** — `hod`,
+  `hod-class-management`, `internal-marks`, `bulk-upload`, `admin`, `admin-routes`, `hod-admin`,
+  `hod-delete`, `principal`, `admin-auth`, `critical`, `document-watermark-runtime`,
+  `evidence-location`, `evidence-location-runtime`, `mentoring-evidence`, `faculty-dept-reassign` all
+  EXIT 0; backend `tsc` + `npm run build` PASS; frontend `tsc --noEmit` PASS. The same-day
+  follow-up pass closed the last environment blocker and the last audit gap (see next bullet).
+- **Full audit follow-up pass (2026-10-11):** nothing new was broken; the initial pass's one
+  unverifiable suite and one audit gap were closed with real fixes and fresh evidence. **(E)**
+  `test:ai-assistant` never needed a live Ollama host — it drives an **in-process mock Ollama**
+  server (`OLLAMA_BASE_URL` pointed at an ephemeral local port before `index.js` imports), passed
+  all 47 checks, and then **hung at teardown** because the imported backend keeps the event loop
+  alive (HTTP listener + 1-hour reminder interval) while the suite only ever called
+  `process.exit(1)`. Added the explicit `process.exit(0)` every other suite that boots
+  `src/index.js` already uses → **47/47 PASS, EXIT 0, port freed**; the AI module itself is
+  untouched. **(F)** Marks **bulk import** was the only privileged write with no audit record
+  (manual saves write `UPDATE_INTERNAL_MARK_HOD`; the bulk path wrote nothing). `executeMarksImport`
+  now writes one `IMPORT_MARKS_BULK` audit row per run — outcome summary + ≤50 register numbers +
+  ≤20 subject codes, never secrets — via the existing failure-tolerant `logAudit()`, and a new
+  regression check (3b) asserts the rows including a fully-refused import still auditing
+  `failed=1/imported=0`. `test:security-hardening` is now **8/8**. Full 28-suite matrix re-run
+  sequentially: **28/28 EXIT 0** (incl. `test:runtime` 38/38, `test:faculty-dept-reassign` 18/18,
+  `test:ai-assistant` 47/47). Backend `tsc --noEmit` + `npm run build` PASS; frontend `tsc
+  --noEmit` + `vite build` PASS (pre-existing chunk-size warning only). Static scans re-confirmed:
+  no secrets outside test fixtures, `JWT_SECRET` env-driven + prod fail-closed, upload path
+  resolution rejects traversal. Two deliberate design decisions remain documented (Pending /
+  Completed): marks **bulk upload** stays outside the admin-controlled mark-entry window
+  (HOD/trusted-uploader path), and the login throttle state is in-process only (single-instance
+  local-store deployment).
+- **Principal role (2026-10-10):** implemented and verified end-to-end. A default **read-only
+  Principal** account is provisioned idempotently at bootstrap (username `Principal`, email
+  `Principal@ksrce.ac.in`, role `PRINCIPAL`, `mustChangePassword: true` on create only; the initial
+  credential is the shipped bootstrap default, overridable via `PRINCIPAL_USERNAME` /
+  `PRINCIPAL_EMAIL` / `PRINCIPAL_PASSWORD`. Later boots never duplicate, re-hash or re-arm the
+  account — verified byte-identical across repeated boots). First login is **forced** through a
+  password change by a signed JWT `mustChangePassword` claim plus a global `/api` middleware that
+  allow-lists only `/health`, `/auth/login`, `/auth/me`, `/auth/change-password` — every protected
+  route (including the college dashboard and all admin/HOD/settings/export routes) answers 403 until
+  the account sets a new one. The change validates current + new + confirmation, rejects mismatch /
+  too-short / same-as-current / wrong-current, persists a fresh bcrypt hash, clears the flag and
+  issues a refreshed token (the old flagged token is inert); only the new password logs in
+  afterwards. The Principal portal is a separate college-wide dashboard (reuses the verified
+  `AdminMentoringDashboard` atop `/api/admin/overview/*`, now `authorize(ADMIN, PRINCIPAL)`) reached
+  only via `/principal/*`; **real gap found and closed by the new suite** — the student PDF endpoint
+  previously fell through to "no rule → allow" for the Principal, so an explicit PRINCIPAL deny now
+  403s downloads by register number and by id. New `test:principal` **53/53**; regressions
+  `test:admin` 23/23, `test:admin-routes` 8/8, `test:admin-auth` 13/13, `test:hod-admin` 22/22;
+  backend `npm run build` PASS; frontend `tsc --noEmit` + `vite build` PASS. No commit/push made.
+- **Overall project status:** PASS — Backend and frontend both build clean. All backend test
+  suites green (29/29 EXIT 0; see Verification), and a real headless-Chromium browser pass
+  click-verifies all five roles end-to-end (42/42; see Completed). Full 6-state permission machine
+  implemented and enforced
   server-side. Grammar & Spelling Assistant implemented and runtime-verified. Persistence layer is
   now local files. Mentoring Records now carry a required Discussion With (student / parent / both)
   and size-capped evidence photos, including Saturday photos stored once and shared
@@ -191,6 +280,547 @@ Status legend: `PASS` | `PARTIAL` | `FAIL` | `PENDING`
 ---
 
 ## Completed
+
+### Full security, bug-fix & regression audit — PASS (2026-10-11)
+
+**Scope.** A single end-to-end security + correctness pass over every role (STUDENT / FACULTY / HOD
+/ ADMIN / PRINCIPAL), every page and API, the authz matrix, uploads, PDF/Excel generation, the
+grammar & AI assistant, reports and exports. All 28 backend suites were re-run sequentially against
+their own ports; every suite that exercises HTTP login, marks templates, marks import, or record-book
+generation was re-run again after the fixes below.
+
+**Findings (confirmed) and fixes.**
+
+1. **Login brute force unlimited (HIGH, fixed).** `POST /api/auth/login` accepted unlimited
+   credential attempts. New dependency-free middleware `backend/src/middleware/login-rate-limit.middleware.ts`
+   tracks a sliding window of failed attempts per `(client IP + username)` (default 10) and per
+   client IP (default 60), both per 15 minutes, env-tunable (`LOGIN_MAX_ATTEMPTS`,
+   `LOGIN_MAX_IP_ATTEMPTS`, `LOGIN_WINDOW_MS`). Only 401 responses count; a 2xx login resets the
+   per-identity counter, so normal use is never locked out. When either threshold is reached the
+   middleware answers **429 with `Retry-After`**. Wired at the top of `auth.routes.ts`
+   (`router.post('/login', loginRateLimit, login)`). Verified by `test:security-hardening` checks
+   4–5 + 7 (also proves per-identity isolation and reset-on-success).
+
+2. **Marks Excel template leaks other departments (HIGH, fixed).** `generateMarksTemplate` ignored
+   the requesting HOD's department when listing students. It now takes `departmentId` and includes it
+   in the roster query (`marks-bulk-upload.service.ts`); `hod.controller.ts` passes
+   `scope.departmentId` (never the request body). A CSE template can no longer contain ECE register
+   numbers. Verified by `test:security-hardening` check 1.
+
+3. **Bulk import trusts client rows (HIGH, fixed).** `executeMarksImport` persisted rows from the
+   Excel client with minimal server-side sanity. It now re-validates each row against the real
+   `MARK_TYPES` (`isMarkType`), requires an integer semester 1–8, and re-checks marks against the
+   stored `maxMarks` range; every created mark/record persists the owning `student` and existing
+   `InternalMark.record` rows are recognised, so repeated imports do not silently orphan rows.
+   Cross-department register numbers are refused 400. Verified by `test:security-hardening` checks
+   2–3.
+
+4. **JWT secret shipped as a hardcoded literal (HIGH, fixed).** `auth.middleware.ts` now resolves
+   `JWT_SECRET` from the environment only (dotenv first), throws at boot in `NODE_ENV=production`
+   when unset, and falls back to a fresh random development-only secret otherwise (logged; sessions
+   do not survive restart in dev without a configured secret). No literal fallback remains. `.env`
+   / `.env.example` already carried the dev secret; the new `LOGIN_*` knobs were documented in
+   `.env.example`. Verified by `test:security-hardening` check 6.
+
+5. **Record book drops every uploaded image (HIGH, pre-existing — fixed).** The HTML/CSS record-book
+   renderer's decode pre-check called `sharp(dataUrl.replace(/^data:.*;base64,/, ''))` — i.e. it
+   passed the **raw base64 string** to a library that treats strings as file paths, so the check
+   always threw and every valid `image/png` document was pushed to the "could not be decoded"
+   annexure notice and never embedded. Root cause proven with a temporary harness (file located,
+   sniffed `image/png`, `sharp(path).metadata()` decoded 137×89 fine; the base64-string call threw).
+   Fixed by passing `Buffer.from(dataUrl.split(',')[1], 'base64')` — a genuine byte buffer — to
+   `sharp().metadata()`. `test:runtime` went from 37/38 to **38/38** (check 23 now embeds the
+   137×89 XObject at its intrinsic size); `test:document-watermark-runtime`, `test:mentoring-evidence`,
+   `test:evidence-location` and `test:evidence-location-runtime` re-verified green.
+
+6. **Stale test contract vs deliberate DELETE_HOD feature (LOW, pre-existing — test updated).**
+   `test:faculty-dept-reassign` asserted `AdminHodManagement.tsx` must not reference
+   `api.admin.deleteHod`. That assertion predated the deliberate, backend-supported permanent
+   deletion safety valve (`DELETE /api/admin/hods/:hodId`, restricted to **inactive verified demo
+   HODs**, with dependents scanned and a `DELETE_HOD` audit event). The assertion now requires the
+   reference to be gated behind `confirmDeleteHod` + `is_verified_demo` instead — i.e. "Remove HOD
+   de-activates" stays enforced while the gated safety valve is accepted. Suite back to **18/18**.
+
+**New suite.** `backend/src/tests/security-hardening.test.ts` (port 5119) — 7/7 PASS: template
+department isolation; import persists owning student; cross-department import refused; login 429 +
+Retry-After; success resets the counter; JWT source contract (no old literal); login middleware wired.
+Script `test:security-hardening` added to `backend/package.json`.
+
+**Regression re-runs (all EXIT 0).** `test:hod`, `test:hod-class-management`, `test:internal-marks`,
+`test:bulk-upload`, `test:admin`, `test:admin-routes`, `test:hod-admin`, `test:hod-delete`,
+`test:principal`, `test:admin-auth`, `test:critical`, `test:document-watermark-runtime`,
+`test:evidence-location`, `test:evidence-location-runtime`, `test:mentoring-evidence`,
+`test:faculty-dept-reassign`, `test:runtime` (38/38), `test:security-hardening` (7/7). Backend
+`tsc --noEmit` + `npm run build` PASS; frontend `tsc --noEmit` PASS.
+
+**Pre-existing / environment-dependent — documented, not changed (the first entry is superseded by
+the follow-up pass below).**
+- OUTDATED (superseded 2026-10-11 — see "Full security audit — follow-up pass" below) —
+  `test:ai-assistant` requires a live Ollama host on `127.0.0.1:11434`. No such host exists in this
+  sandbox; outbound connects hang to timeout, so the suite cannot complete or be verified here. It is
+  an environment dependency, not a code failure. Re-run on a host with Ollama before claiming it.
+- Marks **bulk upload** intentionally bypasses the admin-controlled mark-entry window (an HOD /
+  trusted uploader may import directly). Documented as a design decision; not changed.
+- The login throttle state is in-process only. Correct for the single-instance local-store deployment;
+  a multi-instance deploy must move the bucket to a shared store.
+
+### Full security audit — follow-up pass (2026-10-11, same audit)
+
+**Goal.** Nothing new broke. Two loose ends from the initial pass were closed with real fixes and
+fresh evidence.
+
+1. **`test:ai-assistant` hang — root cause found and fixed (test-harness defect, not app code).**
+   The suite never needed a live Ollama host: it starts an **in-process mock Ollama** (binds
+   `127.0.0.1:0`, sets `OLLAMA_BASE_URL` to that port before `await import('../index.js')`, and the
+   Ollama client reads config on every call). It passed **all 47 checks** and then never exited: the
+   imported Express listener plus the 1-hour meeting-reminder interval keep the Node event loop
+   alive, and the suite only called `process.exit(1)` on failure. Added the explicit
+   `process.exit(0)` after teardown — the same pattern every other backend suite that boots
+   `src/index.js` already uses. Suite now **47/47 PASS, EXIT 0, port 5297 freed**. The earlier
+   "requires a live Ollama at 127.0.0.1:11434" conclusion was based on this hang, not on a real
+   dependency; the AI module itself (`src/modules/ai/*`, `ollama.service.ts`) is untouched.
+2. **Marks bulk import had no audit trail (LOW / audit-integrity, fixed).** Every manual marks save
+   writes `UPDATE_INTERNAL_MARK_HOD` (`hod.controller.ts`), but `executeMarksImport` — the HOD bulk
+   path, including direct-file imports — wrote no audit row, so a bulk load left no record of who /
+   what / when. `marks-bulk-upload.service.ts` now writes one `IMPORT_MARKS_BULK` audit row per run
+   through the existing failure-tolerant `logAudit()`: outcome summary
+   (total/imported/updated/skipped/failed), up to 50 register numbers and up to 20 subject codes,
+   never passwords/tokens/hashes. The write happens after the per-row loop, so a fully-refused
+   import is audited too (`failed=1/imported=0`). `test:security-hardening` grew a regression check
+   (3b) that asserts ≥2 rows after the suite's two import calls and scans them for leaked secret
+   fields. Suite is now **8/8, port 5119**.
+
+**Verification (this follow-up).** Full 28-suite matrix re-run sequentially from `backend`
+   (`npm --prefix backend run test:X`): **28/28 EXIT 0** — including `test:runtime` (38/38),
+   `test:faculty-dept-reassign` (18/18) and `test:ai-assistant` (47/47); `test:security-hardening`
+   8/8. Backend `tsc --noEmit` + `npm run build` PASS; frontend `tsc --noEmit` + `vite build` PASS
+   (pre-existing chunk-size warning only). Static scans (Phase 2): no hardcoded secrets outside test
+   fixtures; `JWT_SECRET` env-driven with production fail-closed and a random dev fallback; upload
+   path resolution rejects traversal (`relativeUploadPath` refuses `.`/`..` and non-`uploads`
+   prefixes, `resolveStoredUploadPath` re-checks containment). Marks bulk-upload security path
+   re-traced: HOD-only routes with `departmentId` claim, template filtered by `scope.departmentId`,
+   10 MB multer cap + xlsx/MIME filter, per-row server-side re-validation (assessment type, semester
+   1–8, stored max range), dept-scoped student re-check, per-row Fail never throws. No probe/temp
+   artifacts left in the repo; branch `temp` uncommitted.
+
+### Full browser E2E verification + two confirmed UI defects fixed — PASS (2026-10-11)
+
+**Method (real browser, disposable sandbox).** The prior passes could not do a
+click-through because no headless-browser package is installed. This pass drove a **real headless
+Chromium over the Chrome DevTools Protocol** using Node 24's built-in global `WebSocket` (no new
+dependency added to the repo). It ran against a **disposable sandbox** so the working environment was
+never touched: a second backend on port **5056** over a freshly seeded temporary store
+(`E2E_SCRATCH=e2e-store`, re-seeded before the run), and the SPA rebuilt to a temp out-dir with
+`VITE_API_URL=http://localhost:5056` and served on port 4174. The developer's live servers (backend
+5050, Vite 3000) were left running and untouched; the sandbox source/store are gitignored and were
+removed afterwards. **Result: 42 / 42 checks PASS** across sections A–J.
+
+**Confirmed defects found and fixed (both by the browser, not by static reading).**
+
+1. **Silent failed login (MEDIUM, pre-existing — also present on `HEAD`).** On the login page a wrong
+   username/password left the form frozen with **no error shown**. `AuthContext.login` called
+   `setIsLoading(true)` synchronously *before* its `await`; `App.tsx`'s top-level `if (isLoading)`
+   gate then swapped the whole tree for the boot screen and **unmounted `LoginPage`**, so the 401's
+   `setError` hit an unmounted component and the freshly remounted page rendered no alert. Fixed by
+   removing the global `setIsLoading(true)` / `finally { setIsLoading(false) }` from `login()` (the
+   submit button keeps its own local `loading` state); `isAuthenticated` is still derived from the
+   user. Verified by the browser: no boot-screen flash, `.login-alert` (`role="alert"`) now renders
+   the failure message, and the typed username is preserved.
+2. **HOD Marks selection wiped by any toast (MEDIUM, confirmed).** On HOD **Marks Management**, any
+   toast — including the harmless "IA1 template downloaded." — cleared the chosen class / subject /
+   semester and re-fetched, which collapsed the action buttons (`.btn-gold`) and made bulk upload
+   fail intermittently. Root cause: `useToast()` returned the **whole context value object**, which
+   `ToastProvider` recreated on every render (it carried the live `toasts` array), so the `toast`
+   identity changed on every toast; the `loadSubjects` effect listed `toast` in its dependency array
+   and therefore re-ran, calling `setSubject('')` / `setSemesterNumber('')`. Fixed at the root in
+   `frontend/src/context/ToastContext.tsx`: the value is now `useMemo`-ised and made **actions-only**
+   (the `toasts` array is only ever read inside the provider for rendering, so it was removed from the
+   public context type/value). Consumers now receive a stable reference; no dependency array needed
+   editing. Verified by the browser: the selection survives the success toast and the following bulk
+   upload succeeds (new regression assertion).
+
+**Browser evidence (sections A–J, 42/42).** A login page render/fields/styling/logo/password-toggle;
+B invalid-credential error alert; C Admin login → dashboard → API-backed Admin Overview → logout
+(clears token); D Student login, profile-complete card, and RBAC refusals (403 on admin/HOD/marks);
+E HOD nav scope, own-department subjects (CS8491), Class Management year cards, admin endpoints
+refused; F the full marks workflow (page opens, subject list, template + bulk actions, Excel template
+download **200 xlsx**, selection survives the toast, valid workbook previews 1 row, import writes
+exactly one row, the imported IA1 mark **persists** as 40, and a corrupt `.xlsx` is rejected with no
+preview); F2 ECE HOD cannot see CSE data; G FACULTY nav + RBAC; H Principal first-login forced
+password change → read-only dashboard, no management surfaces, reads 200 / writes 403; I no horizontal
+overflow at 1440×900, 1024×768 and 390×844 (and login fits at mobile); J zero uncaught page exceptions
+and zero unexpected console errors (the only console output is the deliberate 401/403/400 from the
+negative tests plus the benign notifications 403 during the Principal's forced-password-change window).
+
+**Verification (actual results, this pass).**
+- Browser E2E (headless Chromium, sandbox): **42/42 PASS**, 0 failed.
+- Backend full matrix re-run sequentially from `backend` (`npm --prefix backend run test:X`):
+  **29/29 EXIT 0** — `critical, directory, export, grammar, grammar-safety, grammar-api, hod,
+  hod-class-management, faculty-notifications, admin-routes, hod-admin, hod-delete,
+  faculty-dept-reassign, bulk-upload, admin, mentoring-evidence, document-watermark,
+  document-watermark-runtime, evidence-location, evidence-location-runtime, internal-marks, placement,
+  leaderboard, runtime (38/38), state-machine, admin-auth, principal, ai-assistant (47/47),
+  security-hardening (8/8)`.
+- Backend `npm run build` (tsc) → **exit 0**; frontend `npm run build` (`tsc && vite build`) →
+  **exit 0** (pre-existing chunk-size warning only).
+- Static scans re-confirmed: no hardcoded secrets outside test fixtures; `.env`, `dist/`, `.test-data/`
+  and uploads all gitignored. Changes remain **uncommitted** on branch `temp` (no commit/push made).
+
+### HOD Class Management — Filter Removal & Year-Wise Section Cards — PASS (2026-10-11)
+
+**Scope:** Removed the "Select Academic Year & Year" filter card from HOD Class Management and
+rebuilt the page as a year-wise (I–IV) section-card layout driven entirely by stored department
+data, with distinct **View Class** (roster + analytics) and **Manage Marks** (full marks workflow)
+actions. No unrelated page was changed; all pre-existing uncommitted work was preserved.
+
+**UI — filter card removal:**
+- The entire selection card (heading, Academic Year dropdown, Year dropdown, its loading text and
+  the wrapped year list) was deleted from `HodClassManagement.tsx`. No empty container or leftover
+  spacing remains — the page opens straight into the year sections.
+
+**UI — year-wise section cards:**
+- Sections are fetched once with **no filters** via `api.hod.marks.getClasses()` →
+  `GET /hod/class-management/classes`. The backend groups department students by `(year, section)`,
+  so a section appears exactly once under its year.
+- All four study years (I, II, III, IV) render as clearly separated year blocks with a total
+  section count; a year without data shows its own empty-state message rather than a blank.
+- Each section is an individual card (responsive grid: multi-column desktop, two-column tablet,
+  one-column mobile) showing section name, the derived cohort badge, real student count, real
+  subject count, and bottom-aligned **View Class** / **Manage Marks** buttons in the navy/gold
+  design system.
+- If the department has no classes at all, a single empty state is shown.
+
+**Functionality:**
+- **View Class** opens the class detail view in "Class Overview" mode: analytics panel (total
+  students + IA1/IA2/End-Sem averages and recorded/pending counts, all derived from the marks
+  report) plus the full student roster (register number, name, batch, year, section) with search
+  and loading/empty states.
+- **Manage Marks** opens the same class in "Marks Entry" mode and automatically applies the class
+  by selecting its first available subject + semester. IA1 / IA2 / End-Sem are supported.
+- **Inline editing + saving** is now implemented (previously `readOnly`): edited cells are
+  validated against the max marks, highlighted, and saved via `api.hod.marks.saveMarks`. A blank
+  cell is sent as `null`, which the server treats as "leave the stored mark unchanged" — existing
+  marks are never silently erased.
+- **Excel template download** (IA1/IA2/End Sem), **bulk upload** (`.xlsx` only), **server-side
+  validation preview** (per-row VALID/INVALID/DUPLICATE/ALREADY_EXISTS + reason), **import of VALID
+  rows only**, and **Excel export** are all preserved and wired to the real backend.
+- Existing HOD department scoping is enforced server-side by `loadScope()` on every endpoint.
+
+**Backend / API changes:**
+- `GET /hod/class-management/classes` (`getClassesForYear`) — `academicYear` and `year` are now
+  **optional**; with neither, it returns every year/section for the department. Groups by
+  `(year, section)`, derives the cohort label from the students' batch names, and returns
+  `studentCount` + subjects derived from recorded marks. Invalid `year` → 400.
+- `GET /hod/class-management/students` (`getClassStudents`, new) — department-scoped roster for one
+  `year` + `section` (optional `academicYear`), sorted by register number; no marks returned.
+  Registered in `hod.routes.ts`.
+- `frontend/src/api/client.ts` — `getClasses` now accepts optional params; added `getClassStudents`.
+
+**Components (new / changed):**
+- `frontend/src/pages/hod/HodClassManagement.tsx` — rewritten orchestration (year list + detail).
+- `frontend/src/pages/hod/ClassManagementClassCard.tsx` — card with View/Manage actions.
+- `frontend/src/pages/hod/ClassManagementYearSection.tsx` — new year block.
+- `frontend/src/pages/hod/ClassAnalyticsPanel.tsx` — new analytics panel.
+- `frontend/src/pages/hod/ClassRosterPanel.tsx` — new roster table.
+- `frontend/src/pages/hod/MarksEntryTable.tsx` — new editable marks table.
+- `frontend/src/pages/hod/BulkMarksUploadModal.tsx` — new self-contained upload workflow.
+- `backend/src/modules/hod/hod.controller.ts`, `backend/src/modules/hod/hod.routes.ts`,
+  `backend/src/tests/hod-class-management.test.ts` (new), `backend/package.json` (new script).
+
+**Verification (actual results):**
+- Frontend `npx tsc --noEmit` → **exit 0**.
+- Frontend `npm run build` (`tsc && vite build`) → **exit 0**, 1670 modules transformed.
+- Backend `npx tsc --noEmit` → **exit 0**; `npm run build` → **exit 0**.
+- `test:hod` → **33/33 PASS**; `test:internal-marks` → **97/97 PASS**.
+- New `test:hod-class-management` → **8/8 PASS** (unfiltered grouping exactly once; year filter;
+  cohort filter; invalid-year 400; roster sorted + scoped; roster requires year+section; department
+  boundary; HOD-only role gate).
+- No `@ts-nocheck` under `frontend/src`.
+
+**Remaining issues (not addressed in this scoped pass):**
+- Browser/E2E click-through was not performed — no headless-browser package
+  (puppeteer/playwright) is installed in the repo. Verification is static type-check + production
+  build + backend contract suites only. **Superseded 2026-10-11:** a real headless-Chromium browser
+  pass (no repo dependency added — Node's built-in `WebSocket` + CDP) now click-verifies this page and
+  the whole app; see the "Full browser E2E verification" subsection.
+- Subjects (and therefore the template/bulk-upload subject dropdown) are still derived from
+  existing `InternalMark` records, so a class with no recorded marks has no selectable subject
+  until one is entered — a pre-existing design constraint, unchanged here.
+- Changes remain **uncommitted** (no commit/push made).
+
+### HOD Class Management — Frontend JSX/Parser Repair & TS Hardening — PASS (2026-10-11)
+
+**Scope:** Repair the new HOD `Class Management` page so it compiles cleanly. No backend behavior
+or unrelated page was changed; all existing uncommitted work was preserved.
+
+**Root cause of the parser errors (`frontend/src/pages/hod/HodClassManagement.tsx`):**
+The `return (...)` of `HodClassManagement` used a bare sibling pattern
+`{viewClassDetails && (<div className="class-details-view">…)}` followed by
+`{!viewClassDetails && (<div> … <div className="card">…`. The second conditional opened a wrapper
+`<div>` and a selection-card `<div>` that were **never closed**, and the `{!viewClassDetails && (`
+parenthesis was never closed either — the code jumped straight from the selection form to
+`{/* Upload Modal */} <Modal>`. That single missing `</div></div>)}` cascaded into the reported
+TypeScript/JSX parser errors (`JSX element 'div' has no corresponding closing tag`,
+`'}' expected`, `Unexpected token`, `'</' expected`), plus a secondary
+`Block-scoped variable 'handleViewClass' used before its declaration` because the
+`yearSectionsContent` `useMemo` referenced `handleViewClass` (declared much later) in its
+dependency array. A `// @ts-nocheck` line-1 directive had been added and was masking the file.
+
+**Components refactored:**
+- `frontend/src/pages/hod/ClassManagementClassCard.tsx` — rewritten as a clean presentational card.
+  Now exports the shared `ClassInfo` and `SubjectOption` interfaces, takes a typed
+  `{ cls: ClassInfo; onViewClass: (cls: ClassInfo) => void }` prop and invokes `onViewClass(cls)`
+  (the previous version imported the non-existent `handleViewClass` and wired empty `onClick`s).
+- `frontend/src/pages/hod/HodClassManagement.tsx` — removed `// @ts-nocheck`; replaced the
+  two sibling `&&` blocks with a single `viewClassDetails ? (details) : (main + year list)`
+  ternary so the JSX is balanced; deleted the `yearSectionsContent` `useMemo` (and its TDZ
+  `handleViewClass` reference) and render the I–IV year groups inline via a `YEAR_ORDER.map(...)`
+  that uses the extracted `<ClassManagementClassCard>`; corrected upload modal prop
+  `size="lg"` → `maxWidth="900px"` (the shared `Modal` has no `size` prop); removed unused
+  imports/states. All handlers, effects, analytics and the bulk-upload/template/export workflow
+  are preserved.
+
+**API integration corrections (surfaced once `@ts-nocheck` was removed):**
+- `loadClasses` previously called `api.hod.marks.getStudents({ academicYear, year, section: '' })`,
+  which is the wrong contract (that endpoint requires `subjectCode` + `semesterNumber`) and would
+  never return sections. It now calls the dedicated
+  `api.hod.marks.getClasses({ academicYear, year })` → `GET /hod/class-management/classes`
+  (department-scoped sections + student counts + subjects).
+- `loadClassAnalytics` no longer calls `getStudents` without a subject; it derives `totalStudents`
+  from the selected class `studentCount` and computes per-assessment recorded/pending/average from
+  `api.hod.marks.getReport(...)` (real marks only — no placeholder numbers, pending is
+  `max(0, totalStudents × subjects − recorded)`).
+- `academicYears` extraction now narrows with `(y): y is string => y !== null` (was
+  `(string | null)[]` → `string[]`).
+
+**Verification (actual results):**
+- Frontend `npx tsc --noEmit` → **exit 0** (0 errors).
+- Frontend `npm run build` (`tsc && vite build`) → **exit 0**, 1665 modules, `vite build` PASS.
+- Backend `npx tsc --noEmit` → **exit 0**.
+- `test:hod` → **33/33 PASS**; `test:internal-marks` → **97/97 PASS**.
+- No `@ts-nocheck` remains anywhere under `frontend/src` (grep clean).
+
+**Remaining issues (not addressed in this scoped pass):**
+- Browser/E2E render verification was not performed in this session — no headless-browser package
+  (puppeteer/playwright) is installed in the repo. Static type-check + production build + backend
+  contract suites passed, but a live HOD login → Class Management click-through is still unverified.
+  **Superseded 2026-10-11:** a real headless-Chromium browser pass now performs exactly this
+  click-through; see the "Full browser E2E verification" subsection.
+- The marks table inputs are `readOnly` (display only); true inline editing + `saveMarks` wiring was
+  never implemented and remains outstanding.
+- The original "two cards per class" requirement is currently one section card per class with
+  View/Manage actions; analytics live in the class detail view. Left as-is to avoid scope creep.
+
+### HOD Marks Management — Dropdown Data Loading & UI Fixes — PASS (2026-10-11)
+
+**Root Cause:** The HOD Marks Management page had functional bulk upload, template download, and export features, but they were not visible or usable due to:
+
+1. **Silent API failures** — `loadAcademicYears()` called `api.hod.departmentOverview()` but silently caught errors (only `console.error`). If the API failed (e.g., 403 because HOD has no `departmentId`), `academicYears` stayed empty, leaving all dropdowns empty with no user feedback.
+
+2. **Action buttons hidden until `marksData` loaded** — Download Template, Upload Marks (Bulk), and Export Marks buttons were inside `{marksData && ...}` block, so they only appeared after selecting subject AND semester AND loading marks data.
+
+3. **Template download required `marksData`** — Template buttons were inside `marksData &&` block, but only need subject selection (subjectCode, subjectName, semesterNumber from dropdowns).
+
+4. **Export Marks button missing from Marks Report section** — The Marks Report section had "View Report" but no "Export Marks" button.
+
+5. **Export Marks button disabled** — Button was disabled when `!academicYear`, but academic year dropdown was empty due to silent API failure.
+
+**Changes Made:**
+
+**Frontend** (`frontend/src/pages/hod/HodMarksManagement.tsx`):
+- Added `loadingAcademicYears` state and loading indicator in Academic Year dropdown
+- Added proper error handling with toast notifications in `loadAcademicYears()` instead of silent failures
+- Moved action buttons (Download Template, Upload Marks (Bulk), Export Marks) to show when `subject && semesterNumber` are selected (instead of waiting for `marksData`)
+- Added `templateAssessmentType` state for template dropdown selection
+- Added Export Marks button to Marks Report section
+- Template download now uses `subjects` array to find subject details (works without `marksData`)
+- Upload modal validates subject/semester before opening
+- Upload validation/import use `subjects` array instead of `marksData`
+- Export Marks button added to Marks Report section with proper filters
+- Export Marks button enabled when `academicYear` is selected (not just when `marksData` exists)
+
+**Frontend** (`frontend/src/api/client.ts`): Export report already supports `semesterNumber` parameter (no changes needed)
+
+**Verification:**
+- Backend `tsc --noEmit` → PASS
+- Backend `npm run build` → PASS
+- Frontend `tsc --noEmit` → PASS
+- Frontend `npm run build` → PASS
+- `test:internal-marks` → 97/97 PASS
+- `test:hod` → 33/33 PASS
+- `test:admin-routes` → 8/8 PASS
+- `test:critical` → 12/12 PASS
+- All existing HOD and internal marks features remain functional
+
+### HOD Marks Management: Excel Bulk Upload & Export — PASS (2026-10-11)
+
+**Scope:** Completed the remaining HOD Internal Marks features: Excel bulk upload with validation/preview and Excel export with formatting.
+
+**Backend Changes (`backend/src/modules/hod/`):**
+- New service `marks-bulk-upload.service.ts` with:
+  - `generateMarksTemplate()` — Creates assessment-specific Excel templates with student data pre-populated, instructions sheet, and reference values sheet
+  - `validateMarksExcel()` — Validates uploaded Excel files: checks file format, headers, student register numbers against department class, assessment types (IA1/IA2/END_SEM), marks range (0 to max), duplicate detection, existing marks detection
+  - `executeMarksImport()` — Imports validated rows: upserts marks (creates new or updates existing), enforces department scope, audit logging
+  - `exportMarksExcel()` — Generates formatted Excel export with proper column types, frozen headers, auto-filters, percentage calculation, meaningful filename
+- New endpoints in `hod.controller.ts`:
+  - `GET /hod/marks/template` (enhanced) — Download assessment-specific template
+  - `POST /hod/marks/upload/validate` — Validate Excel file with multer middleware (10MB limit, .xlsx only)
+  - `POST /hod/marks/upload/import` — Import validated rows or direct file import
+  - `GET /hod/marks/export` — Export marks report as formatted Excel
+- Routes in `hod.routes.ts` with multer middleware and HOD-only auth
+
+**Frontend Changes:**
+- Enhanced `HodMarksManagement.tsx` with:
+  - Assessment-type template dropdown (IA1/IA2/END_SEM)
+  - Upload button opening modal with file selection → validation preview → import confirmation
+  - Validation preview table with color-coded status (VALID/INVALID/DUPLICATE/ALREADY_EXISTS), row-level error messages
+  - Import valid rows with progress, summary toast (imported/updated/skipped/failed counts)
+  - Export button with filters (academic year, year, section, subject, semester)
+  - Per-assessment template download
+- API client methods in `frontend/src/api/client.ts`: `validateUpload`, `importRows`, `importUpload`, `exportReport`, `downloadTemplateEnhanced`
+
+**Verification:**
+- Backend `npx tsc --noEmit` → PASS
+- Backend `npm run build` → PASS
+- Frontend `npx tsc --noEmit` → PASS
+- Frontend `npm run build` → PASS
+- `test:internal-marks` → 97/97 PASS
+- `test:hod` → 33/33 PASS
+- `test:admin-routes` → 8/8 PASS
+- `test:critical` → 12/12 PASS
+- All existing HOD and internal marks features remain functional
+
+### HOD Marks Management UI Visibility Fix — PASS (2026-10-11)
+
+**Root Cause:** The HOD Marks Management page had bulk upload, template download, and export functionality implemented but with visibility issues:
+
+1. **Action buttons hidden until marksData loaded** — The Download Template, Upload Marks (Bulk), and Export Marks buttons were inside `{marksData && ...}` block, so they only appeared after selecting a subject AND semester AND loading marks data.
+
+2. **Template download required marksData** — The template dropdown and download button were inside the `marksData &&` block, but they only need subject selection (not marks data).
+
+3. **Export Marks button missing from Marks Report section** — The Marks Report section had "View Report" but no "Export Marks" button.
+
+4. **Template download required marksData** — The template download buttons were inside `marksData &&` block, but they only need subject selection.
+
+**Changes Made:**
+- **Frontend** (`HodMarksManagement.tsx`): 
+  - Moved action buttons (Download Template, Upload Marks (Bulk), Export Marks) to show when `subject && semesterNumber` are selected (instead of waiting for `marksData`)
+  - Added `templateAssessmentType` state for template dropdown selection
+  - Added Export Marks button to Marks Report section
+  - Template download now uses `subjects` array to find subject details (works without marksData)
+- **Frontend** (`api/client.ts`): Export report already supports `semesterNumber` parameter
+
+**Verification:**
+- Backend `tsc --noEmit` → PASS
+- Backend `npm run build` → PASS
+- Frontend `tsc --noEmit` → PASS
+- Frontend `npm run build` → PASS
+- `test:internal-marks` → 97/97 PASS
+- `test:hod` → 33/33 PASS
+- `test:admin-routes` → 8/8 PASS
+- `test:critical` → 12/12 PASS
+- All existing HOD and internal marks features remain functional
+
+### HOD Marks Management & Dashboard Alignment Fixes — PASS (2026-10-10)
+ 
+**Scope:** Implemented comprehensive marks management for HODs and fixed alignment issues in the 30-Day Report section of the HOD Department Reports page.
+ 
+**Backend Changes (`backend/src/modules/hod/`):**
+- Added new endpoints in `hod.controller.ts`:
+  - `GET /hod/marks/subjects` — List subjects for academic year, year, section
+  - `GET /hod/marks/students` — List students with existing marks for a subject
+  - `GET /hod/marks/class-subject` — Get marks data with max marks info
+  - `POST /hod/marks/class-subject/save` — Save marks for multiple students with validation
+  - `GET /hod/marks/template` — Download Excel template for marks entry
+  - `GET /hod/marks/report` — Marks report with filters
+- Added routes in `hod.routes.ts` with HOD-only authentication and department scoping
+- Marks validation enforces: numeric values, non-negative, max limits (IA1: 50, IA2: 50, End Sem: 100)
+- Server-side permission window check via `MarkEntryPermission` before saving
+- Department scoping enforced — HODs can only access their department's students
+- Audit logging for all marks operations
+ 
+**Frontend Changes:**
+- New `HodMarksManagement` component (`frontend/src/pages/hod/HodMarksManagement.tsx`) with:
+  - Academic year, year, section, subject selection flow
+  - Editable marks table with inline editing for IA1, IA2, End Sem
+  - Real-time validation with error display
+  - Save all changes with confirmation summary
+  - Excel template download
+  - Marks report viewer
+- Added "Marks Management" tab to HOD sidebar navigation (`Sidebar.tsx`)
+- Integrated into `HodDashboard.tsx`
+- Added API client methods in `frontend/src/api/client.ts`
+ 
+**HOD Dashboard 30-Day Report Alignment Fixes (`frontend/src/styles/index.css`):**
+- New `.report-metric-grid` and `.report-metric-card` classes for 5 balanced columns on wide screens
+- Responsive grid: fewer columns on tablets/mobile via `auto-fit, minmax(180px, 1fr)`
+- Consistent card heights with `min-height: 120px` and flexbox centering
+- Label/value overlap prevention with `overflow-wrap: anywhere`
+- Weekly Progress section alignment with `.weekly-progress-section`
+- Mentor-wise report table horizontal scrolling with `.mentor-report-table`
+- All using existing design tokens (navy/gold/slate)
+ 
+**Verification:**
+- Backend `npx tsc --noEmit` → PASS
+- Backend `npm run build` → PASS
+- Frontend `npx tsc --noEmit` → PASS
+- Frontend `npm run build` → PASS
+- `test:hod` → 33/33 PASS
+- `test:internal-marks` → 97/97 PASS
+- `test:admin-routes` → 8/8 PASS
+- `test:critical` → 12/12 PASS
+- All existing HOD dashboard features remain functional
+
+**Remaining Work:**
+- None — all planned features completed
+ 
+### Login Page Background Enhancement — Pure CSS premium institutional background with architectural silhouettes, digital network lines, and gold ambient lighting — PASS (2026-10-10)
+
+**Scope:** presentation-only enhancement of the login page background in `frontend/src/styles/index.css`. No auth logic, API integration, validation behavior, or PWA installation flow was modified. The existing two-column layout and all login card functionality preserved. **No external images required** — all effects achieved via CSS gradients and inline SVG data URIs.
+
+**Changes made (`frontend/src/styles/index.css` only):**
+
+1. **Removed the `--login-campus-image` custom property** — Replaced the optional campus photo approach with a fully self-contained CSS-only background.
+
+2. **Multi-layered premium background system** (bottom to top):
+   - **Layer 1 — Deep navy base:** `radial-gradient(ellipse 120% 100% at 0% 0%, var(--color-navy-700) 0%, var(--color-navy-800) 35%, var(--color-navy-900) 65%, var(--color-navy-950) 100%)`
+   - **Layer 2 — Bottom-left gold ambient glow:** `radial-gradient(ellipse 55% 45% at 0% 100%, rgba(212, 175, 55, 0.06) 0%, transparent 70%)`
+   - **Layer 3 — Abstract architectural silhouettes (lower-left):** Inline SVG data URI with layered building/spire shapes at `rgba(255,255,255,0.018)` and `rgba(255,255,255,0.012)` opacity, positioned `left bottom / 100% auto`
+   - **Layer 4 — Digital network lines (tech theme):** Inline SVG data URI with subtle curved connection lines in gold (`rgba(212,175,55,0.025)`) and blue (`rgba(59,130,246,0.02)`) at 0.3/0.2px stroke width
+   - **Layer 5 — Soft vertical fade:** `linear-gradient(180deg, transparent 35%, var(--color-navy-950) 95%)` for content blending
+   - **Layer 6 — Top-right gold accent glow** (via `::before`): enlarged to 480px at `rgba(212, 175, 55, 0.1)`
+   - **Layer 7 — Geometric grid texture** (via `::after`, desktop ≥961px): 70px grid at `rgba(255,255,255,0.012)` with 60% opacity
+   - **Brand panel enhancements:** Enhanced `::after` gold glow (400px), added subtle scanline texture via `::before` (desktop only)
+
+3. **Preserved all existing content and functionality** — College logo, institutional name, hero heading with Cinzel/gold accent, feature list with icons, login card, form fields, password toggle, Sign In button, PWA install button, footer text. Responsive breakpoints (desktop ≥961px two-column, tablet 961–1180px, mobile ≤640px stacked) and `prefers-reduced-motion` guard unchanged.
+
+**Verification:**
+- Frontend `npx tsc --noEmit` → **PASS** (0 errors)
+- Frontend `npm run build` → **PASS** (1662 modules, CSS 101.7 kB, gzip 19.0 kB)
+- Dev server (`npm run dev`) on `http://localhost:3003` → serves HTML + HMR correctly
+- Production preview (`npm run preview`) on `http://localhost:4176` → serves `index-DC3PR_q0.css` + JS bundles correctly
+
+### Login Page Premium Polish — Enhanced two-column design with Cinzel typography, gold accents, and refined form controls — PASS (2026-10-10)
+
+**Scope:** presentation-only enhancement of the existing `LoginPage.tsx` component. No auth logic, API integration, validation behavior, or PWA installation flow was modified. The existing two-column layout (brand panel left, login card right) was preserved and refined.
+
+**Changes made (`frontend/src/styles/index.css` only):**
+
+1. **Added missing `.login-hero-line` and `.login-hero-gold` classes** — The component used these classes for deliberate line breaks in the hero heading (`Digital Mentor–Mentee` on line 1, `Management System` on line 2, with `Mentor–Mentee` highlighted in gold) but they were absent from the stylesheet. Added:
+   - `.login-hero-title` as `flex-direction: column` with `gap: 0.15em` for controlled line spacing
+   - `.login-hero-line` as `display: block` to enforce line breaks
+   - `.login-hero-gold` for the gold accent color on "Mentor–Mentee"
+
+2. **Added missing `.login-password-toggle` class** — The password visibility toggle button (eye/eye-off icon) was rendered but unstyled. Added absolute positioning inside the input (`right: 0.75rem; top: 50%; transform: translateY(-50%)`), hover/focus states with gold focus ring, and proper cursor/transition.
+
+3. **Verified the existing premium design system remains intact** — Deep navy gradient background with restrained gold glows, Cinzel serif for institutional headings, Inter for form labels, 46px touch-friendly inputs with navy border + gold focus ring, 46px navy Sign In button with hover lift + shadow + right arrow icon, PWA button as gold-outline secondary action, responsive breakpoints (desktop ≥961px two-column, tablet 961–1180px, mobile ≤640px stacked), `prefers-reduced-motion` guard.
+
+**Verification:**
+- Frontend `npx tsc --noEmit` → **PASS** (0 errors)
+- Frontend `npm run build` → **PASS** (1662 modules, CSS 99.3 kB, gzip 18.4 kB)
+- Dev server (`npm run dev`) on `http://localhost:3001` → serves HTML + HMR correctly
+- Production preview (`npm run preview`) on `http://localhost:4174` → serves `index-CdQ_sdbj.css` + JS bundles correctly
+- All existing backend regression suites pass: `test:critical` 12/12, `test:admin-routes` 8/8, `test:runtime` 37/38
 
 ### K S R C E watermark is now ALWAYS a true background layer — foreground-overlay regression fixed — PASS (2026-10-10)
 
@@ -1230,6 +1860,26 @@ made.
 
 ## Current Issue
 
+**FIXED and verified — Global Styling Failure Across Entire Website (2026-10-10).**
+
+- **The bug report:** the entire website — not just the login page — was rendering without its expected styling. Pages that previously had dark navy navigation bars, sidebars, cards, spacing, buttons, typography, and responsive layouts now appeared like plain HTML. The frontend production build reportedly succeeded, but the browser still showed the problem.
+
+- **Root cause:** the file `frontend/src/styles/index.css` had been **completely overwritten** and contained only the AI Assistant floating chat styles (~380 lines), losing the entire ~5,200-line KSRCE Design System (navy/gold/slate color primitives, semantic aliases, sidebar, topbar, page headers, buttons, forms, tables, modals, toasts, boot splash, two-column login, student dashboard scoped styles, sidebar independent scrolling fix, leaderboard, bulk upload, and all responsive/accessibility rules). The `main.tsx` correctly imported `./styles/index.css`, but the imported file no longer contained the design system.
+
+- **How it happened:** a recent change (likely an AI-assisted edit) replaced the entire stylesheet instead of appending to it. The git history shows the design system was intact at HEAD (`git show HEAD:frontend/src/styles/index.css` = 5,257 lines), but the working tree had only the AI Assistant block.
+
+- **Fix (`frontend/src/styles/index.css` only):** restored the complete design system from `HEAD` (5,257 lines) and **appended** the AI Assistant styles (~336 lines) at the end, preserving both. The combined file is now 5,593 lines with all CSS variables (`--color-navy-*`, `--color-gold-*`, `--primary-*`, `--accent-*`, etc.), all component classes (`.sidebar`, `.ksrce-header`, `.app-boot`, `.login-page`, `.card`, `.btn`, `.page-header`, `.sd-*`, `.lb-*`, `.bu-*`, `.ai-assistant-*`), and all responsive/media queries intact.
+
+- **Encoding fix:** after appending via PowerShell, the file had UTF-16/null-byte encoding issues causing Vite CSS warnings. Fixed by rewriting the file as clean UTF-8 (`[System.IO.File]::WriteAllText(..., [System.Text.Encoding]::UTF8)`).
+
+- **Verified:**
+  - Frontend `npx tsc --noEmit` → **PASS** (0 errors)
+  - Frontend `npm run build` → **PASS** (1659 modules, CSS 98.7 kB gzip 39.9 kB, all design system selectors confirmed in output)
+  - Dev server (`npm run dev`) on `http://localhost:3000` → serves HTML + HMR, proxies `/api` to backend
+  - Backend (`npm run dev`) on `http://localhost:5050` → health 200, login 200 for `Ksrce@admin` / `Ksrce@1234`
+  - Production preview (`npm run preview`) on `http://localhost:4173` → serves `index-BGcjdteG.css` + JS bundles correctly
+  - Backend regression suites: `test:critical` 12/12, `test:admin-routes` 8/8, `test:runtime` 37/38 (1 pre-existing image-in-PDF failure unrelated)
+
 **FIXED and verified — Admin Mentoring Dashboard stuck on the loading skeleton.**
 
 - **The bug report:** opening Admin → Mentoring Dashboard showed `DashboardSkeleton` indefinitely; the
@@ -1289,6 +1939,44 @@ made.
 ---
 
 ## Last Change
+
+### Principal role end-to-end — read-only college-wide dashboard + forced first-login password change (2026-10-10)
+
+- **Provisioning (`backend/src/database/bootstrap.ts`, section 5b):** a single Principal account is
+  created **if and only if no `PRINCIPAL` user exists** — username/email/password come from
+  `PRINCIPAL_USERNAME` / `PRINCIPAL_EMAIL` / `PRINCIPAL_PASSWORD` (defaults `Principal` /
+  `Principal@ksrce.ac.in`; the default password is the shipped bootstrap default, env-overridable,
+  and never printed in logs). The password is stored bcrypt-hashed only. Later boots **never**
+  duplicate, re-hash, overwrite identity or re-arm the flag — restart ×3 leaves one account and a
+  byte-identical hash.
+- **Forced first-login password change:** the login token carries a signed `mustChangePassword` JWT
+  claim; `enforcePasswordChange` is mounted at `/api` before every business router and allow-lists
+  only `/health`, `/auth/login`, `/auth/me`, `/auth/change-password`. Until the account changes its
+  password, every protected route answers **403** — the college dashboard, admin/HOD routes, settings
+  and all exports included (only the dashboard *reads* to `/auth/me` stay 200 so the UI knows who it
+  is). `changePassword` validates current + new + confirmation (400 on mismatch / too-short /
+  same-as-current / wrong-current), persists a fresh hash, clears the flag and returns a fresh
+  unflagged `{token, user}`; the old flagged token is inert, and afterwards only the new password
+  logs in. Exactly the same flow is enforced in the frontend `ChangePasswordPage` (forced right
+  after login), with show/hide toggles and client-side validation before the API call.
+- **Read-only Principal portal:** a dedicated `/principal/*` route (guarded in `App.tsx`) renders
+  `PrincipalDashboard`, which reuses the verified `AdminMentoringDashboard` over the existing
+  GET-only `/api/admin/overview/*` — widened to `authorize(ADMIN, PRINCIPAL)`. The sidebar gains a
+  PRINCIPAL nav group bound to the `mentoring-*` tabs. The Principal exposes **no** write, manage,
+  approve/reject, HOD/user management, settings, or download/export surface (backend-allow-list
+  enforced), and holds no Admin privileges.
+- **Security gap found and closed by the new suite:** `downloadStudentPdf` had no explicit PRINCIPAL
+  rule, so it fell through to the allow-list's silent *allow* — a Principal could have downloaded any
+  student's record book. An explicit PRINCIPAL deny was added in `pdf.controller.ts`; the suite
+  asserts 403 by register number and by id.
+- **Verification:** new `test:principal` **53/53** — provisioning, idempotency (no duplicate, no
+  reset, no flag re-arm), hashed-only (no plaintext stored/logged), flagged login, pre-change 403
+  matrix + `/auth/me` 200, invalid-change 400 variants, correct change → fresh unflagged token /
+  stale token inert / new password works and old fails, full read-only 403 matrix incl. both PDF
+  denies, restart ×3 preserving one account + hash, and ADMIN/HOD flows untouched. Regressions
+  `test:admin` 23/23, `test:admin-routes` 8/8, `test:admin-auth` 13/13, `test:hod-admin` 22/22;
+  backend `npm run build` PASS; frontend `tsc --noEmit` + `vite build` PASS. PROJECT_PROGRESS.md
+  updated; no commit/push made.
 
 ### K S R C E watermark always behind content — foreground-overlay regression fixed (2026-10-10)
 
@@ -1974,6 +2662,19 @@ made.
 
 ## Pending
 
+- RESOLVED (2026-10-11) — `test:ai-assistant` does not need a live Ollama host: the suite ships an
+  in-process mock Ollama server (env `OLLAMA_BASE_URL` set before the app boots; config read per
+  call). Its failure to complete was a test-teardown defect — after 47/47 checks it never exited
+  because the imported backend's HTTP listener + reminder interval keep the event loop alive and the
+  suite only called `process.exit(1)`. The explicit `process.exit(0)` was added (the pattern every
+  other suite uses) and the suite is verified **47/47 EXIT 0**. The AI module itself (`src/modules/ai/*`,
+  `ollama.service.ts`) was never changed.
+- PENDING — Marks **bulk upload** bypasses the admin-controlled internal-marks entry window (an HOD /
+  trusted uploader may import directly). Deliberately retained as a design decision during the audit;
+  revisit if the college requires the upload path to honour the window.
+- PENDING — Login throttling state lives in-process (per-identity + per-IP failure windows). Correct
+  for the single-instance local-store deployment; a multi-instance deploy must move these buckets to
+  a shared store or the throttle resets per instance.
 - PENDING — The HOD Reassignment tab ends the previous assignment row before creating the new one
   (history retained as `COMPLETED`). Confirm with the HODs that this matches their paper process;
   if they need the original assignment row to remain `ACTIVE` until the new one is accepted, the
@@ -2043,7 +2744,20 @@ new `test:faculty-dept-reassign` suite was added in the Admin features pass that
 `test:bulk-upload` was added in the Bulk Upload pass on 2026-10-09 and
 `test:hod-delete` in the Admin-only permanent HOD deletion pass on 2026-10-09). The
 `test:document-watermark` and `test:document-watermark-runtime` suites were updated in the
-always-behind watermark pass on 2026-10-10 (44/44 and 46/46):
+always-behind watermark pass on 2026-10-10 (44/44 and 46/46), and the new `test:principal` suite
+was added in the Principal role pass the same day (53/53). A **full security/bug-fix/regression
+audit re-run on 2026-10-11** confirmed every suite green: the audit added `test:security-hardening`
+(now 8/8, port 5119 — the follow-up pass same day added the marks bulk-import audit-trail check),
+fixed `test:runtime` back to 38/38 (record-book image embedding — see Completed), and updated one
+stale assertion in `test:faculty-dept-reassign` (18/18). The follow-up pass also root-caused
+`test:ai-assistant`: it never needed a live Ollama host — it drives an in-process mock Ollama and
+only "could not complete" because it hung at teardown (missing explicit exit); now **47/47 EXIT 0**
+(see Completed → follow-up pass). Full 29-suite matrix re-run 2026-10-11 (final, after the browser
+pass; nothing new failed): **29/29 EXIT 0**. A **real headless-Chromium browser pass** the same day
+(disposable sandbox: backend on 5056 over a fresh temp store, SPA rebuilt with a temp `VITE_API_URL`,
+the live 5050/3000 servers untouched) additionally click-verified all five roles and the HOD
+marks/Excel/bulk-upload workflow: **42/42 checks PASS** (see Completed → browser E2E verification; two
+confirmed UI defects fixed — a silent failed login and the toast-driven HOD marks selection reset):
 
 | Script | Result |
 |---|---|
@@ -2069,6 +2783,10 @@ always-behind watermark pass on 2026-10-10 (44/44 and 46/46):
 | `test:hod-delete` | PASS — 17 passed, 0 failed (Admin-only permanent HOD deletion; port 5117) |
 | `test:document-watermark` | PASS — 44 passed, 0 failed (rendered appearance + genuine background layering; scanned and full-page-background pages both behind) |
 | `test:document-watermark-runtime` | PASS — 46 passed, 0 failed (real upload/preview/download/delete + pre-fix regeneration; served bytes proven behind-layered on every page) |
+| `test:principal` | PASS — 53/53 (Principal provisioning/idempotency, forced first-login password change incl. token refresh + stale-token inertness, read-only college-wide dashboard RBAC, explicit student-PDF deny for PRINCIPAL, restart ×3 preservation; ADMIN/HOD unaffected) |
+| `test:security-hardening` | PASS — 8/8 (login throttle 429 + Retry-After, reset on success, per-identity isolation; marks template dept isolation; bulk import persists student + refuses cross-dept rows; **bulk import audit trail**, no secrets in audit rows; JWT source contract; middleware wiring; port 5119) |
+| `test:ai-assistant` | PASS — 47/47 EXIT 0 (Ollama-backed role-aware chat via an in-process mock Ollama — no live host needed: base URL/roles/ownership/context scoping, multi-turn history, provider-failure 500/502/503/504 handling, rate-limit 429, read-only counts unchanged; mock-server port + teardown verified clean) |
+| Browser E2E (headless Chromium, sandbox) | PASS — **42/42** across sections A–J (login render/error, admin, student + RBAC, HOD class + marks + Excel template + bulk import + persistence + corrupt-file rejection, ECE cross-department isolation, faculty, Principal forced-password-change + read-only, no horizontal overflow at 1440×900 / 1024×768 / 390×844, zero page exceptions, zero unexpected console errors) |
 
 `test:faculty-notifications` (`backend/src/tests/faculty-notifications.test.ts`) is the dedicated
 suite for the Faculty → HOD notification work above. It seeds **two** departments (CSE and ECE),
@@ -2294,6 +3012,9 @@ drives `setHodStatus` with no `deleteHod` route; `AdminStudentDocuments` viewer 
 
 | Date | Status | Summary |
 |------|--------|---------|
+| 2026-10-11 | PASS | Full browser E2E verification (+ two confirmed UI defects fixed). **Method:** a real headless Chromium over the Chrome DevTools Protocol driven by Node 24's built-in global `WebSocket` (no new dependency), against a **disposable sandbox** — a second backend on port **5056** over a freshly re-seeded temp store (`E2E_SCRATCH=e2e-store`) and the SPA rebuilt with `VITE_API_URL=http://localhost:5056` served on 4174; the developer's live 5050/3000 servers were untouched and the sandbox source/store (gitignored) were removed afterwards. **Result: 42/42 PASS** across sections A–J — login render/error, Admin dashboard + logout, Student + RBAC (403s), HOD nav/scope/Class Management, the full HOD marks workflow (Excel template **200 xlsx**, valid workbook previews + imports one row, imported IA1 mark **persists** as 40, corrupt `.xlsx` rejected), ECE↔CSE department isolation, Faculty nav + RBAC, Principal forced first-login password change + read-only dashboard (reads 200 / writes 403), no horizontal overflow at 1440/1024/390, zero page exceptions / zero unexpected console errors. **Two confirmed defects found and fixed: (G)** failed login was silent — `AuthContext.login` toggled the global `isLoading` before its `await`, so `App`'s boot gate unmounted `LoginPage` and the 401 error never rendered (removed the global toggle; the submit button keeps its local `loading`). **(H)** any toast wiped the HOD Marks class/subject/semester selection — `useToast()` returned the non-memoized context value recreated on every render (it carried the live `toasts` array), so the `loadSubjects` effect listed `toast` in its deps and re-ran, resetting the selection (fixed at the root: `ToastContext` value memoized + actions-only; `toasts` is only read inside the provider). Full backend matrix re-run sequentially: **29/29 EXIT 0** (incl. `runtime` 38/38, `ai-assistant` 47/47, `security-hardening` 8/8); backend `npm run build` exit 0; frontend `npm run build` exit 0. PROJECT_PROGRESS.md updated; nothing committed (branch `temp` preserved). |
+| 2026-10-11 | PASS | Full security audit — follow-up pass: closed the last environment blocker and the last audit gap. **(E)** `test:ai-assistant` "could not complete" root-caused: the suite ships an **in-process mock Ollama** (no live host needed) and passed all 47 checks, then **hung at teardown** because the imported backend keeps the Node event loop alive (Express listener + 1-hour reminder interval) and the suite only ever called `process.exit(1)`. Added the explicit `process.exit(0)` used by every other suite that boots `src/index.js` → **47/47 EXIT 0, port freed**; AI module untouched. **(F)** Marks **bulk import** had no audit trail (manual saves audit; the HOD bulk path wrote nothing). `executeMarksImport` now writes one `IMPORT_MARKS_BULK` row per run (outcome summary + ≤50 register numbers + ≤20 subject codes, no secrets; fully-refused imports audited too) via the failure-tolerant `logAudit()`; new check 3b raised `test:security-hardening` to **8/8**. Full 28-suite matrix re-run sequentially: **28/28 EXIT 0** (incl. `test:runtime` 38/38, `test:faculty-dept-reassign` 18/18, `test:ai-assistant` 47/47). Static scans: no hardcoded secrets outside test fixtures; `JWT_SECRET` env-driven + prod fail-closed; upload path resolver rejects traversal; marks bulk-upload security path re-traced end to end. Backend `tsc --noEmit` + `npm run build` PASS; frontend `tsc --noEmit` + `vite build` PASS. PROJECT_PROGRESS.md updated; nothing committed (branch `temp` preserved). |
+| 2026-10-10 | PASS | Principal role end-to-end — read-only college-wide dashboard + forced first-login password change. **Provisioning (bootstrap 5b):** one `PRINCIPAL` account created only if none exists (default username `Principal`, email `Principal@ksrce.ac.in`, password = shipped bootstrap default, all env-overridable via `PRINCIPAL_USERNAME` / `PRINCIPAL_EMAIL` / `PRINCIPAL_PASSWORD`); bcrypt-hashed only, never logged; later boots never duplicate / re-hash / re-arm (restart ×3 → one account, byte-identical hash; idempotent). **Forced change:** signed JWT `mustChangePassword` claim + global `/api` middleware allow-listing `/health`, `/auth/login`, `/auth/me`, `/auth/change-password`; every protected route (dashboard, admin/HOD, settings, exports) 403 until a new password is set; `changePassword` validates current+new+confirmation (400 mismatch/short/same/wrong-current), persists fresh hash, returns fresh unflagged `{token, user}`; old flagged token inert; only the new password logs in (old fails). Frontend `ChangePasswordPage` enforces the identical flow right after login. **Read-only portal:** `/principal/*` → `PrincipalDashboard` reusing `AdminMentoringDashboard` over GET-only `/api/admin/overview/*` widened to `authorize(ADMIN, PRINCIPAL)`; sidebar PRINCIPAL nav; no write/manage/approve/settings/download surface. **Real gap closed:** `downloadStudentPdf` lacked an explicit PRINCIPAL rule and silently allowed — explicit PRINCIPAL deny added; suite asserts 403 by register number and by id. New `test:principal` **53/53**; regressions `test:admin` 23/23, `test:admin-routes` 8/8, `test:admin-auth` 13/13, `test:hod-admin` 22/22; backend `npm run build` PASS; frontend `tsc --noEmit` + `vite build` PASS. PROJECT_PROGRESS.md updated; no commit/push made. |
 | 2026-10-09 | PASS | Sidebar independent scrolling + truly-fixed header — whole-page-scroll root cause fixed. **Symptom:** scrolling the sidebar nav moved the whole page (header + sidebar + content) instead of only the nav list. **Root cause (two defects, both confirmed by live `getBoundingClientRect()` probes on a rebuilt bundle):** (1) the global mobile safeguard `html, body { overflow-x: hidden }` in `index.css` turned `html`/`body` into a scroll container and silently disabled `position: sticky` on `.ksrce-header` and the sidebar — they computed `sticky` but the header's `top` was **-600** after `scrollTo(0,600)`, and injecting `overflow-x: visible`/`clip` restored `0` while re-injecting `hidden` broke it again; (2) the sidebar was never height-constrained — `.app-container` is `min-height:100vh` and the rail sits in a flex row that grows with content, so `.sidebar-nav`'s existing `overflow-y:auto` never got a bounded height and never scrolled internally (wheel bubbled to the page); a third related defect: nav rows are column-flex children and were compressed in the collapsed rail instead of overflowing. **Fix (smallest safe CSS/layout change, no new dependency, no new scroll container):** `overflow-x: hidden` → `overflow-x: clip`; appended scoped block in `index.css` — `.sidebar-nav { min-height:0; overflow-x:hidden }`, `.sidebar-nav > .nav-item, .nav-section-label { flex-shrink:0 }`, and `@media (min-width:961px){ .sidebar { position:sticky; top:var(--header-hpx); height/max-height:calc(100vh - var(--header-hpx)); overflow:hidden; align-self:flex-start } }`; **also fixed** `Modal.tsx` + `MentorAiBotModal.tsx` which hardcoded `document.body.style.overflow='auto'` on close (leaving a stale inline overflow on `<body>` after any modal) — now restore the captured previous value. No overflow added around `.main-content`/`.page-body`, so the non-portaled fixed modal overlay is never clipped. **Verified (sandboxed backend + rebuilt SPA, headless Chromium):** 53/53 checks, 0 page/console errors — desktop 1440×900 Admin: rail sticky at y=66, height 834, nav overflows 1211/700 and scrolls (`scrollTop 0→400`) while `scrollY` stays, page at 600 stays 600 when wheeled over nav, wheel over main scrolls 600→900, header `top:0` + rail `top:66` while scrolled, last item not clipped, collapse 76px rail still overflows 1044/717 and scrolls, expand 264px; modal overlay still spans 0,0,1440,900; tablet 900×700 + mobile 390×844 drawers fixed below header, nav scrolls independently, Escape/X/backdrop close, no horizontal overflow; before/after probes reproduce the bug and confirm shipped `overflow-x: clip`; `tsc --noEmit` exit 0; `vite build` PASS (1659 modules, `index-JcWmmNV8.css`); canonical dist rebuilt with all new selectors; no sandbox ports left listening; no commit/push. |
 | 2026-10-09 | PASS | Student Dashboard Overview UI + Profile Completion card "always Incomplete" bug fixed. **Root cause (confirmed by live API evidence + browser):** `StudentDashboard.tsx` read `profile?.profileCompleted`, but `GET /api/students/:id` returns only `profile_completed: 0|1` (+ `profile_completed_at`) — no camelCase key — so the card rendered "Incomplete" even after the student completed and saved their profile (`/auth/me` + the login JWT do carry `profileCompleted`, which is why the wizard gate was fine). **Fix:** new `backend/src/utils/profile-completion.util.ts` — `calculateProfileCompletion(student)` is the single source of truth for the exact four buckets the directory always used (identity / contact / family / school, each 25; `profileCompleted` authoritative → 100) and returns `{percentage, missing[]}`; `getStudents` now calls it (same output, inline copy removed) and `getStudentById` additionally returns `profile_completion_percentage` + `profile_completion_missing` (additive only — keys, statuses, RBAC untouched). `StudentDashboard.tsx` reads `profile_completed === 1` (with a tolerant `profileCompleted` fallback) and shows a real progress bar + "Missing: …" on Incomplete — no invented percentages. **Same-pass UI overhaul** (scoped `sd-` CSS in `index.css`, navy/gold tokens): banner identity block + balanced action column (prominent-but-balanced Download Record Book PDF, aligned Internal Assessment / Mentor Documents), uniform `sd-stat` cards that wrap without overflow, two-column Meeting Schedule / Assigned Faculty Mentor grid that truly collapses ≤900px (was stuck `1fr 1fr`), mentor name/designation/cabin/phone/email shown only when present, readable empty states, compact Saturday Mentoring Log empty state, ≤640px banner stacking. **Verified on the real pipeline** (fresh-store sandbox backend on :5095 seeded via the real API + headless Chromium on rebuilt bundles): before-fix bundle "PROFILE COMPLETION Incomplete" vs after-fix "Complete" at 1440/900/390 with no horizontal overflow; **8/8 cases** — incomplete payload → Incomplete + 25% bar + missing labels; filled+saved (optionals empty) → Complete (`profile_completed=1`, 100%, `missing=[]`); refresh keeps Complete; sign-out/in keeps Complete (fresh token `profileCompleted=true`); save failure (invalid mobile → 400) never flips to Complete; optional empties don't block; response format + directory/detail agreement (100 == 100); 0 console errors. Frontend & backend `tsc --noEmit` exit 0; `vite build` PASS; canonical `frontend/dist` rebuilt with production `VITE_API_URL=localhost:5050`. Suites re-run green — `test:directory` 16/16, `test:critical` 12/12, `test:runtime` 38/38. No commit/push made. |
 | 2026-10-09 | PASS | Admin Mentoring Dashboard — "College Mentoring Split" + "Weekly Progress" **focused refinement** (presentation only, second pass over exactly these two cards). **Split (`CoveragePie`):** refined circular coverage ring with a clear centered % + `COVERAGE` label, track + gold fill from the server's de-duplicated `pie`; two restrained stat rows (green Mentored, red/amber Pending) each showing server count + % in one consistent format; subtle footer `Reporting month: 2026-10 · 1 students, each counted once`; no malformed characters. **Weekly (`WeeklyProgressList`):** consistent `DATE RANGE | BAR | COUNT` rows — compact one-line ranges (`Aug 17 – Aug 23` via `formatWeekRange`, fixed date-label width), low-attention flexible bars on a subtle track with theme fill scaled to the busiest week (gold `is-busiest`), clean zero-session dashed stubs, subtle separators + hover, counts straight from the API. **Layout:** shared `.mentoring-split-wide` grid, equal-height cards, single column ≤1024px; scoped CSS block in `index.css`. **No API/route/RBAC/calculation/data-fetch/unrelated card changed.** Verified on the real pipeline with an isolated backend (:5090, seeded `verify-data2`: pie 1/0/1 = 100%, weekly `[2,3,0,5,1,0,4,6]`, 2 zero weeks) + rebuilt SPA across desktop 1440 / tablet 1024 / mobile 390: equal card heights (394.72/394.72), ring %/arc match API, stat rows match, 8 rows, one-line API-derived date labels, stubs/bar-widths/busiest match, hover feedback, no horizontal overflow on any viewport, no mojibake (overview + Comparison + 30-Day tabs, bundle `·` scan), 0 page/console errors; dept drill-down re-verifies the same components (ring 100%, 8 rows, counts match dept API); empty dept shows the intended EmptyState. **Found (pre-existing, NOT fixed — out of scope):** the 30-Day Report tab never loads data — `loadReport` tests `currentTab === 'reports'` while the parent supplies `mentoring-reports`, so the tab always shows "Report unavailable"; the API itself returns 200 with a full payload. `tsc --noEmit` + `npm run build` PASS. `git add -A` only; no commit/push. |

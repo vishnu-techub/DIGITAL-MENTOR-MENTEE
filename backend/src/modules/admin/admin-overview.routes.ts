@@ -15,16 +15,19 @@ import { ROLES } from '../../config/constants.js';
 
 /**
  * ============================================================================
- * /api/admin/overview — college-wide mentoring dashboard (ADMIN only)
+ * /api/admin/overview — college-wide mentoring dashboard (ADMIN + PRINCIPAL)
  * ============================================================================
  *
  * Mounted as its own router (rather than inside `admin.routes.ts`) so the
  * college-wide mentoring surface is auditable in one place and cannot silently
  * inherit a looser guard from a neighbouring CRUD route.
  *
- * `authenticate` then `authorize(ROLES.ADMIN)` is the SERVER-side guarantee:
- * a HOD, mentor (FACULTY) or Student receives 403 even if the client renders
- * the admin menu. Every handler additionally re-checks `req.user.role`.
+ * `authenticate` then `authorize(ROLES.ADMIN, ROLES.PRINCIPAL)` is the
+ * SERVER-side guarantee: a HOD, mentor (FACULTY) or Student receives 403 even
+ * if the client renders the menu. Every handler additionally re-checks the
+ * role. This is the ONLY surface a PRINCIPAL may read — it is entirely GET and
+ * read-only, carries no mutation, approval, account-management or export route,
+ * and the Principal is not granted a single Admin permission elsewhere.
  *
  * HOD department scoping is unaffected — HODs read `/api/hod/*`, which is a
  * separate router with its own hard `departmentId` scope.
@@ -32,7 +35,7 @@ import { ROLES } from '../../config/constants.js';
 const router = Router();
 
 router.use(authenticate);
-router.use(authorize(ROLES.ADMIN));
+router.use(authorize(ROLES.ADMIN, ROLES.PRINCIPAL));
 
 // Level 1 — Admin college-wide overview (totals + coverage pie + weekly trend)
 router.get('/dashboard', getAdminMentoringDashboard);

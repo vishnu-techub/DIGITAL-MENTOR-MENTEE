@@ -4,7 +4,7 @@ import { api, getAuthToken, setAuthToken, removeAuthToken } from '../api/client'
 export interface User {
   id: string;
   username: string;
-  role: 'ADMIN' | 'HOD' | 'FACULTY' | 'STUDENT';
+  role: 'ADMIN' | 'HOD' | 'FACULTY' | 'STUDENT' | 'PRINCIPAL';
   email: string;
   fullName: string;
   departmentId: string | null;
@@ -15,6 +15,8 @@ export interface User {
   faculty?: any;
   student?: any;
   profileCompleted?: boolean;
+  /** True until a provisioned account (e.g. Principal) sets its own password. */
+  mustChangePassword?: boolean;
 }
 
 interface AuthContextType {
@@ -25,6 +27,11 @@ interface AuthContextType {
   login: (credentials: { username: string; password: string }) => Promise<User>;
   logout: () => void;
   refreshUser: () => Promise<void>;
+  changePassword: (passwords: {
+    currentPassword: string;
+    newPassword: string;
+    confirmPassword: string;
+  }) => Promise<User>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -72,26 +79,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [token]);
 
   const login = async (credentials: { username: string; password: string }): Promise<User> => {
-    setIsLoading(true);
-    try {
-      const res = await api.auth.login(credentials);
-      if (res.success && res.data) {
-        setAuthToken(res.data.token);
-        setTokenState(res.data.token);
-        const normalized = normalizeUser(res.data.user)!;
-        setUser(normalized);
-        return normalized;
-      }
-      throw new Error(res.message || 'Login failed.');
-    } finally {
-      setIsLoading(false);
+    // Deliberately does NOT toggle the app-wide `isLoading` gate. That gate swaps
+    // the entire tree for the boot screen (App.tsx), which unmounts the login page
+    // and discards its local `error` state — so a rejected sign-in showed no
+    // message at all. The login button keeps its own local loading state.
+    const res = await api.auth.login(credentials);
+    if (res.success && res.data) {
+      setAuthToken(res.data.token);
+      setTokenState(res.data.token);
+      const normalized = normalizeUser(res.data.user)!;
+      setUser(normalized);
+      return normalized;
     }
+    throw new Error(res.message || 'Login failed.');
   };
 
   const logout = () => {
     removeAuthToken();
     setTokenState(null);
     setUser(null);
+  };
+
+  /**
+   * Change the signed-in user's password and adopt the freshly issued token.
+   * The backend returns a token whose `mustChangePassword` claim is cleared, so
+   * swapping it in lifts the first-login gate immediately and the old token
+   * (still flagged) can no longer reach any protected route.
+   */
+  const changePassword = async (passwords: {
+    currentPassword: string;
+    newPassword: string;
+    confirmPassword: string;
+  }): Promise<User> => {
+    const res = await api.auth.changePassword(passwords);
+    if (res.success && res.data) {
+      setAuthToken(res.data.token);
+      setTokenState(res.data.token);
+      const normalized = normalizeUser(res.data.user)!;
+      setUser(normalized);
+      return normalized;
+    }
+    throw new Error(res.message || 'Password change failed.');
   };
 
   return (
@@ -104,6 +132,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         login,
         logout,
         refreshUser,
+        changePassword,
       }}
     >
       {children}

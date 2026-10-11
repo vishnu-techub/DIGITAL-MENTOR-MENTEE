@@ -40,7 +40,7 @@ export const LoginPage: React.FC = () => {
 
   return (
     <div className="login-page">
-      {/* Institutional brand panel (desktop) */}
+      {/* Institutional brand / hero panel (left on desktop, below the card on mobile) */}
       <section className="login-brand" aria-hidden="false">
         <div className="login-crest">
           <img src="/ksrce-logo.png" alt="K.S.R. College of Engineering crest" />
@@ -52,7 +52,10 @@ export const LoginPage: React.FC = () => {
 
         <div>
           <h1 className="login-hero-title">
-            Digital <span>Mentor–Mentee</span> Management System
+            <span className="login-hero-line">
+              Digital <span className="login-hero-gold">Mentor–Mentee</span>
+            </span>
+            <span className="login-hero-line">Management System</span>
           </h1>
           <p className="login-hero-text">
             One secure campus platform for mentoring, counselling, academics, placements and
@@ -134,7 +137,7 @@ export const LoginPage: React.FC = () => {
                   id="login-password"
                   type={showPassword ? 'text' : 'password'}
                   className="form-control"
-                  style={{ paddingRight: '2.5rem' }}
+                  style={{ paddingRight: '3rem' }}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter your account password"
@@ -145,20 +148,7 @@ export const LoginPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  style={{
-                    position: 'absolute',
-                    right: '0.75rem',
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                    background: 'transparent',
-                    border: 'none',
-                    color: '#64748B',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: 'pointer',
-                    padding: '4px',
-                  }}
+                  className="login-password-toggle"
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}

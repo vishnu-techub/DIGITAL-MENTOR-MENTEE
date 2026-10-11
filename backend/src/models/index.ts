@@ -22,4 +22,5 @@ export * from './MarkEntryPermission.model.js';
 export * from './MarkUpdateRequest.model.js';
 export * from './Placement.model.js';
 export * from './Achievement.model.js';
+export * from './AiConversation.model.js';
 

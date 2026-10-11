@@ -18,6 +18,7 @@
     "test:grammar-safety": "tsx src/tests/grammar-safety.test.ts",
     "test:grammar-api": "tsx src/tests/grammar-api.test.ts",
     "test:hod": "tsx src/tests/hod-scope.test.ts",
+    "test:hod-class-management": "tsx src/tests/hod-class-management.test.ts",
     "test:faculty-notifications": "tsx src/tests/faculty-notifications.test.ts",
     "test:admin-routes": "tsx src/tests/admin-dashboard-routes.test.ts",
     "test:hod-admin": "tsx src/tests/admin-hod-management.test.ts",
@@ -35,7 +36,10 @@
     "test:leaderboard": "tsx src/tests/leaderboard.test.ts",
     "test:runtime": "tsx src/tests/runtime-verification.test.ts",
     "test:state-machine": "tsx src/tests/record-permission-state.test.ts",
-    "test:admin-auth": "tsx src/tests/admin-auth-bootstrap.test.ts"
+    "test:admin-auth": "tsx src/tests/admin-auth-bootstrap.test.ts",
+    "test:principal": "tsx src/tests/principal-role.test.ts",
+    "test:ai-assistant": "tsx src/tests/ai-assistant.test.ts",
+    "test:security-hardening": "tsx src/tests/security-hardening.test.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -60,6 +64,7 @@
     "@types/multer": "^2.2.0",
     "@types/node": "^22.13.4",
     "@types/sqlite3": "^3.1.11",
+    "mupdf": "^1.28.1",
     "sqlite3": "^5.1.7",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3"

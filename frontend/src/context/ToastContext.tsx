@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
 import { CheckCircle2, AlertTriangle, XCircle, Info, X } from 'lucide-react';
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
@@ -12,7 +12,6 @@ export interface ToastMessage {
 }
 
 interface ToastContextType {
-  toasts: ToastMessage[];
   showToast: (message: string, type?: ToastType, title?: string, duration?: number) => void;
   success: (message: string, title?: string) => void;
   error: (message: string, title?: string) => void;
@@ -77,8 +76,17 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
+  // Memoise the context value so consumers get a stable reference. Otherwise every
+  // toast (which mutates `toasts` state) recreated the value object, re-running any
+  // effect that lists `toast` in its dependency array — e.g. the HOD marks page
+  // wiped the chosen class/subject/semester each time a toast appeared.
+  const contextValue = useMemo(
+    () => ({ showToast, success, error, warning, info, dismissToast }),
+    [showToast, success, error, warning, info, dismissToast]
+  );
+
   return (
-    <ToastContext.Provider value={{ toasts, showToast, success, error, warning, info, dismissToast }}>
+    <ToastContext.Provider value={contextValue}>
       {children}
       {/* Toast Notification Container */}
       <div className="toast-container" role="region" aria-label="Notifications" aria-live="polite">

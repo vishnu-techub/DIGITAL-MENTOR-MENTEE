@@ -383,7 +383,7 @@ export const AdminMentoringDashboard: React.FC<AdminMentoringDashboardProps> = (
   );
 
   useEffect(() => {
-    if (currentTab === 'reports') loadReport(reportWeeks);
+    if (currentTab === 'mentoring-reports') loadReport(reportWeeks);
   }, [currentTab, reportWeeks, loadReport]);
 
   /** Drill-down: Admin -> Department -> HOD -> Mentor -> Student. */
@@ -462,7 +462,7 @@ export const AdminMentoringDashboard: React.FC<AdminMentoringDashboardProps> = (
   const hasCollegeData = (summary?.totalStudents ?? 0) > 0;
 
   if (loading) {
-    return currentTab === 'reports' ? <ReportsSkeleton /> : <DashboardSkeleton />;
+    return currentTab === 'mentoring-reports' ? <ReportsSkeleton /> : <DashboardSkeleton />;
   }
 
   if (loadError) {
