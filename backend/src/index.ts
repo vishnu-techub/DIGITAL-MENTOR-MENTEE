@@ -4,12 +4,14 @@ import helmet from 'helmet';
 import dotenv from 'dotenv';
 import { connectDB, isDBConnected } from './config/database.js';
 import { ensureSystemBootstrap } from './database/bootstrap.js';
+import { warmUpLexicon } from './modules/grammar/vocabulary/lexicon.js';
 import { authenticate, enforcePasswordChange } from './middleware/auth.middleware.js';
 import { serveLegacyUpload, UPLOADS_DIR } from './modules/documents/document.controller.js';
 
 import authRoutes from './modules/auth/auth.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
 import adminOverviewRoutes from './modules/admin/admin-overview.routes.js';
+import subjectRoutes from './modules/subjects/subject.routes.js';
 import referenceRoutes from './modules/reference/reference.routes.js';
 import studentRoutes from './modules/students/student.routes.js';
 import mentorshipRoutes from './modules/mentorship/mentorship.routes.js';
@@ -105,6 +107,9 @@ app.use('/api/auth', authRoutes);
 // router so its ADMIN-only guard is the first handler that ever sees the
 // request, and so the dashboard surface is auditable in one place.
 app.use('/api/admin/overview', adminOverviewRoutes);
+// Subject catalogue (Admin). Registered BEFORE the general `/api/admin` router
+// so `/api/admin/subjects` is matched here first, never by a wildcard below.
+app.use('/api/admin/subjects', subjectRoutes);
 app.use('/api/admin', adminRoutes);
 // Non-admin-safe reference lists (departments / batches) for any authenticated
 // user. Identity dropdowns must not depend on an ADMIN-only route.
@@ -180,7 +185,19 @@ async function startServer() {
     //    and then hourly. It shares its logic with the manual admin endpoint.
     scheduleMeetingNotificationSync();
 
-    // 4. Start listening for incoming API requests
+    // 4. Warm the grammar lexicon once, off the request path, so the first
+    //    writing-assistant request does not pay the one-time dictionary load.
+    //    Non-fatal: if the data files are missing the engine degrades to its
+    //    curated rules and logs a warning (see lexicon.ts).
+    const lexStats = warmUpLexicon();
+    if (lexStats.available) {
+      console.log(
+        `Grammar lexicon ready: ${lexStats.wordCount.toLocaleString()} words, ` +
+          `${lexStats.frequencyCount.toLocaleString()} ranked, loaded in ${lexStats.loadMs}ms.`
+      );
+    }
+
+    // 5. Start listening for incoming API requests
     app.listen(PORT, () => {
       console.log(`============================================================`);
       console.log(`KSRCE Digital Mentor-Mentee Management Server`);

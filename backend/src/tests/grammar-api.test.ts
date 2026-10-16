@@ -229,6 +229,69 @@ async function main() {
   }
 
   // ---------------------------------------------------------------------------
+  console.log('\nMissing verb fragments (screenshot case) are fully corrected');
+  // ---------------------------------------------------------------------------
+  {
+    const input = 'student not attending class regularly';
+    const res = await http('POST', '/api/mentor/grammar-check', {
+      token: mentorToken,
+      body: { text: input },
+    });
+    const d = res.body?.data || res.body;
+    check('the endpoint returns 200', res.status === 200, `status=${res.status}`);
+    check(
+      'the saved suggestion adds the article and auxiliary',
+      d?.corrected === 'The student is not attending classes regularly.',
+      d?.corrected
+    );
+    check('the correction is a real change', d?.hasCorrections === true);
+    check('the original fragment is echoed back', d?.original === input);
+    check('the status is a documented value', d?.status === 'RULES_APPLIED', d?.status);
+  }
+
+  // ---------------------------------------------------------------------------
+  console.log('\nReported "coming" fragment (Mentoring form) is fully corrected');
+  // ---------------------------------------------------------------------------
+  {
+    const cases: Array<[string, string]> = [
+      ['he not coming tomorrow', 'He is not coming tomorrow.'],
+      ['student not coming tomorrow', 'The student is not coming tomorrow.'],
+      ['she not attending class', 'She is not attending class.'],
+      ['they not submitting assignments', 'They are not submitting assignments.'],
+    ];
+    for (const [input, expected] of cases) {
+      const res = await http('POST', '/api/mentor/grammar-check', {
+        token: mentorToken,
+        body: { text: input },
+      });
+      const d = res.body?.data || res.body;
+      check(
+        `HTTP: "${input}" -> "${expected}"`,
+        res.status === 200 && d?.corrected === expected,
+        `status=${res.status} corrected=${JSON.stringify(d?.corrected)}`
+      );
+      check(
+        `HTTP: "${input}" is reported as a real change`,
+        d?.hasCorrections === true && d?.status === 'RULES_APPLIED',
+        `hasCorrections=${d?.hasCorrections} status=${d?.status}`
+      );
+    }
+
+    // A clause that already carries its auxiliary is returned untouched.
+    const already = 'He is not coming tomorrow.';
+    const res = await http('POST', '/api/mentor/grammar-check', {
+      token: mentorToken,
+      body: { text: already },
+    });
+    const d = res.body?.data || res.body;
+    check(
+      'HTTP: an already-correct auxiliary clause is returned unchanged',
+      d?.corrected === already,
+      d?.corrected
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   console.log('\nSpelling correction');
   // ---------------------------------------------------------------------------
   {

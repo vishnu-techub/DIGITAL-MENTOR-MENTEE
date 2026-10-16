@@ -25,6 +25,11 @@ import {
   setHodStatus,
   deleteHod,
 } from './admin-hod.controller.js';
+import {
+  getActiveArrearsDetails,
+  getMentoringSessionsDetails,
+  getUploadedDocumentsDetails,
+} from './admin-dashboard-details.controller.js';
 import { authenticate } from '../../middleware/auth.middleware.js';
 import { authorize } from '../../middleware/rbac.middleware.js';
 import { ROLES } from '../../config/constants.js';
@@ -38,6 +43,14 @@ router.use(authenticate);
 // so the endpoint is Administrator-only. HODs read their own department
 // figures from the department-scoped /api/hod/dashboard surface instead.
 router.get('/dashboard-stats', authorize(ROLES.ADMIN), getAdminDashboardStats);
+
+// Statistics-card detail views. The overview cards are aggregates; clicking one
+// opens the records behind the number. Only the three aggregates that have no
+// college-wide list elsewhere live here — students/faculty reuse the existing
+// paginated directory endpoints. ADMIN-only, like the stats they drill into.
+router.get('/dashboard-details/active-arrears', authorize(ROLES.ADMIN), getActiveArrearsDetails);
+router.get('/dashboard-details/mentoring-sessions', authorize(ROLES.ADMIN), getMentoringSessionsDetails);
+router.get('/dashboard-details/documents', authorize(ROLES.ADMIN), getUploadedDocumentsDetails);
 
 // Departments
 // ADMIN only. Identity dropdowns for other roles now use the non-admin-safe
@@ -56,6 +69,12 @@ router.post('/faculty', authorize(ROLES.ADMIN), createFaculty);
 router.patch('/faculty/:facultyId/toggle-status', authorize(ROLES.ADMIN), toggleFacultyStatus);
 router.patch('/faculty/:facultyId/department', authorize(ROLES.ADMIN), reassignFacultyDepartment);
 router.delete('/faculty/:facultyId', authorize(ROLES.ADMIN), deleteFaculty);
+
+// Faculty / Mentor bulk actions. ADMIN plus HOD scoped to its own department;
+// the controller re-validates every id and re-checks the department per record.
+router.get('/faculty/selection/ids', authorize(ROLES.ADMIN, ROLES.HOD), getFacultySelectionIds);
+router.post('/faculty/bulk-delete', authorize(ROLES.ADMIN, ROLES.HOD), bulkDeleteFaculty);
+router.post('/faculty/bulk-documents', authorize(ROLES.ADMIN, ROLES.HOD), bulkDownloadFacultyDocuments);
 
 // HOD Management — strictly ADMIN. A HOD must never be able to mint, edit,
 // deactivate or delete another HOD, and every handler below re-checks the role
@@ -106,6 +125,11 @@ import {
   downloadErrorReportHandler,
   bulkUploadFileMiddleware,
 } from './bulk-upload.controller.js';
+import {
+  getFacultySelectionIds,
+  bulkDeleteFaculty,
+  bulkDownloadFacultyDocuments,
+} from './faculty-bulk.controller.js';
 
 // Route order matches the client (`api.bulkUpload.*`) and the documented contract:
 // /bulk-upload/<type>/<action>.

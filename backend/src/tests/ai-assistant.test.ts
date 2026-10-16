@@ -29,6 +29,11 @@ process.env.ADMIN_EMAIL = 'admin@ksrce.test';
 process.env.ADMIN_PASSWORD = 'Admin@12345';
 process.env.ADMIN_DEPT = 'Administration';
 
+// This suite pins the OLLAMA provider: the Gemini path is exercised end-to-end
+// by gemini-integration.test.ts. Clearing the key keeps the selection
+// deterministic even if a developer has a real GEMINI_API_KEY in backend/.env.
+process.env.GEMINI_API_KEY = '';
+
 // --- Mock Ollama server -------------------------------------------------------
 let mockState: 'ok' | 'http500' | 'malformed' | 'slow' = 'ok';
 let mockDelay = 0;

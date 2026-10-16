@@ -749,7 +749,11 @@ async function loadPopulateData(specs: PopulateSpec[], model: LocalModel<any>): 
 
       const name = reference.collectionName;
       if (!data.has(name)) {
-        const records = await collection(name).all();
+        // Build the id -> record map from the live snapshot (no deep clone of
+        // the whole referenced collection). `applyPopulate`'s `shape()` clones
+        // each target the moment it is attached to a result, so the shared map
+        // is only ever read.
+        const records = collection(name).snapshot();
         data.set(name, new Map(records.map((record) => [String(record._id), record])));
       }
 
@@ -1069,7 +1073,9 @@ export class LocalQuery<T extends LocalDocument = any, R = T> implements Promise
   // -- internals -------------------------------------------------------------
 
   private async matchingRecords(): Promise<LocalRecord[]> {
-    const records = await collection(this.model.collectionName).all();
+    // Filter over the live snapshot instead of deep-cloning the whole
+    // collection first; `materialise()` clones only the records that survive.
+    const records = collection(this.model.collectionName).snapshot();
     return records.filter((record) => matchesFilter(record, this.filter));
   }
 
@@ -1083,16 +1089,21 @@ export class LocalQuery<T extends LocalDocument = any, R = T> implements Promise
   }
 
   private async materialise(records: LocalRecord[]): Promise<any[]> {
-    const data = this.populateSpecs.length
-      ? await loadPopulateData(this.populateSpecs, this.model)
-      : new Map<string, Map<string, LocalRecord>>();
-
-    return records.map((record) => {
-      const working = cloneRecord(record);
-      projectRecordInto(working, this.projection);
-      if (this.populateSpecs.length) applyPopulate(working, this.populateSpecs, this.model, data);
-      return this.isLean ? working : new LocalDoc(this.model, working, false);
+    // Clone (and project) every matched record synchronously, BEFORE any
+    // populate await. The records come from the live snapshot, so cloning up
+    // front guarantees a concurrent write cannot change a row mid-serialisation.
+    const working = records.map((record) => {
+      const copy = cloneRecord(record);
+      projectRecordInto(copy, this.projection);
+      return copy;
     });
+
+    if (this.populateSpecs.length) {
+      const data = await loadPopulateData(this.populateSpecs, this.model);
+      for (const doc of working) applyPopulate(doc, this.populateSpecs, this.model, data);
+    }
+
+    return working.map((doc) => (this.isLean ? doc : new LocalDoc(this.model, doc, false)));
   }
 
   private async runFindOneAndUpdate(): Promise<any> {
@@ -1574,7 +1585,7 @@ export class LocalModel<T extends LocalDocument = any> {
     const uniqueIndexes = this.schema.indexes.filter((index) => index.unique);
     if (uniqueIndexes.length === 0) return;
 
-    const records = await this.store.all();
+    const records = this.store.snapshot();
     const errors: Record<string, { message: string }> = {};
 
     for (const index of uniqueIndexes) {
@@ -1699,7 +1710,7 @@ export class LocalModel<T extends LocalDocument = any> {
   }
 
   async countDocuments(filter: Filter = {}): Promise<number> {
-    const records = await this.store.all();
+    const records = this.store.snapshot();
     return records.reduce((total, record) => (matchesFilter(record, filter) ? total + 1 : total), 0);
   }
 
@@ -1708,7 +1719,7 @@ export class LocalModel<T extends LocalDocument = any> {
   }
 
   async exists(filter: Filter): Promise<{ _id: LocalId } | null> {
-    const records = await this.store.all();
+    const records = this.store.snapshot();
     const found = records.find((record) => matchesFilter(record, filter));
     return found ? { _id: String(found._id) } : null;
   }
@@ -1727,7 +1738,7 @@ export class LocalModel<T extends LocalDocument = any> {
    * against a file; this only proves the collection is readable.
    */
   async syncIndexes(): Promise<void> {
-    await this.store.all();
+    this.store.snapshot();
   }
 
   /** Wrap an existing object as a document without writing it. */

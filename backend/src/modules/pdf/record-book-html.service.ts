@@ -1,15 +1,27 @@
 /**
  * Student Record Book — structured HTML/CSS → PDF renderer.
  *
- * The record book is now authored as a real HTML document (institutional
- * header, student banner, section tables, photo montages, annexure pages,
- * signature block) styled with print CSS and rendered to PDF through the
- * system-installed headless Chromium (`--print-to-pdf`). No new runtime
- * dependency is required: an already installed browser is reused.
+ * The record book is authored as a real HTML document (student banner, section
+ * tables, photo montages, annexure pages, signature block) styled with print
+ * CSS and rendered to PDF through the system-installed headless Chromium
+ * (`--print-to-pdf`). No new runtime dependency is required: an already
+ * installed browser is reused.
+ *
+ * Repeating institutional header: Chrome's print engine supports neither
+ * `@page` margin boxes nor a `position: fixed` header that reserves its own
+ * space — a fixed header is painted at the CONTENT-box top on every page and
+ * overlaps the body (measured: header text y≈107pt vs body y≈96pt with a
+ * 34mm top margin). A real top margin (see headerBandMm) is therefore reserved
+ * with `@page { margin: <band>mm 12mm 16mm }` and the header (logo + college
+ * name + affiliation + optional document title + subtle divider) is stamped
+ * into that band with pdf-lib onto EVERY rendered page — the same per-page
+ * mechanism already
+ * used for the footer. Long tables, image montages and any content that flows
+ * onto a new page therefore never cover the header.
  *
  * Watermark: a `position: fixed` "background layer" whose text runs
- * bottom-right → top-left (rotate 45deg), centred on every printed page,
- * ~10 % light grey, painted strictly BENEATH the content wrapper
+ * bottom-left → top-right (rotate -45deg, a "/" diagonal), centred on every
+ * printed page, ~0.26 alpha grey, painted strictly BENEATH the content wrapper
  * (content z-index 1 > watermark z-index 0) and inert to pointer events.
  * Verified programmatically (MuPDF pixel diff) so it never darkens any ink.
  *
@@ -33,15 +45,25 @@ import {
 } from '../../config/storage.js';
 import { collectRecordBookData, formatDocDate, type RecordBookData } from './record-book-html.data.js';
 import type { StudentPdfMode } from './record-book-html.data.js';
+import {
+  HEADER_COLORS,
+  drawInstitutionalHeaderJsPdf,
+  drawInstitutionalHeaderPdfLib,
+  headerBandMm as sharedHeaderBandMm,
+  headerRuleMm as sharedHeaderRuleMm,
+} from './institutional-header.js';
 
 // ---------------------------------------------------------------------------
 // Logo (optional)
 // ---------------------------------------------------------------------------
 let logoBase64: string | null = null;
+/** Raw logo bytes — reused by the pdf-lib repeating-header stamp. */
+let logoPngBytes: Buffer | null = null;
 try {
   const logoPath = path.resolve(process.cwd(), 'assets', 'ksrce-logo.png');
   if (fs.existsSync(logoPath)) {
-    logoBase64 = `data:image/png;base64,${fs.readFileSync(logoPath).toString('base64')}`;
+    logoPngBytes = fs.readFileSync(logoPath);
+    logoBase64 = `data:image/png;base64,${logoPngBytes.toString('base64')}`;
   }
 } catch {
   // logo is optional
@@ -56,6 +78,21 @@ const IMAGE_FORMATS: Record<string, string> = {
   'image/jpeg': 'JPEG',
   'image/jpg': 'JPEG',
 };
+
+// ---------------------------------------------------------------------------
+// In-renderer institutional watermark appearance
+// ---------------------------------------------------------------------------
+/**
+ * The `K S R C E` watermark painted as a CSS background layer beneath the
+ * record-book content.
+ *
+ * Grey 0.4 (102/255) at alpha 0.26 composites on white to ≈215 — clearly
+ * visible while staying translucent, so text, tables and certificate content
+ * above it remain fully readable. (The previous 128 grey @ 0.08 alpha
+ * composited to ≈245 and was reported as too pale / effectively invisible.)
+ */
+const WATERMARK_GREY_255 = 102;
+const WATERMARK_CSS_ALPHA = 0.26;
 
 // ---------------------------------------------------------------------------
 // HTML escaping
@@ -74,79 +111,116 @@ const truncate = (value: string, max: number): string =>
 // ---------------------------------------------------------------------------
 // Print stylesheet
 // ---------------------------------------------------------------------------
-const PRINT_CSS = `
+/**
+ * Print stylesheet. `topMm` is the reserved institutional-header band (see
+ * headerBandMm): it depends on whether the mode prints a document-title line.
+ */
+function printCss(topMm: number): string {
+  // The watermark box spans the @page CONTENT box (top margin `topMm`, bottom
+  // margin 16mm), whose centre sits (topMm - 16)/2 mm BELOW the physical A4
+  // page centre; shift the rotated mark up by that half-margin so it is centred
+  // on the actual page.
+  const watermarkShiftMm = (topMm - 16) / 2;
+  return `
   * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  @page { size: A4; margin: 12mm; }
+  /* Top margin reserves the repeating institutional header (stamped per page
+     with pdf-lib after rendering); bottom reserves the page footer. The band is
+     headerBandMm(mode) — 35mm when the header still carries a document-title
+     line, 31.5mm for the full Record Book whose title line was removed, so no
+     leftover gap remains. */
+  @page { size: A4; margin: ${topMm}mm 12mm 16mm; }
   html, body { background: #fff; }
-  body { font-family: 'Segoe UI', Arial, Helvetica, sans-serif; font-size: 9pt; line-height: 1.32; color: #212529; margin: 0; }
+  body { font-family: 'Segoe UI', Arial, Helvetica, sans-serif; font-size: 10pt; line-height: 1.42; color: #212529; margin: 0; }
 
   /* ---- Watermark background layer (never touches content) ---- */
   .wm {
     position: fixed; top: 0; left: 0; right: 0; bottom: 0;
     display: flex; align-items: center; justify-content: center;
     z-index: 0; pointer-events: none; user-select: none;
-    color: rgba(128, 128, 128, 0.08);
+    /* Clearly visible but translucent, so text/tables/certificates stay
+       readable above it (composited on white ≈ luminance 215; the old 0.08
+       alpha composited to ≈245 and read as almost invisible). */
+    color: rgba(${WATERMARK_GREY_255}, ${WATERMARK_GREY_255}, ${WATERMARK_GREY_255}, ${WATERMARK_CSS_ALPHA});
     font-size: 88pt; font-weight: 700; letter-spacing: 4pt;
-    white-space: nowrap; transform: rotate(45deg);
+    white-space: nowrap;
+    /* A position:fixed box here spans the @page CONTENT box (top margin topMm,
+       bottom margin 16mm), whose centre sits (topMm-16)/2 mm BELOW the physical
+       A4 page centre. Shift the rotated mark up by that half-margin so it is
+       centred on the actual page. CSS rotate is positive-clockwise and the y
+       axis points down, so -45deg runs the mark from the BOTTOM-LEFT toward the
+       TOP-RIGHT (a "/" diagonal), drawn strictly under .content. */
+    transform: translateY(-${watermarkShiftMm}mm) rotate(-45deg);
   }
   .content { position: relative; z-index: 1; }
 
-  /* ---- Institutional header ---- */
-  .topbar { background: #0B2545; height: 2.6mm; margin: 0; }
-  .insthead { display: flex; align-items: center; gap: 3mm; padding: 1.5mm 0 0.5mm; }
-  .logo { width: 17mm; height: auto; }
-  .insttext { flex: 1; text-align: center; }
-  .collegename { color: #0B2545; font-size: 13pt; font-weight: 700; letter-spacing: 0.4pt; }
-  .autoline { color: #505050; font-size: 7.2pt; }
-  .addrline { color: #505050; font-size: 7.2pt; }
-  .doctitle { color: #C59B27; font-size: 10pt; font-weight: 700; margin-top: 0.8mm; }
-  .instrule { border-top: 0.5pt solid #C8C8C8; margin: 1mm 0 2.2mm; }
+  /* ---- Institutional header ----
+     No in-flow header is emitted. The college header is stamped into the
+     reserved 31.5mm top band with pdf-lib onto every rendered page (see
+     stampPageFurniture) so it repeats on page 1 and every later page without
+     ever overlapping the body. */
 
   /* ---- Student banner ---- */
-  .banner { background: #F5F7FA; border: 0.4pt solid #0B2545; border-radius: 2mm; padding: 2.2mm 3mm; margin-bottom: 3mm; }
-  .banner .brow { display: flex; justify-content: space-between; gap: 4mm; padding: 0.6mm 0; font-size: 8.6pt; }
-  .banner .bname { color: #0B2545; font-size: 10pt; font-weight: 700; }
+  .banner { background: #F5F7FA; border: 0.4pt solid #0B2545; border-radius: 2mm; padding: 2.6mm 3.2mm; margin-bottom: 4mm; break-inside: avoid; }
+  .banner .brow { display: flex; justify-content: space-between; gap: 4mm; padding: 0.9mm 0; font-size: 9.5pt; }
+  .banner .bname { color: #0B2545; font-size: 11pt; font-weight: 700; }
 
   /* ---- Section tables ---- */
-  table.grid { width: 100%; border-collapse: collapse; margin: 0 0 2.4mm; table-layout: fixed; }
-  table.grid th, table.grid td { border: 0.4pt solid #4b5563; padding: 1.1mm 1.4mm; vertical-align: top; font-size: 8pt; overflow-wrap: break-word; }
+  table.grid { width: 100%; border-collapse: collapse; margin: 0 0 3.2mm; table-layout: fixed; }
+  table.grid th, table.grid td { border: 0.4pt solid #4b5563; padding: 1.5mm 1.8mm; vertical-align: top; font-size: 9pt; overflow-wrap: break-word; }
   table.grid tr { break-inside: avoid; }
+  /* Repeat the section title + column headers at the top of every page a long
+     table continues onto. */
+  table.grid thead { display: table-header-group; }
   table.grid td.b { font-weight: 700; }
-  table.grid td.sub { color: #5c6b73; font-size: 7.4pt; }
+  table.grid td.sub { color: #5c6b73; font-size: 8.2pt; }
   table.grid td.c, table.grid th.c { text-align: center; }
-  table.grid th { background: #283C5A; color: #fff; font-weight: 700; font-size: 7.6pt; text-align: left; }
-  table.grid tr.shrow td { background: #0B2545; color: #fff; font-weight: 700; font-size: 8.2pt; }
+  table.grid th { background: #283C5A; color: #fff; font-weight: 700; font-size: 8.8pt; text-align: left; }
+  table.grid tr.shrow td { background: #0B2545; color: #fff; font-weight: 700; font-size: 9.5pt; }
   table.grid tr.sheadrow td { background: #10233f; color: #fff; font-weight: 700; }
   table.grid tr.subhead td { background: #e2e8f0; color: #0B2545; font-weight: 700; }
   table.grid tr.labrow td { background: #F8F9FA; font-weight: 700; }
   table.grid tr.empty td { font-style: italic; color: #6c757d; text-align: left; }
-  h2.section { break-after: avoid; }
+  h2.section { break-after: avoid; margin: 1.5mm 0 0.8mm; }
 
   /* ---- Photo montage ---- */
   table.photos { width: 100%; border-collapse: separate; border-spacing: 1.6mm; table-layout: fixed; }
-  table.photos td { border: 0.35pt solid #d7d7d7; border-radius: 1.2mm; padding: 1.2mm; vertical-align: top; break-inside: avoid; }
-  .photoframe { height: 42mm; display: flex; align-items: center; justify-content: center; border: 0.3pt solid #e2e2e2; border-radius: 1mm; background: #fff; overflow: hidden; }
+  table.photos td { border: 0.35pt solid #d7d7d7; border-radius: 1.2mm; padding: 1.4mm; vertical-align: top; break-inside: avoid; }
+  .photoframe { height: 44mm; display: flex; align-items: center; justify-content: center; border: 0.3pt solid #e2e2e2; border-radius: 1mm; background: #fff; overflow: hidden; }
   .photoframe img { max-width: 100%; max-height: 100%; object-fit: contain; }
   .photoframe .unavail { color: #964f4f; font-style: italic; font-size: 8pt; }
-  .photocap { font-size: 7pt; color: #5a5a5a; margin-top: 0.8mm; }
+  .photocap { font-size: 7.8pt; color: #5a5a5a; margin-top: 1mm; }
   .photocap .n { font-weight: 700; }
 
   /* ---- Annexure pages ---- */
   section.annexure { break-before: page; }
-  .annexhead { font-weight: 700; font-size: 9.5pt; color: #0B2545; margin: 1mm 0 1mm; }
-  .annexmeta { font-size: 7.6pt; color: #5a5a5a; margin-bottom: 2.5mm; border-bottom: 0.4pt solid #C59B27; padding-bottom: 1.5mm; }
+  .annexhead { font-weight: 700; font-size: 10.5pt; color: #0B2545; margin: 1.5mm 0 2mm; }
+  .annexmeta { font-size: 8.3pt; color: #5a5a5a; margin-bottom: 3mm; border-bottom: 0.4pt solid #C59B27; padding-bottom: 1.6mm; }
   .anneximg { display: flex; align-items: center; justify-content: center; min-height: 190mm; }
   .anneximg img { max-width: 100%; max-height: 245mm; object-fit: contain; }
 
   /* ---- Signature block ---- */
-  .signatures { margin-top: 14mm; }
-  .signatures .sigheading { font-weight: 700; font-size: 8.6pt; color: #0B2545; margin-bottom: 8mm; }
+  /* The "INSTITUTIONAL VERIFICATION & DIGITAL ENDORSEMENT" heading was removed
+     by request; only the signing lines + captions remain. The visible block is
+     drawn at the bottom of the final page by stampPageFurniture; this in-flow
+     copy is an invisible spacer that reserves the room for it. */
+  .signatures { margin-top: 9mm; break-inside: avoid; }
   .sigrow { display: flex; justify-content: space-between; }
-  .sigcol { width: 23%; text-align: left; font-size: 8pt; color: #3c3c3c; }
+  .sigcol { width: 23%; text-align: left; font-size: 9pt; color: #3c3c3c; }
+  .sigline { height: 7.5mm; border-bottom: 0.6pt solid #7c879a; }
+  .sigcol .sigcap { font-size: 8.3pt; color: #444c56; margin-top: 1.6mm; }
+  /* The VISIBLE signatures are drawn onto the FINAL page by pdf-lib
+     (stampPageFurniture) so they sit at a natural resting place near the page
+     bottom instead of floating up under the content. The HTML copy emitted by
+     signatureBlockHtml() is kept — identical geometry, sig-reserve hides it —
+     so the paginator still reserves exactly its height. That guarantees the
+     visible content on the last page always ends above the drawn signature band
+     (never overlapped) and the page count is unchanged. */
+  .sig-reserve { visibility: hidden; }
 
-  .note { font-size: 7.6pt; font-style: italic; color: #6a6a6a; margin: 1mm 0 2mm; }
-  .small { font-size: 7pt; }
+  .note { font-size: 8.3pt; font-style: italic; color: #6a6a6a; margin: 1.2mm 0 2.5mm; }
+  .small { font-size: 7.8pt; }
 `;
+}
 
 // ---------------------------------------------------------------------------
 // Headless browser discovery + rendering
@@ -272,6 +346,19 @@ async function resolveDocumentFiles(data: RecordBookData): Promise<{
 
   for (const d of data.studentDocuments) {
     if (d.is_system_form) continue; // never self-embed this dossier
+
+    // A record with no file attached (an achievement recorded without a scan)
+    // is still a real, listed record — it simply has nothing to reproduce.
+    // Saying so plainly is not the same as claiming a stored file was lost, so
+    // it must never be reported as needing administrator repair.
+    if (!d.file_url) {
+      notEmbedded.push({
+        name: d.file_name,
+        reason:
+          'This record has no certificate file attached, so there is no page to reproduce. The metadata listed in the documents section is the complete official entry.',
+      });
+      continue;
+    }
 
     const located = locateStoredUpload(d.file_url, {
       fileName: d.file_name,
@@ -440,29 +527,35 @@ function gridTable(opts: {
   tailRows?: Cell[][];
   titleClass?: string;
 }): string {
-  const parts: string[] = [];
+  // The section title and the column headers live in a real <thead> so the
+  // browser's print engine REPEATS them at the top of every page a long table
+  // spills onto (otherwise a reader sees unlabelled columns on continuation
+  // pages). <colgroup> must sit at table level, before the <thead>.
+  const head: string[] = [];
   if (opts.title) {
-    parts.push(`<tr class="${opts.titleClass || 'shrow'}"><td colspan="${opts.cols?.length || 99}" class="c">${opts.title}</td></tr>`);
+    head.push(`<tr class="${opts.titleClass || 'shrow'}"><td colspan="${opts.cols?.length || 99}" class="c">${opts.title}</td></tr>`);
   }
   if (opts.cols) {
-    const widths = opts.colWidths?.length === opts.cols.length ? opts.colWidths : [];
-    parts.push(`<colgroup>${widths.map((w) => `<col style="width:${w}%">`).join('')}</colgroup>`);
-    parts.push(`<tr>${opts.cols.map((c) => `<th>${c}</th>`).join('')}</tr>`);
+    head.push(`<tr>${opts.cols.map((c) => `<th>${c}</th>`).join('')}</tr>`);
   }
+  const widths = opts.cols && opts.colWidths?.length === opts.cols.length ? opts.colWidths : [];
+  const colgroup = widths.length
+    ? `<colgroup>${widths.map((w) => `<col style="width:${w}%">`).join('')}</colgroup>`
+    : '';
   const body: Cell[][] = Array.isArray(opts.rows[0]) ? (opts.rows as Cell[][]) : [opts.rows as Cell[]];
-  for (const row of body) parts.push(trHTML(row));
-  for (const row of opts.tailRows || []) parts.push(trHTML(row));
-  return `<table class="grid">${parts.join('')}</table>`;
+  const bodyRows = body.map((row) => trHTML(row)).join('') + (opts.tailRows || []).map((row) => trHTML(row)).join('');
+  const thead = head.length ? `<thead>${head.join('')}</thead>` : '';
+  return `<table class="grid">${colgroup}${thead}<tbody>${bodyRows}</tbody></table>`;
 }
 
-function wrapHtml(body: string, watermark: boolean): string {
+function wrapHtml(body: string, watermark: boolean, topMm: number): string {
   const wm = watermark
     ? '<div class="wm" aria-hidden="true">K S R C E</div>'
     : '';
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <title>KSRCE Digital Mentor–Mentee System — Record Book</title>
-<style>${PRINT_CSS}</style>
+<style>${printCss(topMm)}</style>
 </head><body>
 ${wm}
 <div class="content">
@@ -474,17 +567,9 @@ ${body}
 // ---------------------------------------------------------------------------
 // Header / banner
 // ---------------------------------------------------------------------------
-function headerHtml(docTitle: string): string {
-  const logo = logoBase64 ? `<img class="logo" src="${logoBase64}" alt="KSRCE logo">` : '';
-  return `<div class="topbar"></div>
-<div class="insthead">${logo}<div class="insttext">
-  <div class="collegename">K.S.R. COLLEGE OF ENGINEERING</div>
-  <div class="autoline">(An Autonomous Institution, Approved by AICTE, New Delhi &amp; Affiliated to Anna University, Chennai)</div>
-  <div class="addrline">K.S.R. Kalvi Nagar, Tiruchengode – 637 215, Namakkal District, Tamil Nadu | www.ksrce.ac.in</div>
-  <div class="doctitle">${esc(docTitle)}</div>
-</div></div>
-<div class="instrule"></div>`;
-}
+// NOTE: there is deliberately no in-flow header builder. The college header is
+// stamped into the reserved top band of EVERY rendered page with pdf-lib
+// (stampPageFurniture) so it repeats on page 1 and every later page.
 
 function bannerHtml(data: RecordBookData): string {
   const { student, currentMentor } = data;
@@ -823,15 +908,16 @@ async function photoEvidenceHtml(data: RecordBookData, fullNo: number, docsNo: n
     );
   }
   // rows of two
-  const rows: string[] = [`<tr class="shrow"><td colspan="2" class="c">${esc(heads[0])}</td></tr>`];
+  const bodyRows: string[] = [];
   for (let i = 0; i < cells.length; i += 2) {
-    rows.push(`<tr>${cells[i]}${cells[i + 1] || '<td></td>'}</tr>`);
+    bodyRows.push(`<tr>${cells[i]}${cells[i + 1] || '<td></td>'}</tr>`);
   }
   let note = '';
   if (photos.length < resolveEvidencePhotoCount(data)) {
     note = `<p class="note">Only up to ${EMBED_LIMITS.photos} photos can be carried in one record book; the first ${EMBED_LIMITS.photos} are shown.</p>`;
   }
-  return `<table class="photos">${rows.join('')}</table>${note}`;
+  // <thead> so the montage caption is repeated if the photos span pages.
+  return `<table class="photos"><thead><tr class="shrow"><td colspan="2" class="c">${esc(heads[0])}</td></tr></thead><tbody>${bodyRows.join('')}</tbody></table>${note}`;
 }
 
 function resolveEvidencePhotoCount(data: RecordBookData): number {
@@ -916,14 +1002,23 @@ async function documentAnnexurePagesHtml(data: RecordBookData): Promise<string> 
   return pages.join('');
 }
 
+/**
+ * Invisible, geometry-identical spacer for the signature block.
+ *
+ * The VISIBLE signatures are drawn onto the final page by `stampPageFurniture`
+ * (pdf-lib) so they rest near the bottom of the page. This HTML copy keeps the
+ * exact same box, hidden with `.sig-reserve`, so the paginator still reserves
+ * the block's height: the visible content on the last page therefore always
+ * ends above the drawn signature band (never overlapped) and the document's
+ * page count is unchanged.
+ */
 function signatureBlockHtml(): string {
-  return `<div class="signatures">
-  <div class="sigheading">INSTITUTIONAL VERIFICATION &amp; DIGITAL ENDORSEMENT</div>
+  return `<div class="signatures sig-reserve" aria-hidden="true">
   <div class="sigrow">
-    <div class="sigcol"><div class="small" style="white-space:pre">____________</div>Signature of Mentee</div>
-    <div class="sigcol">____________<div class="small" style="margin-top:1mm">Signature of Mentor</div></div>
-    <div class="sigcol">____________<div class="small" style="margin-top:1mm">Head of Department</div></div>
-    <div class="sigcol">____________<div class="small" style="margin-top:1mm">Principal / Dean</div></div>
+    <div class="sigcol"><div class="sigline"></div><div class="sigcap">Signature of Mentee</div></div>
+    <div class="sigcol"><div class="sigline"></div><div class="sigcap">Signature of Mentor</div></div>
+    <div class="sigcol"><div class="sigline"></div><div class="sigcap">Head of Department</div></div>
+    <div class="sigcol"><div class="sigline"></div><div class="sigcap">Principal / Dean</div></div>
   </div>
 </div>`;
 }
@@ -936,12 +1031,38 @@ export interface RecordBookHtmlOptions {
   watermark?: boolean;
 }
 
+/**
+ * The document title printed in the repeating page header.
+ *
+ * The full Record Book deliberately has NO printed title (the heading
+ * "OFFICIAL DIGITAL MENTOR–MENTEE RECORD BOOK" was removed by request), so this
+ * returns an empty string for `full`; `stampPageFurniture` then skips that line
+ * and the header band stays compact. The other two document types keep their
+ * own titles.
+ */
 export function docTitleFor(mode: StudentPdfMode): string {
   return mode === 'internal'
     ? 'OFFICIAL INTERNAL ASSESSMENT REPORT'
     : mode === 'mentor-documents'
       ? 'MENTORING RECORDS & DOCUMENT ARCHIVE'
-      : 'OFFICIAL DIGITAL MENTOR–MENTEE RECORD BOOK';
+      : '';
+}
+
+/**
+ * Height (mm) of the reserved institutional header band — i.e. the `@page` top
+ * margin and the y of the header divider. Delegates to the shared header spec
+ * (institutional-header.ts) so the Chrome-rendered record book, the annexure
+ * cover sheets and the legacy jsPDF fallback all reserve the identical band:
+ * the two reports that still print a document-title line need 35mm, while the
+ * full Record Book has no title line, so its band shrinks to 31.5mm.
+ */
+export function headerBandMm(mode: StudentPdfMode): number {
+  return sharedHeaderBandMm(!!docTitleFor(mode));
+}
+
+/** y (mm, from the page top) of the header divider for a mode's header band. */
+export function headerRuleMm(mode: StudentPdfMode): number {
+  return sharedHeaderRuleMm(!!docTitleFor(mode));
 }
 
 export async function buildRecordBookHtml(data: RecordBookData, opts: RecordBookHtmlOptions = {}): Promise<string> {
@@ -949,7 +1070,6 @@ export async function buildRecordBookHtml(data: RecordBookData, opts: RecordBook
   const { mode } = data;
   const parts: string[] = [];
 
-  parts.push(headerHtml(docTitleFor(mode)));
   parts.push(bannerHtml(data));
 
   if (mode === 'full') {
@@ -978,7 +1098,7 @@ export async function buildRecordBookHtml(data: RecordBookData, opts: RecordBook
   }
 
   parts.push(signatureBlockHtml());
-  return wrapHtml(parts.join('\n'), watermark);
+  return wrapHtml(parts.join('\n'), watermark, headerBandMm(mode));
 }
 
 // ---------------------------------------------------------------------------
@@ -997,39 +1117,20 @@ async function appendPdfAnnexures(
     return { bytes: baseBytes, basePageCount };
   }
 
-  const primaryColor: [number, number, number] = [11, 37, 69];
-
   for (const [idx, item] of annexurePdfs.entries()) {
     const sheet = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     const sw = sheet.internal.pageSize.getWidth();
     const sh = sheet.internal.pageSize.getHeight();
-    const sm = 14;
+    const sm = 12;
 
-    sheet.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-    sheet.rect(sm, 10, sw - sm * 2, 2.5, 'F');
-    if (logoBase64) {
-      try {
-        sheet.addImage(logoBase64, 'PNG', sm + 2, 13.5, 17, 17);
-      } catch {
-        /* logo optional */
-      }
-    }
-    sheet.setFont('helvetica', 'bold');
-    sheet.setFontSize(14);
-    sheet.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-    sheet.text('K.S.R. COLLEGE OF ENGINEERING', sw / 2, 17, { align: 'center' });
-    sheet.setFont('helvetica', 'normal');
-    sheet.setFontSize(8);
-    sheet.setTextColor(80, 80, 80);
-    sheet.text(`Annexure ${idx + 1}`, sw / 2, 30.5, { align: 'center' });
-    sheet.setDrawColor(200, 200, 200);
-    sheet.setLineWidth(0.5);
-    sheet.line(sm, 33, sw - sm, 33);
+    // Institutional header from the shared spec, with the annexure label as the
+    // header's title line (the annexure label sits below the college name).
+    drawInstitutionalHeaderJsPdf(sheet, { logoBase64 }, { sideMm: sm, hasTitle: true, title: `Annexure ${idx + 1}` });
 
-    let y = 44;
+    let y = 38;
     sheet.setFont('helvetica', 'bold');
     sheet.setFontSize(11);
-    sheet.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+    sheet.setTextColor(HEADER_COLORS.navy.r, HEADER_COLORS.navy.g, HEADER_COLORS.navy.b);
     sheet.text(`ANNEXURE ${idx + 1} OF ${annexurePdfs.length} - ${item.meta.title}`, sm, y, { maxWidth: sw - sm * 2 });
     y += 9;
 
@@ -1062,8 +1163,13 @@ async function appendPdfAnnexures(
     sheet.setFont('helvetica', 'italic');
     sheet.setFontSize(7.5);
     sheet.setTextColor(100, 100, 100);
+    // Name the real upload channel: certificates uploaded through My Progress &
+    // Achievements live in a different store from Student Documents uploads, and
+    // the cover sheet must not claim the wrong origin.
+    const uploadChannel =
+      item.meta.source === 'PROGRESS' ? 'My Progress & Achievements' : 'Student Documents';
     sheet.text(
-      `The following ${item.pages} page(s) are a verbatim reproduction of the document uploaded by the student through Student Documents on ${item.meta.uploaded_on}.`,
+      `The following ${item.pages} page(s) are a verbatim reproduction of the document uploaded by the student through ${uploadChannel} on ${item.meta.uploaded_on}.`,
       sm,
       y,
       { maxWidth: sw - sm * 2 }
@@ -1093,36 +1199,102 @@ async function appendPdfAnnexures(
 }
 
 // ---------------------------------------------------------------------------
-// Per-page footer ("… | Reg No: … | Generated on: …" + "Page X of Y")
-// Stamped with pdf-lib onto the Chrome-rendered document pages only (appended
-// verbatim PDF annexure pages and their sheets keep their own layout).
+// Per-page "furniture": the repeating institutional HEADER (page 1 AND every
+// later page, including pages produced by long tables / image montages) plus
+// the FOOTER ("… | Reg No: … | Generated on: …" + "Page X of Y").
+//
+// Chrome's print engine supports neither @page margin boxes nor a fixed header
+// that reserves its own space, so a real top margin (headerBandMm) is reserved
+// and the header is drawn into that band
+// with pdf-lib on every rendered page. Stamped onto the Chrome-rendered
+// document pages only — appended verbatim PDF annexure pages and their jsPDF
+// sheets keep their own native layout (limit = basePageCount).
 // ---------------------------------------------------------------------------
-async function stampPageFooters(pdfBytes: Uint8Array, registerNumber: string, upToIndex: number): Promise<Uint8Array> {
+interface PageFurnitureInput {
+  registerNumber: string;
+  docTitle: string;
+  mode: StudentPdfMode;
+  /** Stamp only the first `upToIndex` pages (the Chrome-rendered document). */
+  upToIndex: number;
+}
+
+async function stampPageFurniture(pdfBytes: Uint8Array, input: PageFurnitureInput): Promise<Uint8Array> {
   const doc = await PDFDocument.load(pdfBytes);
-  const pages = doc.getPageCount();
-  const limit = Math.min(upToIndex, pages);
+  const pageCount = doc.getPageCount();
+  const limit = Math.min(input.upToIndex, pageCount);
   if (limit <= 0) return pdfBytes;
+
   const helv = await doc.embedFont(StandardFonts.Helvetica);
+  const helvBold = await doc.embedFont(StandardFonts.HelveticaBold);
+  let logo: Awaited<ReturnType<typeof doc.embedPng>> | null = null;
+  if (logoPngBytes) {
+    try {
+      logo = await doc.embedPng(logoPngBytes);
+    } catch {
+      logo = null; // logo is optional; the header still renders without it
+    }
+  }
+
+  const mm = 2.83465; // 1 mm in PDF points
+  const side = 12 * mm;
   const reportDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  const gray = rgb(120 / 255, 120 / 255, 120 / 255);
-  const rule = rgb(210 / 255, 210 / 255, 210 / 255);
 
   for (let i = 0; i < limit; i++) {
     const page = doc.getPage(i);
-    const { width, height } = page.getSize();
-    const yLine = 12 * 2.8346; // 12 mm from the BOTTOM (legacy footer position; pdf-lib y is bottom-anchored)
-    const yText = 8 * 2.8346; // 8 mm from the bottom
-    page.drawLine({ start: { x: 14 * 2.8346, y: yLine }, end: { x: width - 14 * 2.8346, y: yLine }, thickness: 0.4, color: rule });
-    page.drawText(`KSRCE Digital Mentor-Mentee System | Reg No: ${registerNumber} | Generated on: ${reportDate}`, {
-      x: 14 * 2.8346,
+    const { width } = page.getSize();
+
+    // ---- Repeating institutional header (from the ONE shared spec) ----
+    // The full Record Book prints no document-title line, so hasTitle is false
+    // and the band stays compact; the other modes pass their own title.
+    drawInstitutionalHeaderPdfLib(
+      page,
+      { helv, helvBold, logo },
+      { sideMm: 12, hasTitle: input.docTitle.length > 0, title: input.docTitle }
+    );
+
+    // ---- Footer (legacy position/format) ----
+    const rule = rgb(HEADER_COLORS.rule.r / 255, HEADER_COLORS.rule.g / 255, HEADER_COLORS.rule.b / 255);
+    const grayText = rgb(HEADER_COLORS.gray.r / 255, HEADER_COLORS.gray.g / 255, HEADER_COLORS.gray.b / 255);
+    const yLine = 12 * mm; // 12 mm from the BOTTOM (pdf-lib y is bottom-anchored)
+    const yText = 8 * mm; // 8 mm from the bottom
+    page.drawLine({ start: { x: 14 * mm, y: yLine }, end: { x: width - 14 * mm, y: yLine }, thickness: 0.4, color: rule });
+    page.drawText(`KSRCE Digital Mentor-Mentee System | Reg No: ${input.registerNumber} | Generated on: ${reportDate}`, {
+      x: 14 * mm,
       y: yText,
       size: 7.5,
       font: helv,
-      color: gray,
+      color: grayText,
     });
-    const suffix = `Page ${i + 1} of ${pages}`;
+    const suffix = `Page ${i + 1} of ${pageCount}`;
     const suffixWidth = helv.widthOfTextAtSize(suffix, 7.5);
-    page.drawText(suffix, { x: width - 14 * 2.8346 - suffixWidth, y: yText, size: 7.5, font: helv, color: gray });
+    page.drawText(suffix, { x: width - 14 * mm - suffixWidth, y: yText, size: 7.5, font: helv, color: grayText });
+  }
+
+  // ---- Institutional signature block (bottom of the FINAL rendered page) ----
+  // The "INSTITUTIONAL VERIFICATION & DIGITAL ENDORSEMENT" heading was removed
+  // by request; only the signing lines + captions remain. signatureBlockHtml()
+  // emits an invisible, geometry-identical placeholder so the paginator reserves
+  // exactly this band; the visible block is drawn here, anchored near the page
+  // bottom, so a short last page reads as a complete signed document instead of
+  // "content crammed at the top with a void under the signatures". Because the
+  // placeholder reserved the room, the visible content on the final page always
+  // ends above the band drawn below.
+  {
+    const last = doc.getPage(limit - 1);
+    const { width } = last.getSize();
+    const contentW = width - side * 2;
+    const sigLineColor = rgb(124 / 255, 135 / 255, 154 / 255);
+    const sigCapColor = rgb(68 / 255, 76 / 255, 86 / 255);
+    const lineY = 30 * mm;
+    const captionY = 24 * mm;
+    const captions = ['Signature of Mentee', 'Signature of Mentor', 'Head of Department', 'Principal / Dean'];
+    const colW = contentW * 0.23;
+    const gap = (contentW - colW * 4) / 3;
+    for (let i = 0; i < captions.length; i++) {
+      const x = side + i * (colW + gap);
+      last.drawLine({ start: { x, y: lineY }, end: { x: x + colW, y: lineY }, thickness: 0.6, color: sigLineColor });
+      last.drawText(captions[i], { x, y: captionY, size: 8.3, font: helv, color: sigCapColor });
+    }
   }
   return new Uint8Array(await doc.save());
 }
@@ -1142,9 +1314,22 @@ export async function renderRecordBookHtmlToPdf(
 
     // PDF annexures (uploaded certificate PDFs) are appended exactly like the
     // legacy renderer does; images were inlined by the HTML itself.
-    const resolved = await resolveDocumentFiles(data);
-    const appended = await appendPdfAnnexures(base, data, resolved.pdfs);
-    const finalBytes = await stampPageFooters(appended.bytes, data.student.register_number, appended.basePageCount);
+    //
+    // `internal` is a marks-only report: `buildRecordBookHtml` renders no
+    // documents section for it, so its annexures must not be appended either —
+    // the appended pages are the continuation of that section. The legacy jsPDF
+    // renderer already guards both together; this keeps the two renderers
+    // consistent (and stops the unified certificate archive from leaking into
+    // the internal marks report).
+    const pdfAnnexures =
+      data.mode === 'internal' ? [] : (await resolveDocumentFiles(data)).pdfs;
+    const appended = await appendPdfAnnexures(base, data, pdfAnnexures);
+    const finalBytes = await stampPageFurniture(appended.bytes, {
+      registerNumber: data.student.register_number,
+      docTitle: docTitleFor(data.mode),
+      mode: data.mode,
+      upToIndex: appended.basePageCount,
+    });
     return finalBytes;
   } catch (err) {
     console.error('[record-book-html] generation failed, falling back to jsPDF:', (err as Error)?.message);

@@ -468,10 +468,10 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
 
     const errors: Record<string, string> = {};
     if (!counsellingForm.counsellingDate) {
-      errors.counsellingDate = 'Counselling Date is required.';
+      errors.counsellingDate = 'Mentoring Date is required.';
     }
     if (!counsellingForm.categories || counsellingForm.categories.length === 0) {
-      errors.categories = 'Please select at least one Counselling Category.';
+      errors.categories = 'Please select at least one Mentoring Category.';
     }
     if (counsellingForm.discussionWith.length === 0) {
       errors.discussionWith = 'Select who this discussion was held with (Student, Parent, or both).';
@@ -689,7 +689,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
     { id: 'academic', label: '3. Academic Details', icon: <GraduationCap size={16} aria-hidden="true" /> },
     { id: 'parent', label: '4. Parent Details', icon: <Home size={16} aria-hidden="true" /> },
     { id: 'mentor', label: '5. Mentor History', icon: <History size={16} aria-hidden="true" /> },
-    { id: 'counselling', label: '6. Counselling', icon: <BookOpen size={16} aria-hidden="true" /> },
+    { id: 'counselling', label: '6. Mentoring', icon: <BookOpen size={16} aria-hidden="true" /> },
     { id: 'progress', label: '7. Student Progress & Certificates', icon: <Award size={16} aria-hidden="true" /> },
     { id: 'documents', label: '8. Documents / Certificates', icon: <FileCheck size={16} aria-hidden="true" /> },
     { id: 'meeting', label: '9. Meeting History', icon: <CalendarCheck2 size={16} aria-hidden="true" /> },
@@ -919,7 +919,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             onClick={() => handleDownloadPdf('mentor-documents')}
             disabled={pdfDownloading}
             className="btn btn-secondary"
-            title="Download the mentor documents (meetings / counselling / evidence) PDF"
+            title="Download the mentor documents (meetings / mentoring / evidence) PDF"
           >
             <FileCheck size={16} aria-hidden="true" /> Mentor Documents
           </button>
@@ -994,7 +994,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           <PageHeader
             eyebrow={`${student.full_name} • ${student.register_number}`}
             title="Mentee Overview"
-            subtitle="Consolidated snapshot of academic standing, counselling sessions, meetings and documents."
+            subtitle="Consolidated snapshot of academic standing, mentoring sessions, meetings and documents."
           />
 
           {/* 6 Summary Cards — each is a real button so it is keyboard reachable */}
@@ -1054,12 +1054,12 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
               type="button"
               className="card overview-summary-card"
               onClick={() => setActiveTab('counselling')}
-              aria-label={`Counselling Sessions: ${student.counsellingRecords?.length || 0}. Open counselling records.`}
+              aria-label={`Mentoring Sessions: ${student.counsellingRecords?.length || 0}. Open mentoring records.`}
               style={{ borderLeft: '4px solid var(--primary-600)' }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
                 <span className="overview-summary-label">
-                  Counselling Sessions
+                  Mentoring Sessions
                 </span>
                 <BookOpen size={18} color="var(--primary-600)" aria-hidden="true" />
               </div>
@@ -1955,7 +1955,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
           {/* Header & Add Action */}
           <PageHeader
             eyebrow={`${student.full_name} • ${student.register_number}`}
-            title="Mentee Counselling Records & Dossier"
+            title="Mentee Mentoring Records & Dossier"
             subtitle={`Student-specific intervention and corrective action records for ${student.full_name} (${student.register_number}).`}
             actions={
               <>
@@ -2042,7 +2042,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                         ))}
                       </div>
                       <span style={{ fontSize: '0.82rem', color: 'var(--color-slate-500)', fontWeight: 600 }}>
-                        Counselling Date: {c.counselling_date || c.counsellingDate || c.session_date ? new Date(c.counselling_date || c.counsellingDate || c.session_date).toLocaleDateString() : 'Recent'}
+                        Mentoring Date: {c.counselling_date || c.counsellingDate || c.session_date ? new Date(c.counselling_date || c.counsellingDate || c.session_date).toLocaleDateString() : 'Recent'}
                       </span>
                       {c.status && (
                         <span className="badge badge-secondary" style={{ backgroundColor: '#EFF6FF', color: 'var(--color-navy-500)', border: '1px solid var(--color-navy-200)' }}>
@@ -2101,7 +2101,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                           alignItems: 'center',
                           gap: '0.25rem',
                         }}
-                        title="Edit Counselling Record"
+                        title="Edit Mentoring Record"
                       >
                         <Edit2 size={12} /> Edit
                       </button>
@@ -2204,10 +2204,10 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
             <div className="card" style={{ padding: '2.5rem', textAlign: 'center', backgroundColor: '#ffffff' }}>
               <BookOpen size={36} color="#94A3B8" style={{ margin: '0 auto 0.75rem auto' }} />
               <h3 className="section-subheading">
-                No Counselling Records for this Mentee Yet
+                No Mentoring Records for this Mentee Yet
               </h3>
               <p style={{ fontSize: '0.85rem', color: 'var(--color-slate-500)', maxWidth: '440px', margin: '0 auto 1.25rem auto' }}>
-                Counselling sessions are recorded on a student-specific basis. Mentors manually type the counselling details with built-in writing assistance.
+                Mentoring sessions are recorded on a student-specific basis. Mentors manually type the mentoring details with built-in writing assistance.
               </p>
               <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
                 <button
@@ -2231,7 +2231,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
                   onClick={handleOpenAddCounselling}
                   className="btn btn-primary"
                 >
-                  + Add First Counselling Record
+                  + Add First Mentoring Record
                 </button>
               </div>
             </div>
@@ -2648,7 +2648,7 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
       {/* Modal 2: Mentor-Controlled Counselling Form (Manual Entry with Grammar Assist) */}
       {showCounsellingModal && (
         <Modal
-          title={editingCounsellingId ? 'Edit Mentee Counselling Record' : 'Add Mentee Counselling Record'}
+          title={editingCounsellingId ? 'Edit Mentee Mentoring Record' : 'Add Mentee Mentoring Record'}
           isOpen={showCounsellingModal}
           onClose={() => {
             setShowCounsellingModal(false);
@@ -2708,13 +2708,13 @@ export const MentorStudentProfileView: React.FC<MentorStudentProfileViewProps> =
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
             <p style={{ fontSize: '0.8rem', color: 'var(--color-slate-500)', margin: '0 0 1rem 0' }}>
-              Mentor-recorded counselling session for {student.full_name} ({student.register_number}). Enter observations manually. Real-time writing assistance helps detect spelling and grammar without modifying your meaning.
+              Mentor-recorded mentoring session for {student.full_name} ({student.register_number}). Enter observations manually. Real-time writing assistance helps detect spelling and grammar without modifying your meaning.
             </p>
 
             {/* Field 1: Counselling Date * */}
             <div className="form-group" style={{ marginBottom: '1.15rem' }}>
               <label className="form-label" style={{ fontWeight: 700, fontSize: '0.85rem' }}>
-                Counselling Date <span style={{ color: 'var(--color-danger-600)' }}>*</span>
+                Mentoring Date <span style={{ color: 'var(--color-danger-600)' }}>*</span>
               </label>
               <input
                 type="date"

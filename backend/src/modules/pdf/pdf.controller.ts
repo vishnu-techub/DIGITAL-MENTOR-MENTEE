@@ -85,6 +85,13 @@ export async function downloadStudentPdf(req: AuthRequest, res: Response) {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', pdfBytes.byteLength);
+    // The PDF is regenerated per request and its layout can change between
+    // backend versions; never let a browser or intermediary replay a previously
+    // downloaded copy for the same URL (the "old PDF served after a restart"
+    // failure mode).
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
 
     return res.end(Buffer.from(pdfBytes));
   } catch (err: any) {

@@ -4,11 +4,87 @@ import {
   InternalMark,
   Department,
   Batch,
+  Subject,
 } from '../../models/index.js';
 import { toIdString } from '../../utils/access.util.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
 import { MARK_TYPES, MARK_TYPE_MAX, MARK_TYPE_LABEL, MARK_TYPE_FIELD, type InternalMarkType, isMarkType } from '../../models/InternalMark.model.js';
+import { subjectAcademicYears, subjectDepartments, subjectSemesters } from '../../models/Subject.model.js';
 import { parseStrictNumber } from '../../utils/validation.util.js';
+import { toLocalId } from '../../services/localId.js';
+
+/**
+ * Resolved Admin subject-catalogue context for one upload.
+ *
+ * `enforced` is true only once a department has at least one subject in the
+ * catalogue. Until then the legacy free-form subject codes keep working, so a
+ * department that has not been onboarded is never blocked. Once a department
+ * HAS a catalogue, an upload must name one of its ACTIVE subjects — an unknown
+ * or inactive code is refused with a clear message.
+ */
+interface UploadSubjectContext {
+  enforced: boolean;
+  subject: {
+    code: string;
+    name: string;
+    maxMarks: number;
+    passMarks: number;
+    status: string;
+  } | null;
+}
+
+async function resolveUploadSubject(
+  hodDepartmentId: string,
+  subjectCode: string,
+  semesterNumber: number,
+  academicYear?: string
+): Promise<UploadSubjectContext> {
+  let deptId: string;
+  try {
+    deptId = toLocalId(hodDepartmentId);
+  } catch {
+    return { enforced: false, subject: null };
+  }
+
+  // The catalogue is small and the store scans anyway, so read it once and test
+  // the multi-select scope in JavaScript (the store cannot match membership on
+  // a top-level array field).
+  const all = await Subject.find({}).lean<any>();
+  const catalogue = (all as any[]).filter((s) => subjectDepartments(s).includes(deptId));
+
+  if (catalogue.length === 0) {
+    return { enforced: false, subject: null };
+  }
+
+  const code = String(subjectCode || '').trim().toUpperCase();
+  const year = String(academicYear ?? '').trim();
+  const semester = Number(semesterNumber);
+  const match = catalogue.find((s) => {
+    if (String(s.code).toUpperCase() !== code) return false;
+    if (!subjectSemesters(s).includes(semester)) return false;
+    // Only constrain by academic year when the caller supplies one and the
+    // subject actually declares years (it always does for a new record).
+    if (year) {
+      const years = subjectAcademicYears(s);
+      if (years.length > 0 && !years.includes(year)) return false;
+    }
+    return true;
+  });
+
+  return {
+    enforced: true,
+    subject: match
+      ? {
+          code: match.code,
+          name: match.name,
+          maxMarks: Number(match.maxMarks),
+          passMarks: Number(match.passMarks),
+          status: String(match.status || 'ACTIVE').toUpperCase(),
+        }
+      : null,
+  };
+}
+
 
 export type MarksRowStatus = 'VALID' | 'INVALID' | 'DUPLICATE' | 'ALREADY_EXISTS';
 
@@ -330,6 +406,31 @@ export async function validateMarksExcel(
     };
   }
 
+  // Resolve the selected subject against the Admin catalogue. When the
+  // department has a catalogue, an unknown or inactive subject is a blocking
+  // error (the message is surfaced verbatim by the controller).
+  const subjectCtx = await resolveUploadSubject(
+    params.hodDepartmentId,
+    params.subjectCode,
+    params.semesterNumber,
+    params.academicYear
+  );
+  if (subjectCtx.enforced) {
+    const wanted = params.subjectCode.toUpperCase();
+    if (!subjectCtx.subject) {
+      throw new Error(
+        `Subject ${wanted} is not registered in the subject catalogue for this department and semester. ` +
+          `Add it under Admin → Subject Management before uploading marks.`
+      );
+    }
+    if (subjectCtx.subject.status !== 'ACTIVE') {
+      throw new Error(
+        `Subject ${wanted} is inactive and cannot be used for new marks uploads. ` +
+          `Reactivate it in Admin → Subject Management or choose an active subject.`
+      );
+    }
+  }
+
   // Get students for this class to validate against
   const students = await Student.find({})
     .populate('batch')
@@ -473,6 +574,20 @@ export async function validateMarksExcel(
       issues.push(`Semester mismatch: expected ${params.semesterNumber}, got ${semesterVal}`);
     }
 
+    // Subject maximum-marks bounds (only when the selected subject is a known
+    // active catalogue entry). The subject maximum is authoritative for the
+    // subject as a whole, so neither the assessment maximum nor the recorded
+    // mark may exceed it.
+    if (subjectCtx.subject) {
+      const subjectMax = subjectCtx.subject.maxMarks;
+      if (maxMarksVal && maxMarks > subjectMax) {
+        issues.push(`Max Marks (${maxMarks}) exceeds the subject maximum marks (${subjectMax})`);
+      }
+      if (marksObtained !== null && marksObtained > subjectMax) {
+        issues.push(`Marks Obtained (${marksObtained}) exceeds the subject maximum marks (${subjectMax})`);
+      }
+    }
+
     // Check for duplicates in file
     const rowKey = `${regVal}|${assessmentTypeVal}|${semesterVal}`;
     if (regVal && assessmentTypeVal && seenInFile.has(rowKey)) {
@@ -564,13 +679,25 @@ export async function executeMarksImport(
   previewRows: MarksBulkPreviewRow[],
   hodUserId: string,
   hodDepartmentId: string,
-  req: any
+  req: any,
+  academicYear?: string
 ): Promise<MarksImportResponse> {
   const results: MarksImportResultRow[] = [];
   let importedCount = 0;
   let updatedCount = 0;
   let skippedCount = 0;
   let failedCount = 0;
+
+  // Resolve each distinct (subjectCode, semester) once, so a direct POST to
+  // /import cannot bypass the same catalogue enforcement that /validate applies.
+  const subjectCtxCache = new Map<string, UploadSubjectContext>();
+  const ctxFor = async (code: string, sem: number): Promise<UploadSubjectContext> => {
+    const key = `${String(code).toUpperCase()}|${sem}`;
+    if (!subjectCtxCache.has(key)) {
+      subjectCtxCache.set(key, await resolveUploadSubject(hodDepartmentId, code, sem, academicYear));
+    }
+    return subjectCtxCache.get(key)!;
+  };
 
   for (const row of previewRows) {
     if (row.status !== 'VALID' || !row.parsedData) {
@@ -647,6 +774,52 @@ export async function executeMarksImport(
       });
       failedCount++;
       continue;
+    }
+
+    // Subject catalogue enforcement. Once a department has a catalogue, an
+    // upload may only name one of its ACTIVE subjects and must respect the
+    // subject's maximum marks.
+    const subjCtx = await ctxFor(subjectCode, semesterNum);
+    if (subjCtx.enforced) {
+      if (!subjCtx.subject) {
+        results.push({
+          rowNumber: row.rowNumber,
+          registerNumber,
+          studentName: row.studentName,
+          subjectCode,
+          assessmentType,
+          status: 'Failed',
+          reason: `Subject ${subjectCode} is not registered in the subject catalogue for this department and semester`,
+        });
+        failedCount++;
+        continue;
+      }
+      if (subjCtx.subject.status !== 'ACTIVE') {
+        results.push({
+          rowNumber: row.rowNumber,
+          registerNumber,
+          studentName: row.studentName,
+          subjectCode,
+          assessmentType,
+          status: 'Failed',
+          reason: `Subject ${subjectCode} is inactive and cannot be used for new marks uploads`,
+        });
+        failedCount++;
+        continue;
+      }
+      if (Number(maxMarks) > subjCtx.subject.maxMarks) {
+        results.push({
+          rowNumber: row.rowNumber,
+          registerNumber,
+          studentName: row.studentName,
+          subjectCode,
+          assessmentType,
+          status: 'Failed',
+          reason: `Max Marks (${maxMarks}) exceeds the subject maximum marks (${subjCtx.subject.maxMarks})`,
+        });
+        failedCount++;
+        continue;
+      }
     }
 
     try {

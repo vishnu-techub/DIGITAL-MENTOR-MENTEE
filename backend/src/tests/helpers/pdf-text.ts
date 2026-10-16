@@ -69,6 +69,48 @@ export async function pdfText(buf: Buffer): Promise<string> {
   return (await pdfPageTexts(buf)).join('\n');
 }
 
+/** One text line with its bounding box (used to prove header/body separation). */
+export interface PdfTextLine {
+  /** Zero-based page index. */
+  page: number;
+  /** The line's text (may be empty for whitespace-only runs). */
+  text: string;
+  /** Bounding box in PDF points, top-left origin (y grows downward). */
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/**
+ * Every text line on every page with its bounding box. Read from MuPDF's
+ * structured-text JSON so callers can assert geometric facts (e.g. that page
+ * body text begins BELOW the repeating header band and never overlaps it).
+ */
+export async function pdfPageLines(buf: Buffer): Promise<PdfTextLine[]> {
+  assertBuffer(buf);
+  const m = await mupdfModule();
+  const doc = m.Document.openDocument(buf, 'application/pdf');
+  const out: PdfTextLine[] = [];
+  for (let i = 0; i < doc.countPages(); i++) {
+    const json = JSON.parse(doc.loadPage(i).toStructuredText('preserve-whitespace').asJSON());
+    for (const block of json.blocks || []) {
+      for (const line of block.lines || []) {
+        const bb = line.bbox;
+        const [x0, y0, x1, y1] = Array.isArray(bb)
+          ? bb
+          : [bb?.x ?? 0, bb?.y ?? 0, (bb?.x ?? 0) + (bb?.w ?? 0), (bb?.y ?? 0) + (bb?.h ?? 0)];
+        out.push({ page: i, text: value(line.text), x0, y0, x1, y1 });
+      }
+    }
+  }
+  return out;
+}
+
+function value(v: unknown): string {
+  return typeof v === 'string' ? v : v == null ? '' : String(v);
+}
+
 /**
  * Image XObjects declared anywhere in the document.
  *

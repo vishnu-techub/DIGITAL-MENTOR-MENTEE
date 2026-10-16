@@ -1,7 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../api/client';
-import { Bot, X, Send, Plus, Trash2, History, RefreshCw, MessageSquare, Loader2 } from 'lucide-react';
+import { X, Send, Plus, Trash2, History, MessageSquare, Loader2 } from 'lucide-react';
+
+/** The 3D robot from the supplied reference image (verbatim copy, see PROJECT_PROGRESS.md). */
+const ROBOT_IMAGE = '/assets/kavitha-3d-robot.png';
+/** Intrinsic size of the reference image, used to reserve space and avoid layout shift. */
+const ROBOT_IMAGE_WIDTH = 385;
+const ROBOT_IMAGE_HEIGHT = 405;
 
 interface ChatMessage {
   id: string;
@@ -48,7 +54,7 @@ const ROLE_SUGGESTIONS: Record<string, string[]> = {
   ],
   FACULTY: [
     'Summarize my mentees progress',
-    'Suggest counselling discussion points',
+    'Suggest mentoring discussion points',
     'Give study improvement ideas for a mentee',
   ],
   STUDENT: [
@@ -75,6 +81,8 @@ export const AiAssistant: React.FC = () => {
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retryText, setRetryText] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<'quota' | 'offline' | 'timeout' | 'busy' | 'generic' | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -179,8 +187,16 @@ export const AiAssistant: React.FC = () => {
   const handleSend = async () => {
     if (!input.trim() || isSending) return;
     const text = input.trim();
+    await sendMessage(text);
+  };
+
+  const sendMessage = async (rawText: string) => {
+    const text = rawText.trim();
+    if (!text || isSending) return;
     setInput('');
     setError(null);
+    setErrorKind(null);
+    setRetryText(null);
     setIsSending(true);
 
     const tempUserMsg: ChatMessage = {
@@ -211,18 +227,58 @@ export const AiAssistant: React.FC = () => {
         setMessages((prev) => [...prev, assistantMsg]);
         loadConversations();
       } else {
-        setError(res.message || 'Failed to send message');
-        setMessages((prev) => prev.filter((m) => m.id !== tempUserMsg.id));
-        setInput(text);
+        const msg = res.message || 'Failed to send message';
+        fail(res.statusCode, msg, text);
       }
     } catch (err: any) {
-      setError(err?.message || 'Failed to send message');
-      setMessages((prev) => prev.filter((m) => m.id !== tempUserMsg.id));
-      setInput(text);
+      fail(err?.statusCode, err?.rawMessage || err?.message || err?.userMessage, text);
     } finally {
       setIsSending(false);
       inputRef.current?.focus();
     }
+  };
+
+  const fail = (statusCode: number | undefined, msg: string | undefined, text: string) => {
+    // Remove temporary user message; restore text and show retry
+    setMessages((prev) => prev.filter((m) => m.role !== 'user' || !m.id.startsWith('temp-user-')));
+    setRetryText(text);
+    setInput(text);
+    const kind = classifyError(statusCode, msg);
+    setErrorKind(kind);
+    let friendly = msg || 'Failed to send message';
+    if (kind === 'quota') {
+      friendly = msg && /usage limit|quota|too many/i.test(msg) ? msg : 'The AI assistant has reached its usage limit. Please try again later.';
+    } else if (kind === 'offline') {
+      friendly = "Can't reach the AI assistant right now. Check your connection and try again.";
+    } else if (kind === 'timeout') {
+      friendly = msg && /too long|timeout/i.test(msg) ? msg : 'The AI assistant took too long to respond. Please try again.';
+    }
+    setError(friendly);
+  };
+
+  const classifyError = (statusCode: number | undefined, message?: string): 'quota' | 'offline' | 'timeout' | 'busy' | 'generic' => {
+    const m = (message || '').toLowerCase();
+    // An HTTP status means the backend answered, so it is authoritative. Only a
+    // genuine transport failure (the API client sets statusCode 0 when fetch()
+    // itself throws) is an offline/connection problem. Previously the word
+    // "unreachable" inside a SERVER message matched here before the 503 branch,
+    // so a backend/provider outage was mislabelled as the user's connection.
+    if (statusCode === 0) return 'offline';
+    if (statusCode === 429) return 'quota';
+    if (statusCode === 504) return 'timeout';
+    if (statusCode === 503 || statusCode === 502) return 'busy';
+    if (statusCode !== undefined) return 'generic';
+    // No HTTP status reached us at all (unexpected handler/exception path):
+    // fall back to classifying the text.
+    if (m.includes('quota') || m.includes('usage limit') || m.includes('too many')) return 'quota';
+    if (m.includes('failed to fetch') || m.includes('network') || m.includes('cannot connect') || m.includes('unreachable')) return 'offline';
+    if (m.includes('timeout') || m.includes('too long') || m.includes('did not respond')) return 'timeout';
+    return 'generic';
+  };
+
+  const handleRetry = () => {
+    if (!retryText || isSending) return;
+    sendMessage(retryText);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -245,23 +301,53 @@ export const AiAssistant: React.FC = () => {
 
   return (
     <>
-      {/* Floating Button */}
+      {/* Floating 3D robot launcher */}
       <button
-        className="ai-assistant-button"
-        onClick={() => setIsOpen(!isOpen)}
-        aria-label={isOpen ? 'Close AI Assistant' : 'Open AI Assistant'}
+        type="button"
+        className={`ai-assistant-button${isOpen ? ' is-open' : ''}`}
+        onClick={() => setIsOpen((v) => !v)}
+        aria-label={isOpen ? 'Close Kavitha — AI Assistant' : 'Open Kavitha — AI Assistant'}
+        aria-expanded={isOpen}
+        aria-haspopup="dialog"
       >
-        {isOpen ? <X size={24} /> : <Bot size={24} />}
+        <span className="ai-assistant-robot-mask" aria-hidden="true">
+          <span className="ai-assistant-robot-float">
+            <img
+              className="ai-assistant-robot"
+              src={ROBOT_IMAGE}
+              alt=""
+              width={ROBOT_IMAGE_WIDTH}
+              height={ROBOT_IMAGE_HEIGHT}
+              draggable={false}
+              decoding="async"
+            />
+          </span>
+        </span>
+        <span className="ai-assistant-button-tooltip" aria-hidden="true">
+          Kavitha — AI Assistant
+        </span>
       </button>
 
       {/* Chat Panel */}
       {isOpen && (
-        <div className="ai-assistant-panel">
+        <div
+          className="ai-assistant-panel"
+          role="dialog"
+          aria-label="Kavitha — AI Assistant"
+        >
           {/* Header */}
           <div className="ai-assistant-header">
             <div className="ai-assistant-header-title">
-              <Bot size={20} />
-              <span>KSRCE AI Assistant</span>
+              <img
+                className="ai-assistant-header-robot"
+                src={ROBOT_IMAGE}
+                alt=""
+                width={ROBOT_IMAGE_WIDTH}
+                height={ROBOT_IMAGE_HEIGHT}
+                aria-hidden="true"
+                draggable={false}
+              />
+              <span>Kavitha — AI Assistant</span>
             </div>
             <div className="ai-assistant-header-actions">
               <button
@@ -334,8 +420,16 @@ export const AiAssistant: React.FC = () => {
             <div className="ai-assistant-messages">
               {messages.length === 0 ? (
                 <div className="ai-assistant-empty">
-                  <Bot size={48} />
-                  <h4>Welcome to KSRCE AI Assistant</h4>
+                  <img
+                    className="ai-assistant-empty-robot"
+                    src={ROBOT_IMAGE}
+                    alt=""
+                    width={ROBOT_IMAGE_WIDTH}
+                    height={ROBOT_IMAGE_HEIGHT}
+                    aria-hidden="true"
+                    draggable={false}
+                  />
+                  <h4>Hi! I'm Kavitha, your AI assistant. How can I help you today?</h4>
                   <p>Ask me anything about your role. I'm here to help.</p>
                   <div className="ai-assistant-suggestions">
                     {suggestions.map((s, i) => (
@@ -379,11 +473,38 @@ export const AiAssistant: React.FC = () => {
           {error && (
             <div className="ai-assistant-error">
               <span>{error}</span>
-              <button onClick={() => setError(null)} aria-label="Dismiss error">
+              {retryText && !isSending && (
+                <button
+                  onClick={handleRetry}
+                  aria-label="Retry sending message"
+                  style={{
+                    marginLeft: '8px',
+                    padding: '2px 8px',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    border: '1px solid rgba(255,255,255,0.4)',
+                    background: 'rgba(255,255,255,0.2)',
+                    color: '#fff',
+                    borderRadius: '4px',
+                  }}
+                >
+                  Retry
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  setError(null);
+                  setErrorKind(null);
+                  setRetryText(null);
+                }}
+                aria-label="Dismiss error"
+                style={{ marginLeft: retryText && !isSending ? '4px' : 'auto' }}
+              >
                 <X size={14} />
               </button>
             </div>
           )}
+
 
           {/* Input */}
           <div className="ai-assistant-input-area">
@@ -391,7 +512,7 @@ export const AiAssistant: React.FC = () => {
               ref={inputRef}
               type="text"
               className="ai-assistant-input"
-              placeholder="Type your message..."
+              placeholder={errorKind === 'quota' ? 'AI usage limit reached. Try again later or adjust your question.' : 'Type your message...'}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyPress}

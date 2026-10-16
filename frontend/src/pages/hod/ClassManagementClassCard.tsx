@@ -6,6 +6,15 @@ export interface SubjectOption {
   subjectCode: string;
   subjectName: string;
   semesterNumber: number;
+  /** Present once the department has a subject catalogue (Admin → Subject Management). */
+  id?: string | null;
+  maxMarks?: number | null;
+  passMarks?: number | null;
+  subjectTypeLabel?: string | null;
+  regulation?: string;
+  status?: 'ACTIVE' | 'INACTIVE';
+  source?: 'MASTER' | 'MARKS';
+  isActive?: boolean;
 }
 
 /** One class section for a given study year. */

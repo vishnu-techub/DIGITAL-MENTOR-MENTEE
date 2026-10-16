@@ -1,25 +1,66 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { LoginPage } from './pages/auth/LoginPage';
 import { ChangePasswordPage } from './pages/auth/ChangePasswordPage';
 import { Navbar } from './components/common/Navbar';
 import { Sidebar, getNavLabel } from './components/common/Sidebar';
-import { AdminDashboard } from './pages/admin/AdminDashboard';
-import { PrincipalDashboard } from './pages/principal/PrincipalDashboard';
-import { HodDashboard } from './pages/hod/HodDashboard';
-import { FacultyDashboard } from './pages/faculty/FacultyDashboard';
-import { StudentDashboard } from './pages/student/StudentDashboard';
-import { CompleteProfileWizard } from './pages/student/CompleteProfileWizard';
 import { PwaInstallBanner } from './components/common/PwaInstallBanner';
-import { AiAssistant } from './components/ai/AiAssistant';
+import { DashboardSkeleton } from './components/common/SkeletonLoader';
 import { NotFoundPage } from './pages/error/NotFoundPage';
 import { AccessDeniedState } from './pages/error/AccessDeniedState';
 import { SessionExpiredState } from './pages/error/SessionExpiredState';
 import { ServerErrorState } from './pages/error/ServerErrorState';
 import { NetworkErrorState } from './pages/error/NetworkErrorState';
-import { StudentRouteView } from './pages/common/StudentRouteView';
-import { MentorViewWrapper } from './pages/common/MentorViewWrapper';
+
+/**
+ * Role portals, the profile wizard and the AI assistant are code-split.
+ *
+ * Each dashboard is a large, self-contained module (the Admin portal alone is
+ * thousands of lines with its own tables and charts) and no session ever needs
+ * more than one of them. Statically importing all of them put every portal in
+ * the initial bundle (~1 MB) even though a Student only ever loads the Student
+ * portal. Lazy-loading shrinks the first paint for every role; the chunk for a
+ * portal is fetched in parallel while the shell renders its skeleton.
+ */
+const AdminDashboard = React.lazy(() =>
+  import('./pages/admin/AdminDashboard').then((m) => ({ default: m.AdminDashboard }))
+);
+const PrincipalDashboard = React.lazy(() =>
+  import('./pages/principal/PrincipalDashboard').then((m) => ({ default: m.PrincipalDashboard }))
+);
+const HodDashboard = React.lazy(() =>
+  import('./pages/hod/HodDashboard').then((m) => ({ default: m.HodDashboard }))
+);
+const FacultyDashboard = React.lazy(() =>
+  import('./pages/faculty/FacultyDashboard').then((m) => ({ default: m.FacultyDashboard }))
+);
+const StudentDashboard = React.lazy(() =>
+  import('./pages/student/StudentDashboard').then((m) => ({ default: m.StudentDashboard }))
+);
+const CompleteProfileWizard = React.lazy(() =>
+  import('./pages/student/CompleteProfileWizard').then((m) => ({ default: m.CompleteProfileWizard }))
+);
+const AiAssistant = React.lazy(() =>
+  import('./components/ai/AiAssistant').then((m) => ({ default: m.AiAssistant }))
+);
+const StudentRouteView = React.lazy(() =>
+  import('./pages/common/StudentRouteView').then((m) => ({ default: m.StudentRouteView }))
+);
+const MentorViewWrapper = React.lazy(() =>
+  import('./pages/common/MentorViewWrapper').then((m) => ({ default: m.MentorViewWrapper }))
+);
+const AboutUsPage = React.lazy(() =>
+  import('./pages/common/AboutUsPage').then((m) => ({ default: m.AboutUsPage }))
+);
+
+/** Shared fallback while a code-split portal chunk is being fetched. */
+const PortalFallback: React.FC = () => (
+  <div className="page-body" aria-busy="true">
+    <DashboardSkeleton />
+  </div>
+);
+
 
 export const App: React.FC = () => {
   const { user, isAuthenticated, isLoading, refreshUser } = useAuth();
@@ -93,30 +134,32 @@ export const App: React.FC = () => {
       <div className="app-container" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
         <Navbar />
         <main className="main-content" style={{ padding: '2rem 1.5rem', backgroundColor: '#F8FAFC' }}>
-          <Routes>
-            <Route
-              path="/student/complete-profile"
-              element={
-                <CompleteProfileWizard
-                  onCompleted={async () => {
-                    setJustCompletedProfile(true);
-                    await refreshUser();
-                  }}
-                />
-              }
-            />
-            <Route
-              path="*"
-              element={
-                <CompleteProfileWizard
-                  onCompleted={async () => {
-                    setJustCompletedProfile(true);
-                    await refreshUser();
-                  }}
-                />
-              }
-            />
-          </Routes>
+          <Suspense fallback={<DashboardSkeleton />}>
+            <Routes>
+              <Route
+                path="/student/complete-profile"
+                element={
+                  <CompleteProfileWizard
+                    onCompleted={async () => {
+                      setJustCompletedProfile(true);
+                      await refreshUser();
+                    }}
+                  />
+                }
+              />
+              <Route
+                path="*"
+                element={
+                  <CompleteProfileWizard
+                    onCompleted={async () => {
+                      setJustCompletedProfile(true);
+                      await refreshUser();
+                    }}
+                  />
+                }
+              />
+            </Routes>
+          </Suspense>
         </main>
         <PwaInstallBanner />
       </div>
@@ -162,7 +205,9 @@ export const App: React.FC = () => {
         />
         <main className="main-content">
           <div className="page-body">
-            {renderDashboardByRole()}
+            <Suspense fallback={<DashboardSkeleton />}>
+              {renderDashboardByRole()}
+            </Suspense>
           </div>
         </main>
       </div>
@@ -177,8 +222,34 @@ export const App: React.FC = () => {
       <Route path="/dashboard" element={MainDashboardLayout} />
 
       {/* Direct routes for student & mentor detail views */}
-      <Route path="/students/:id" element={<StudentRouteView />} />
-      <Route path="/mentor/:id" element={<MentorViewWrapper />} />
+      <Route
+        path="/students/:id"
+        element={
+          <Suspense fallback={<DashboardSkeleton />}>
+            <StudentRouteView />
+          </Suspense>
+        }
+      />
+      <Route
+        path="/mentor/:id"
+        element={
+          <Suspense fallback={<DashboardSkeleton />}>
+            <MentorViewWrapper />
+          </Suspense>
+        }
+      />
+
+      {/* Institutional / platform information page. Direct route (mirrors the
+          detail views above) so any authenticated role can reach it, without
+          adding an entry to one role's sidebar. */}
+      <Route
+        path="/about"
+        element={
+          <Suspense fallback={<DashboardSkeleton />}>
+            <AboutUsPage />
+          </Suspense>
+        }
+      />
 
       {/* Role-based guards */}
       <Route
@@ -214,7 +285,9 @@ export const App: React.FC = () => {
       {/* Catch-all 404 Route (Requirement 14) */}
         <Route path="*" element={<NotFoundPage onGoDashboard={() => navigate('/')} onGoBack={() => navigate(-1)} />} />
       </Routes>
-      <AiAssistant />
+      <Suspense fallback={null}>
+        <AiAssistant />
+      </Suspense>
     </>
   );
 };

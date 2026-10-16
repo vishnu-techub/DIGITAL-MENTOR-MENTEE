@@ -23,6 +23,10 @@ import { HodClassManagement } from './HodClassManagement';
 import { Modal } from '../../components/common/Modal';
 import { PageHeader } from '../../components/common/PageHeader';
 import { EmptyState } from '../../components/common/EmptyState';
+import { FacultyMentorCard } from '../../components/faculty/FacultyMentorCard';
+import { FacultyDetailView } from '../../components/faculty/FacultyDetailView';
+import { facultyMatchesQuery } from '../../utils/facultySearch';
+import { BulkAssignMentees } from '../../components/mentorship/BulkAssignMentees';
 import {
   DashboardSkeleton,
   StudentsSkeleton,
@@ -48,6 +52,8 @@ import {
   PieChart as PieChartIcon,
   TrendingUp,
   AlertTriangle,
+  ArrowRightLeft,
+  X,
 } from 'lucide-react';
 
 interface HodDashboardProps {
@@ -178,7 +184,7 @@ const WeeklyProgressList: React.FC<{ weeks: HodWeeklyProgress[] }> = ({ weeks })
       <EmptyState
         icon={<TrendingUp size={24} />}
         title="No weekly activity in this window"
-        description="No stored counselling records or Saturday meetings were logged in the last 30 days."
+        description="No stored mentoring records or Saturday meetings were logged in the last 30 days."
       />
     );
   }
@@ -270,6 +276,11 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<ApiError | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  // Client-side search over this department's already-loaded faculty mentors
+  // (the API returns only this HOD's own department, so search can never widen
+  // access). Kept separate from the student search so the lists do not
+  // cross-filter.
+  const [facultySearch, setFacultySearch] = useState('');
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
 
   // Reporting month driving the monthly analytics (dashboard, pie, mentor-wise,
@@ -283,6 +294,9 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
   // Mentor detail
   const [detail, setDetail] = useState<HodMentorDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailFaculty, setDetailFaculty] = useState<HodFacultyRow | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   // Add / edit modals
   const [studentModal, setStudentModal] = useState<'add' | 'edit' | null>(null);
@@ -295,6 +309,7 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
   const [editingFaculty, setEditingFaculty] = useState<HodFacultyRow | null>(null);
 
   const [showReassignModal, setShowReassignModal] = useState(false);
+  const [bulkAssignOpen, setBulkAssignOpen] = useState(false);
   const [reassignForm, setReassignForm] = useState({
     studentId: '',
     newMentorId: '',
@@ -385,15 +400,43 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
   };
 
   const openMentor = async (mentorId: string) => {
+    setDetailOpen(true);
+    setDetailFaculty(faculty.find((f) => f.id === mentorId) || null);
+    setDetail(null);
+    setDetailError(null);
     setDetailLoading(true);
     try {
       const res = await api.hod.mentorDetail(mentorId, { month });
       setDetail(res.data);
     } catch (err: any) {
-      toast.error('Could not load mentor detail: ' + err.message);
+      setDetailError(err.message || 'Could not load mentor detail.');
     } finally {
       setDetailLoading(false);
     }
+  };
+
+  /** Close the faculty detail dialog and drop its payload. */
+  const closeMentor = () => {
+    setDetailOpen(false);
+    setDetail(null);
+    setDetailFaculty(null);
+    setDetailError(null);
+  };
+
+  const retryMentor = () => {
+    if (detailFaculty) void openMentor(detailFaculty.id);
+  };
+
+  /** Open an individual mentee's existing student details page. */
+  const openMenteeFromDetail = (studentId: string) => {
+    closeMentor();
+    setSelectedStudentId(studentId);
+  };
+
+  /** Edit the faculty member shown in the detail view (closes the dialog first). */
+  const editFacultyFromDetail = (f: HodFacultyRow) => {
+    closeMentor();
+    openFacultyEdit(f);
   };
 
   const handleReassign = async (e: React.FormEvent) => {
@@ -542,6 +585,11 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
       s.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       s.register_number.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  // Search this department's faculty mentors by name, employee ID, email,
+  // designation or department. The list is already department-scoped by the API,
+  // so filtering can never surface a record outside the HOD's own department.
+  const filteredFaculty = faculty.filter((f) => facultyMatchesQuery(f, facultySearch));
 
   const openStudentAdd = () => {
     setStudentForm({ ...EMPTY_FORM });
@@ -1006,76 +1054,70 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
             }
           />
 
-          <div className="card">
-            <div className="table-responsive">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Emp ID</th>
-                    <th>Faculty Name</th>
-                    <th>Designation & Cabin</th>
-                    <th>Contact</th>
-                    <th>Assigned Mentees</th>
-                    <th>Coverage</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {faculty.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--color-slate-500)' }}>
-                        No faculty members in your department.
-                      </td>
-                    </tr>
-                  ) : (
-                    faculty.map((f) => {
-                      const row = mentorWise.find((m) => m.mentorId === f.id);
-                      return (
-                        <tr key={f.id}>
-                          <td style={{ fontWeight: 700 }}>{f.employee_id}</td>
-                          <td>
-                            <strong>{f.full_name}</strong>
-                            <br />
-                            <span style={{ fontSize: '0.75rem', color: 'var(--color-slate-500)' }}>{f.email}</span>
-                          </td>
-                          <td>
-                            {f.designation}
-                            <br />
-                            <span style={{ fontSize: '0.75rem', color: 'var(--color-slate-500)' }}>{f.cabin_location}</span>
-                          </td>
-                          <td>{f.phone_number || '—'}</td>
-                          <td>
-                            <strong style={{ color: 'var(--color-navy-800)' }}>{f.mentee_count}</strong> Mentees
-                          </td>
-                          <td>{row ? <CoverageBar percent={row.coveragePercent} /> : '—'}</td>
-                          <td>
-                            <span className={`badge ${f.is_active ? 'badge-success' : 'badge-danger'}`}>
-                              {f.is_active ? 'Active' : 'Inactive'}
-                            </span>
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', gap: '0.4rem' }}>
-                              <button
-                                className="btn btn-secondary btn-sm"
-                                onClick={() => openMentor(f.id)}
-                                disabled={detailLoading}
-                              >
-                                View Detail
-                              </button>
-                              <button className="btn btn-outline btn-sm" onClick={() => openFacultyEdit(f)}>
-                                <Pencil size={14} /> Edit
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
+          {/* Mentor search — client-side over the already-loaded, department
+              scoped faculty list. Matches name, employee ID, email, designation
+              and department; partial and case-insensitive. */}
+          {faculty.length > 0 && (
+            <div className="card" style={{ padding: '1rem', marginBottom: '1.25rem' }}>
+              <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                <div style={{ flex: 1, minWidth: '240px', position: 'relative' }}>
+                  <Search size={16} style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--color-slate-400)' }} />
+                  <input
+                    type="text"
+                    className="form-control"
+                    style={{ paddingLeft: '2rem', paddingRight: '2.25rem' }}
+                    placeholder="Search by name, employee ID, or email..."
+                    value={facultySearch}
+                    onChange={(e) => setFacultySearch(e.target.value)}
+                    aria-label="Search faculty mentors by name, employee ID, email, designation or department"
+                  />
+                  {facultySearch.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFacultySearch('')}
+                      aria-label="Clear faculty search"
+                      title="Clear search"
+                      style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', color: 'var(--color-slate-400)', lineHeight: 0 }}
+                    >
+                      <X size={15} />
+                    </button>
                   )}
-                </tbody>
-              </table>
+                </div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--color-slate-500)' }} aria-live="polite">
+                  {facultySearch.trim().length > 0
+                    ? `Showing ${filteredFaculty.length} of ${faculty.length} faculty mentor${faculty.length === 1 ? '' : 's'}`
+                    : `${faculty.length} faculty mentor${faculty.length === 1 ? '' : 's'}`}
+                </div>
+              </div>
             </div>
-          </div>
+          )}
+
+          {faculty.length === 0 ? (
+            <EmptyState
+              icon={<Users size={24} />}
+              title="No faculty members yet"
+              description="No faculty mentors are recorded in your department. Use Add Faculty to create one."
+            />
+          ) : filteredFaculty.length === 0 ? (
+            <EmptyState
+              icon={<Search size={24} />}
+              title="No matching mentors found"
+              description="No faculty mentor in your department matched your search. Try a different name, employee ID, email or department."
+            />
+          ) : (
+            <div className="faculty-grid">
+              {filteredFaculty.map((f) => (
+                <FacultyMentorCard
+                  key={f.id}
+                  faculty={f}
+                  coverage={mentorWise.find((m) => m.mentorId === f.id)}
+                  busy={detailLoading && detailFaculty?.id === f.id}
+                  onView={(row) => void openMentor(row.id)}
+                  onEdit={openFacultyEdit}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -1086,6 +1128,15 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
             eyebrow="Mentoring"
             title="Departmental Mentor Assignment"
             subtitle="Only students and faculty of your own department can be selected. The server re-checks the department on every write."
+            actions={
+              <button
+                type="button"
+                className="btn btn-gold btn-sm"
+                onClick={() => setBulkAssignOpen(true)}
+              >
+                <ArrowRightLeft size={16} /> Bulk Assign Mentees
+              </button>
+            }
           />
           <div className="card" style={{ borderLeft: '4px solid var(--color-gold-500)' }}>
             <form onSubmit={handleReassign}>
@@ -1148,6 +1199,15 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
           )}
         </div>
       )}
+
+      {/* Bulk Upload & Assign Mentees (HOD, own department only) */}
+      <BulkAssignMentees
+        isOpen={bulkAssignOpen}
+        onClose={() => setBulkAssignOpen(false)}
+        onCompleted={() => {
+          loadData();
+        }}
+      />
 
       {/* ============================ MARKS ============================ */}
       {currentTab === 'marks' && <HodMarksManagement />}
@@ -1572,91 +1632,20 @@ export const HodDashboard: React.FC<HodDashboardProps> = ({ currentTab, onSelect
         ) : null}
       </Modal>
 
-      {/* ==================== MODAL: mentor detail ==================== */}
-      <Modal
-        isOpen={Boolean(detail)}
-        onClose={() => setDetail(null)}
-        title={detail ? `${detail.mentor.fullName} — Mentee Detail` : 'Mentor Detail'}
-      >
-        {detail ? (
-          <>
-            <div className="overview-summary-grid">
-              <div className="overview-summary-card">
-                <span className="overview-summary-label">Total Mentees</span>
-                <span className="overview-summary-value">{detail.summary.totalMentees}</span>
-              </div>
-              <div className="overview-summary-card">
-                <span className="overview-summary-label">Mentored {monthShort(month)}</span>
-                <span className="overview-summary-value">{detail.summary.mentoredThisMonth}</span>
-              </div>
-              <div className="overview-summary-card">
-                <span className="overview-summary-label">Pending</span>
-                <span className="overview-summary-value">{detail.summary.pending}</span>
-              </div>
-              <div className="overview-summary-card">
-                <span className="overview-summary-label">Coverage</span>
-                <span className="overview-summary-value">{detail.summary.coveragePercent}%</span>
-              </div>
-              <div className="overview-summary-card">
-                <span className="overview-summary-label">Sessions This Month</span>
-                <span className="overview-summary-value">{detail.summary.sessionsThisMonth}</span>
-              </div>
-              <div className="overview-summary-card">
-                <span className="overview-summary-label">Sessions (All Time)</span>
-                <span className="overview-summary-value">{detail.summary.sessionCount}</span>
-              </div>
-            </div>
-            <div className="overview-summary-foot">
-              Reporting month <strong>{monthLabel(month)}</strong> · Last mentoring date:{' '}
-              <strong>{detail.summary.lastMentoringDate || 'Never'}</strong>
-            </div>
-
-            <div className="section-heading" style={{ marginTop: '1.25rem' }}>Mentees</div>
-            <div className="table-responsive">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Register Number</th>
-                    <th>Student Name</th>
-                    <th>Mentoring Status</th>
-                    <th>Last Mentoring Date</th>
-                    <th>Sessions This Month</th>
-                    <th>Covered This Month</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {detail.mentees.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--color-slate-500)' }}>
-                        No mentees assigned to this faculty member.
-                      </td>
-                    </tr>
-                  ) : (
-                    detail.mentees.map((m) => (
-                      <tr key={m.id}>
-                        <td style={{ fontWeight: 700 }}>{m.registerNumber}</td>
-                        <td><strong>{m.fullName}</strong></td>
-                        <td>
-                          <span className={`badge ${m.lastMentoringDate ? 'badge-success' : 'badge-warning'}`}>
-                            {m.lastMentoringDate ? 'Mentored' : 'No sessions yet'}
-                          </span>
-                        </td>
-                        <td>{m.lastMentoringDate || '—'}</td>
-                        <td>{m.sessionsThisMonth ?? 0}</td>
-                        <td>
-                          <span className={`badge ${m.mentoredThisMonth ? 'badge-success' : 'badge-danger'}`}>
-                            {m.mentoredThisMonth ? 'Yes' : 'No'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </>
-        ) : null}
-      </Modal>
+      {/* ==================== MODAL: faculty detail ==================== */}
+      <FacultyDetailView
+        isOpen={detailOpen}
+        onClose={closeMentor}
+        faculty={detailFaculty}
+        detail={detail}
+        loading={detailLoading}
+        error={detailError}
+        onRetry={retryMentor}
+        onEdit={editFacultyFromDetail}
+        onOpenMentee={openMenteeFromDetail}
+        monthLabel={monthLabel(month)}
+        monthShort={monthShort(month)}
+      />
 
       {/* ==================== MODAL: add / edit student ==================== */}
       <Modal

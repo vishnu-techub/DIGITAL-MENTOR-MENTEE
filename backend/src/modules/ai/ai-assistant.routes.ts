@@ -11,8 +11,12 @@ import { authenticate } from '../../middleware/auth.middleware.js';
 
 /**
  * ============================================================================
- * /api/ai — KSRCE AI Assistant (Ollama-backed, role-scoped, advisory only)
+ * /api/ai — KSRCE AI Assistant (Gemini or Ollama, role-scoped, advisory only)
  * ============================================================================
+ *
+ * The provider is chosen server-side from configuration: Google Gemini when
+ * `GEMINI_API_KEY` is set, otherwise the local Ollama server. The browser never
+ * receives the key, and the vendor URL/model are never shipped to the client.
  *
  * Every endpoint requires authentication. The global `enforcePasswordChange`
  * middleware (mounted at `/api` before all routers) already refuses these

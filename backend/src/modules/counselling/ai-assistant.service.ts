@@ -1,4 +1,10 @@
 import https from 'https';
+import { correctText, type GrammarStatus } from '../grammar/grammar.service.js';
+import { preservesProtectedValues } from '../grammar/protected-values.js';
+import { localModelGrammarSuggestion } from '../grammar/grammar.context.js';
+
+// Re-exported so existing importers (and tests) keep the same public surface.
+export { extractProtectedValues, preservesProtectedValues } from '../grammar/protected-values.js';
 
 /**
  * AI Assistant & Grammar Engine for KSRCE Mentoring Portal
@@ -16,6 +22,12 @@ export interface GrammarCheckResponse {
   corrected: string;
   hasCorrections: boolean;
   source: 'LLM' | 'INSTITUTIONAL_GRAMMAR_ENGINE';
+  /**
+   * Machine-readable outcome of the correction. `NO_RELIABLE_CORRECTION` means
+   * the text was returned unchanged; `AMBIGUOUS_INPUT` means a plausible
+   * correction existed but was deliberately not applied.
+   */
+  status: GrammarStatus;
 }
 
 /**
@@ -243,82 +255,6 @@ function getInstitutionalBotAnswer(question: string, q: string): AiBotResponse {
 }
 
 /**
- * Values that are official record data and must never be altered by a writing
- * assistant: register numbers, subject codes, marks, CGPA/SGPA, dates and IDs.
- *
- * A writing assistant corrects *prose*. If a correction would drop, reorder or
- * restate any of these, it is not a correction - it is data corruption. These
- * tokens are extracted from the original and required to survive verbatim in the
- * candidate, so an unsafe suggestion is rejected rather than shown.
- *
- * Matched shapes:
- *   8.5 / 91.4 / 7.25          decimals (marks, CGPA, SGPA, attendance %)
- *   731523104999               long digit runs (register numbers, IDs)
- *   24ITT36 / CSE / NPTEL      uppercase codes and acronyms
- *   2026-03-14 / 14-03-2026    dates in either order
- */
-/**
- * Capitals used as emphasis rather than as codes. Excluded from the protected
- * set so that shouting prose ("THE STUDENT MUST SUBMIT") is still normalised.
- */
-const ENGLISH_STOPWORDS_UPPER: ReadonlySet<string> = new Set([
-  'THE', 'AND', 'FOR', 'NOT', 'BUT', 'YOU', 'ALL', 'CAN', 'WAS', 'ARE', 'HAS', 'HAD',
-  'HIS', 'HER', 'ITS', 'OUR', 'WHO', 'WHY', 'HOW', 'MAY', 'MUST', 'SHOULD', 'WILL',
-  'WITH', 'FROM', 'THIS', 'THAT', 'THEY', 'THEM', 'THEN', 'THAN', 'VERY', 'MUCH',
-  'MANY', 'SOME', 'ONLY', 'ALSO', 'JUST', 'LIKE', 'WELL', 'DUE', 'YES', 'OK',
-]);
-
-const PROTECTED_VALUE_PATTERNS: readonly RegExp[] = [
-  /\b\d{1,4}[-/]\d{1,2}[-/]\d{2,4}\b/g, // dates
-  // Alphanumeric codes: letters plus at least one digit, in any arrangement, so
-  // 24ITT36 / CS101 / NPTEL-2024 all match. Starts with a letter or digit because
-  // institutional codes are commonly year-prefixed (24ITT36).
-  /\b(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{3,}\b/g,
-  /\b[A-Z]{2,6}\b/g, // short uppercase codes: CSE, ECE, NPTEL, CGPA
-  /\b\d+\.\d+\b/g, // decimals: 8.5, 91.4
-  /\b\d{4,}\b/g, // long digit runs: register numbers, IDs
-];
-
-/**
- * Every protected official value present in `text`, de-duplicated.
- * Order is preserved so the result is stable and easy to assert on.
- */
-export function extractProtectedValues(text: string): string[] {
-  const found = new Set<string>();
-
-  // Dates are matched first and then masked out, so the year inside
-  // "14-03-2026" is not additionally reported as a bare 4-digit ID. Requiring
-  // the full date to survive is the stronger and less surprising rule.
-  const dates = text.match(PROTECTED_VALUE_PATTERNS[0]) || [];
-  let masked = text.replace(PROTECTED_VALUE_PATTERNS[0], (d) => ' '.repeat(d.length));
-
-  for (const date of dates) {
-    if (!ENGLISH_STOPWORDS_UPPER.has(date)) found.add(date);
-  }
-
-  for (const pattern of PROTECTED_VALUE_PATTERNS.slice(1)) {
-    for (const match of masked.match(pattern) || []) {
-      // Ordinary words typed in capitals ("THE", "AND") are emphasis, not record
-      // data, so they are not protected and remain free to be recased.
-      if (!ENGLISH_STOPWORDS_UPPER.has(match)) found.add(match);
-    }
-  }
-
-  return [...found];
-}
-
-/**
- * True when every protected value from `original` still appears verbatim in
- * `candidate`. This is the last line of defence behind the prompt: an LLM can
- * ignore instructions, but it cannot make a number survive that it deleted.
- */
-export function preservesProtectedValues(original: string, candidate: string): boolean {
-  const protectedValues = extractProtectedValues(original);
-  if (protectedValues.length === 0) return true;
-  return protectedValues.every((value) => candidate.includes(value));
-}
-
-/**
  * Strip the wrapper an LLM may add around its answer: code fences, surrounding
  * quotes, and a leading label such as "Corrected text:". Only the corrected
  * prose is ever returned, so it can be applied to a textarea as-is.
@@ -358,6 +294,7 @@ export async function correctGrammarAndSpelling(text: string): Promise<GrammarCh
       corrected: original,
       hasCorrections: false,
       source: 'INSTITUTIONAL_GRAMMAR_ENGINE',
+      status: 'NO_RELIABLE_CORRECTION',
     };
   }
 
@@ -381,6 +318,7 @@ export async function correctGrammarAndSpelling(text: string): Promise<GrammarCh
             corrected: candidate.trim(),
             hasCorrections: true,
             source: 'LLM',
+            status: 'EXTERNAL_AI',
           };
         }
       }
@@ -389,161 +327,36 @@ export async function correctGrammarAndSpelling(text: string): Promise<GrammarCh
     }
   }
 
-  // Rule-based spelling, capitalization, punctuation & grammar normalizer
-  const corrected = runRuleBasedGrammarEngine(original);
-  const hasCorrections = corrected.trim() !== original.trim();
+  // Optional local language model (Ollama). OFF unless GRAMMAR_LOCAL_MODEL is
+  // enabled and a server is reachable; any failure falls through silently.
+  const localCandidate = await localModelGrammarSuggestion(original);
+  if (localCandidate) {
+    const sanitized = sanitizeLlmOutput(localCandidate);
+    if (
+      sanitized &&
+      sanitized.trim() !== original.trim() &&
+      preservesProtectedValues(original, sanitized)
+    ) {
+      return {
+        original,
+        corrected: sanitized.trim(),
+        hasCorrections: true,
+        source: 'LLM',
+        status: 'EXTERNAL_AI',
+      };
+    }
+  }
+
+  // Deterministic dataset-based engine (no external AI required).
+  const result = correctText(original);
 
   return {
     original,
-    corrected,
-    hasCorrections,
+    corrected: result.corrected,
+    hasCorrections: result.hasCorrections,
     source: 'INSTITUTIONAL_GRAMMAR_ENGINE',
+    status: result.status,
   };
-}
-
-/**
- * A token that looks like official record data rather than prose: an all-caps
- * word that is entirely uppercase (CSE, CGPA, NPTEL) or that contains a digit
- * (24ITT36). Such tokens are passed through untouched by the rule engine.
- */
-function isOfficialToken(token: string): boolean {
-  if (!token || !/[A-Z]/.test(token)) return false;
-  return token === token.toUpperCase() || /\d/.test(token);
-}
-
-/**
- * Robust Rule-Based Institutional Grammar Engine
- */
-function runRuleBasedGrammarEngine(raw: string): string {
-  let str = raw.trim();
-
-  // Common spelling corrections dictionary for college mentoring
-  const spellMap: Record<string, string> = {
-    comunication: 'communication',
-    comunicate: 'communicate',
-    presenation: 'presentation',
-    presentaion: 'presentation',
-    attandance: 'attendance',
-    attendence: 'attendance',
-    arrier: 'arrear',
-    arriers: 'arrears',
-    arear: 'arrear',
-    arears: 'arrears',
-    counceling: 'counselling',
-    councelling: 'counselling',
-    councelor: 'counsellor',
-    counseling: 'counselling',
-    counceler: 'counsellor',
-    studnt: 'student',
-    studnts: 'students',
-    imporve: 'improve',
-    imporvement: 'improvement',
-    improvment: 'improvement',
-    necesary: 'necessary',
-    dificult: 'difficult',
-    dificulty: 'difficulty',
-    disscuss: 'discuss',
-    disscussion: 'discussion',
-    reccomend: 'recommend',
-    recomended: 'recommended',
-    reccommend: 'recommend',
-    regularily: 'regularly',
-    absentiesm: 'absenteeism',
-    behaivor: 'behavior',
-    behaivour: 'behaviour',
-    asign: 'assign',
-    asignment: 'assignment',
-    asignments: 'assignments',
-    preperation: 'preparation',
-    prepair: 'prepare',
-    consistant: 'consistent',
-    confidance: 'confidence',
-    guidence: 'guidance',
-    proformance: 'performance',
-    preformance: 'performance',
-  };
-
-  // Replace misspelled words using word boundary regex.
-  // Official codes are skipped: an all-caps token containing a digit (24ITT36)
-  // or a short all-caps token (CSE, CGPA) is record data, not prose, so it is
-  // never "corrected" even if it happens to resemble a dictionary word.
-  for (const [wrong, right] of Object.entries(spellMap)) {
-    const regex = new RegExp(`\\b${wrong}\\b`, 'gi');
-    str = str.replace(regex, (match) => {
-      if (isOfficialToken(match)) return match;
-      // Match case
-      if (match[0] === match[0].toUpperCase()) {
-        return right.charAt(0).toUpperCase() + right.slice(1);
-      }
-      return right;
-    });
-  }
-
-  // Grammar & Phrasing Normalizations
-  str = str.replace(/\bstudent is not good in communication and he need improve presentation skill\b/gi,
-    'Student needs to improve communication and presentation skills.');
-
-  str = str.replace(/\bstudent is not good in\b/gi, 'Student needs improvement in');
-  str = str.replace(/\bhe need improve\b/gi, 'he needs to improve');
-  str = str.replace(/\bshe need improve\b/gi, 'she needs to improve');
-  str = str.replace(/\bthey need improve\b/gi, 'they need to improve');
-  str = str.replace(/\bstudent need improve\b/gi, 'student needs to improve');
-  str = str.replace(/\bto developed\b/gi, 'to develop');
-  str = str.replace(/\bwanted to developed\b/gi, 'wanted to develop');
-  str = str.replace(/\bwant to developed\b/gi, 'want to develop');
-  str = str.replace(/\bto improved\b/gi, 'to improve');
-  str = str.replace(/\bto completed\b/gi, 'to complete');
-  str = str.replace(/\bto attended\b/gi, 'to attend');
-  str = str.replace(/\bto participated\b/gi, 'to participate');
-  str = str.replace(/\bto cleared\b/gi, 'to clear');
-  str = str.replace(/\bto submitted\b/gi, 'to submit');
-  str = str.replace(/\bto solved\b/gi, 'to solve');
-  str = str.replace(/\bto practiced\b/gi, 'to practice');
-  str = str.replace(/\bto scored\b/gi, 'to score');
-  str = str.replace(/\bto learned\b/gi, 'to learn');
-  str = str.replace(/\bto studied\b/gi, 'to study');
-  str = str.replace(/\bto prepared\b/gi, 'to prepare');
-
-  str = str.replace(/\bpractice presentation\b/gi, 'practice presentations');
-  str = str.replace(/\bpracticing presentation\b/gi, 'practicing presentations');
-  str = str.replace(/\bpresentation skill\b/gi, 'presentation skills');
-  str = str.replace(/\bcommunication skill\b/gi, 'communication skills');
-  str = str.replace(/\btechnical skill\b/gi, 'technical skills');
-  str = str.replace(/\bprogramming skill\b/gi, 'programming skills');
-  str = str.replace(/\bcoding skill\b/gi, 'coding skills');
-
-  str = str.replace(/\bhe need to\b/gi, 'he needs to');
-  str = str.replace(/\bshe need to\b/gi, 'she needs to');
-  str = str.replace(/\bstudent need to\b/gi, 'student needs to');
-  str = str.replace(/\bhe have\b/gi, 'he has');
-  str = str.replace(/\bshe have\b/gi, 'she has');
-  str = str.replace(/\bstudent have\b/gi, 'student has');
-  str = str.replace(/\badviced\b/gi, 'advised');
-  str = str.replace(/\bis having arrear\b/gi, 'has standing arrears');
-  str = str.replace(/\bis having arrears\b/gi, 'has standing arrears');
-  str = str.replace(/\blab observation book\b/gi, 'lab observation notebook');
-  str = str.replace(/\bdo not doing\b/gi, 'is not doing');
-
-  // Whitespace cleanup
-  str = str.replace(/[ \t]+/g, ' ');
-
-  // Fix standalone lowercase 'i' to 'I'
-  str = str.replace(/\bi\b/g, 'I');
-
-  // Capitalize first character of the text
-  if (str.length > 0) {
-    str = str.charAt(0).toUpperCase() + str.slice(1);
-  }
-
-  // Capitalize letters following period, exclamation mark, or question mark
-  str = str.replace(/([.!?]\s+)([a-z])/g, (_, p1, p2) => p1 + p2.toUpperCase());
-
-  // Ensure trailing punctuation if it looks like a complete sentence
-  if (str.length > 5 && !/[.!?]$/.test(str)) {
-    str += '.';
-  }
-
-  return str;
 }
 
 /**

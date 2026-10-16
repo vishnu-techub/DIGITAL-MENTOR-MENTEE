@@ -160,9 +160,14 @@ async function run() {
     check('the API key never appears in the response', !/AI_API_KEY|apiKey|sk-|AIza/i.test(serialised), serialised);
     check('the model name never appears in the response', !/gemini|gpt|openai/i.test(serialised), serialised);
     check(
-      'only the four documented fields are returned',
-      Object.keys(res).sort().join(',') === 'corrected,hasCorrections,original,source',
+      'only the documented fields are returned',
+      Object.keys(res).sort().join(',') === 'corrected,hasCorrections,original,source,status',
       Object.keys(res).join(',')
+    );
+    check(
+      'status is one of the documented values',
+      ['EXACT_MATCH', 'APPROXIMATE_MATCH', 'RULES_APPLIED', 'NO_RELIABLE_CORRECTION', 'AMBIGUOUS_INPUT', 'EXTERNAL_AI'].includes(res.status),
+      res.status
     );
     check('source is a fixed enum value', res.source === 'LLM' || res.source === 'INSTITUTIONAL_GRAMMAR_ENGINE', res.source);
   });

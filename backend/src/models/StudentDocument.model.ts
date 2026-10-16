@@ -61,6 +61,13 @@ export interface IStudentDocument extends LocalDocument {
   watermarkText?: string;
   /** When the watermarked copy was generated. */
   watermarkAppliedAt?: Date;
+  /**
+   * Renderer/version stamp of the generated Student Details Form. The record-book
+   * renderer evolves over time; when the stamp differs from the current version
+   * the (derived) stored form is regenerated on next access so a stale PDF from a
+   * previous backend version is never served. Empty for pre-feature records.
+   */
+  renderVersion?: string;
   verificationStatus: VerificationStatus;
   rejectionReason?: string;
   rejectedBy?: LocalId;
@@ -162,6 +169,10 @@ const StudentDocumentSchema = new Schema<IStudentDocument>(
     watermarkAppliedAt: {
       type: Date,
       default: null,
+    },
+    renderVersion: {
+      type: String,
+      default: '',
     },
     verificationStatus: {
       type: String,

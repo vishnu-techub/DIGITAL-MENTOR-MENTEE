@@ -31,24 +31,45 @@ import { toIdString } from '../../utils/access.util.js';
 // Dashboard Overview Statistics
 export async function getAdminDashboardStats(req: AuthRequest, res: Response) {
   try {
-    const totalStudents = await Student.countDocuments({ isActive: true });
-    const totalFaculty = await Faculty.countDocuments({ isActive: true });
-    const totalDepartments = await Department.countDocuments();
-    const assignedMentees = await MentorAssignment.countDocuments({ status: 'ACTIVE' });
-    const unassignedStudents = Math.max(0, totalStudents - assignedMentees);
-    const reassignmentsCount = await MentorAssignment.countDocuments({ status: 'COMPLETED' });
-    const totalMeetings = await Meeting.countDocuments({ meetingStatus: 'COMPLETED' });
-    const pendingMeetings = await Meeting.countDocuments({ meetingStatus: 'PENDING' });
+    // Every read below is independent, so issue them concurrently instead of
+    // awaiting them one after another (which added an event-loop turn per
+    // query and dominated the request's latency).
+    const [
+      totalStudents,
+      totalFaculty,
+      totalDepartments,
+      assignedMentees,
+      reassignmentsCount,
+      totalMeetings,
+      pendingMeetings,
+      studentsWithRecords,
+      allRecords,
+      counsellingSessions,
+      uploadedDocuments,
+      rawActivities,
+    ] = await Promise.all([
+      Student.countDocuments({ isActive: true }),
+      Faculty.countDocuments({ isActive: true }),
+      Department.countDocuments(),
+      MentorAssignment.countDocuments({ status: 'ACTIVE' }),
+      MentorAssignment.countDocuments({ status: 'COMPLETED' }),
+      Meeting.countDocuments({ meetingStatus: 'COMPLETED' }),
+      Meeting.countDocuments({ meetingStatus: 'PENDING' }),
+      // Active arrears are derived from the shared calculation utility, which
+      // treats the subject list as the source of truth. Summing the raw
+      // `arrearsCount` column here previously double-counted cleared arrears.
+      Student.find({ isActive: true }).select('_id clearedSubjects arrearHistory'),
+      AcademicRecord.find({}).select(
+        'student semesterNumber cgpa sgpa arrearsCount arrearsSubjects arrearSubjectDetails clearedSubjects'
+      ),
+      CounsellingRecord.countDocuments(),
+      StudentDocument.countDocuments(),
+      // Recent 10 audit activities.
+      AuditLog.find().populate('user').sort({ createdAt: -1 }).limit(10),
+    ]);
 
-    // Active arrears are derived from the shared calculation utility, which
-    // treats the subject list as the source of truth. Summing the raw
-    // `arrearsCount` column here previously double-counted cleared arrears.
-    const studentsWithRecords = await Student.find({ isActive: true }).select(
-      '_id clearedSubjects arrearHistory'
-    );
-    const allRecords = await AcademicRecord.find({}).select(
-      'student semesterNumber cgpa sgpa arrearsCount arrearsSubjects arrearSubjectDetails clearedSubjects'
-    );
+    const unassignedStudents = Math.max(0, totalStudents - assignedMentees);
+
     const recordsByStudent = new Map<string, any[]>();
     for (const r of allRecords) {
       const key = String(r.student);
@@ -64,17 +85,7 @@ export async function getAdminDashboardStats(req: AuthRequest, res: Response) {
       return total + stats.activeArrearsCount;
     }, 0);
 
-    // Real MongoDB calculation for Counselling Sessions & Documents
-    const counsellingSessions = await CounsellingRecord.countDocuments();
-    const uploadedDocuments = await StudentDocument.countDocuments();
-
-    // Recent 10 audit activities
-    const rawActivities = await AuditLog.find()
-      .populate('user')
-      .sort({ createdAt: -1 })
-      .limit(10);
-
-    const recentActivities = rawActivities.map((a: any) => ({
+    const recentActivities = (rawActivities as any[]).map((a: any) => ({
       id: a._id.toString(),
       action: a.action,
       entity: a.entity,
@@ -108,23 +119,35 @@ export async function getAdminDashboardStats(req: AuthRequest, res: Response) {
 // Departments Management
 export async function getDepartments(req: AuthRequest, res: Response) {
   try {
-    const depts = await Department.find().sort({ code: 1 });
+    // Load the counts once and tally in a single pass, instead of
+    // countDocuments-per-department (which re-scanned the whole student and
+    // faculty collections for each of the ~15 rows).
+    const [depts, students, faculty] = await Promise.all([
+      Department.find().sort({ code: 1 }),
+      Student.find({ isActive: true }).select('department').lean(),
+      Faculty.find({ isActive: true }).select('department').lean(),
+    ]);
 
-    const departmentsWithCounts = await Promise.all(
-      depts.map(async (d) => {
-        const studentCount = await Student.countDocuments({ department: d._id, isActive: true });
-        const facultyCount = await Faculty.countDocuments({ department: d._id, isActive: true });
-        return {
-          id: d._id.toString(),
-          _id: d._id.toString(),
-          code: d.code,
-          name: d.name,
-          created_at: d.createdAt,
-          student_count: studentCount,
-          faculty_count: facultyCount,
-        };
-      })
-    );
+    const studentCountByDept = new Map<string, number>();
+    for (const s of students as any[]) {
+      const key = s.department ? String(s.department) : '';
+      if (key) studentCountByDept.set(key, (studentCountByDept.get(key) ?? 0) + 1);
+    }
+    const facultyCountByDept = new Map<string, number>();
+    for (const f of faculty as any[]) {
+      const key = f.department ? String(f.department) : '';
+      if (key) facultyCountByDept.set(key, (facultyCountByDept.get(key) ?? 0) + 1);
+    }
+
+    const departmentsWithCounts = (depts as any[]).map((d) => ({
+      id: d._id.toString(),
+      _id: d._id.toString(),
+      code: d.code,
+      name: d.name,
+      created_at: d.createdAt,
+      student_count: studentCountByDept.get(String(d._id)) ?? 0,
+      faculty_count: facultyCountByDept.get(String(d._id)) ?? 0,
+    }));
 
     return sendSuccess(res, departmentsWithCounts);
   } catch (err: any) {
@@ -181,22 +204,28 @@ export async function createDepartment(req: AuthRequest, res: Response) {
 // Batches Management
 export async function getBatches(req: AuthRequest, res: Response) {
   try {
-    const batches = await Batch.find().sort({ startYear: -1 });
+    // Tallied in one pass (see getDepartments) rather than a countDocuments
+    // per batch over the whole student collection.
+    const [batches, students] = await Promise.all([
+      Batch.find().sort({ startYear: -1 }),
+      Student.find({ isActive: true }).select('batch').lean(),
+    ]);
 
-    const batchesWithCounts = await Promise.all(
-      batches.map(async (b) => {
-        const studentCount = await Student.countDocuments({ batch: b._id, isActive: true });
-        return {
-          id: b._id.toString(),
-          _id: b._id.toString(),
-          name: b.name,
-          start_year: b.startYear,
-          end_year: b.endYear,
-          is_active: b.isActive ? 1 : 0,
-          student_count: studentCount,
-        };
-      })
-    );
+    const studentCountByBatch = new Map<string, number>();
+    for (const s of students as any[]) {
+      const key = s.batch ? String(s.batch) : '';
+      if (key) studentCountByBatch.set(key, (studentCountByBatch.get(key) ?? 0) + 1);
+    }
+
+    const batchesWithCounts = (batches as any[]).map((b) => ({
+      id: b._id.toString(),
+      _id: b._id.toString(),
+      name: b.name,
+      start_year: b.startYear,
+      end_year: b.endYear,
+      is_active: b.isActive ? 1 : 0,
+      student_count: studentCountByBatch.get(String(b._id)) ?? 0,
+    }));
 
     return sendSuccess(res, batchesWithCounts);
   } catch (err: any) {
@@ -268,36 +297,44 @@ export async function getFacultyList(req: AuthRequest, res: Response) {
       .populate('department')
       .sort({ createdAt: -1 });
 
-    const list = await Promise.all(
-      facultyDocs.map(async (fac: any) => {
-        const menteeCount = await MentorAssignment.countDocuments({
-          mentor: fac._id,
-          status: 'ACTIVE',
-        });
+    // One pass over the ACTIVE assignments instead of a countDocuments per
+    // faculty row (which previously re-scanned the whole assignment collection
+    // once per mentor). The count per mentor is identical: distinct ACTIVE rows.
+    const facultyIds = (facultyDocs as any[]).map((fac) => String(fac._id));
+    const activeAssignments = facultyIds.length
+      ? await MentorAssignment.find({ mentor: { $in: facultyIds }, status: 'ACTIVE' })
+          .select('mentor')
+          .lean()
+      : [];
+    const menteeCountByMentor = new Map<string, number>();
+    for (const assignment of activeAssignments as any[]) {
+      const key = String(assignment.mentor);
+      menteeCountByMentor.set(key, (menteeCountByMentor.get(key) ?? 0) + 1);
+    }
 
-        const user = fac.user || {};
-        const dept = fac.department || {};
+    const list = (facultyDocs as any[]).map((fac: any) => {
+      const user = fac.user || {};
+      const dept = fac.department || {};
 
-        return {
-          id: fac._id.toString(),
-          _id: fac._id.toString(),
-          user_id: user._id ? user._id.toString() : '',
-          employee_id: fac.employeeId,
-          designation: fac.designation,
-          cabin_location: fac.cabinLocation,
-          phone_number: fac.phoneNumber,
-          is_active: fac.isActive ? 1 : 0,
-          full_name: user.fullName || '',
-          email: user.email || '',
-          username: user.username || '',
-          role: user.role || 'FACULTY',
-          department_id: dept._id ? dept._id.toString() : '',
-          department_name: dept.name || '',
-          department_code: dept.code || '',
-          mentee_count: menteeCount,
-        };
-      })
-    );
+      return {
+        id: fac._id.toString(),
+        _id: fac._id.toString(),
+        user_id: user._id ? user._id.toString() : '',
+        employee_id: fac.employeeId,
+        designation: fac.designation,
+        cabin_location: fac.cabinLocation,
+        phone_number: fac.phoneNumber,
+        is_active: fac.isActive ? 1 : 0,
+        full_name: user.fullName || '',
+        email: user.email || '',
+        username: user.username || '',
+        role: user.role || 'FACULTY',
+        department_id: dept._id ? dept._id.toString() : '',
+        department_name: dept.name || '',
+        department_code: dept.code || '',
+        mentee_count: menteeCountByMentor.get(String(fac._id)) ?? 0,
+      };
+    });
 
     // Sort by full_name
     list.sort((a, b) => a.full_name.localeCompare(b.full_name));
@@ -435,6 +472,42 @@ export async function toggleFacultyStatus(req: AuthRequest, res: Response) {
 }
 
 // Delete faculty member and terminate active mentor assignments
+/**
+ * Remove a Faculty member and their login account, terminating any ACTIVE
+ * mentee assignments first so no student is left pointing at a deleted mentor.
+ *
+ * Single-record delete (`deleteFaculty`) and the bulk-delete endpoint BOTH call
+ * this, so the two paths can never diverge. Uploaded files are untouched.
+ */
+export async function cascadeDeleteFaculty(faculty: any): Promise<{
+  facultyId: any;
+  userId: any;
+  employeeId: string;
+  fullName: string;
+}> {
+  const userId = (faculty.user as any)?._id || faculty.user;
+  const employeeId = faculty.employeeId;
+  const fullName = (faculty.user as any)?.fullName || employeeId;
+
+  // Terminate active mentee assignments for this mentor so students are
+  // unassigned safely rather than orphaned.
+  await MentorAssignment.updateMany(
+    { mentor: faculty._id, status: 'ACTIVE' },
+    {
+      status: 'TERMINATED',
+      assignedUntil: new Date(),
+      changeReason: 'Faculty mentor profile deleted by Administrator',
+    }
+  );
+
+  await Promise.all([
+    Faculty.deleteOne({ _id: faculty._id }),
+    User.deleteOne({ _id: userId }),
+  ]);
+
+  return { facultyId: faculty._id, userId, employeeId, fullName };
+}
+
 export async function deleteFaculty(req: AuthRequest, res: Response) {
   const facultyId = req.params.facultyId as string;
   try {
@@ -443,25 +516,7 @@ export async function deleteFaculty(req: AuthRequest, res: Response) {
       return sendError(res, 'Faculty member not found.', 404);
     }
 
-    const facUserId = (faculty.user as any)?._id || faculty.user;
-    const empId = faculty.employeeId;
-    const facName = (faculty.user as any)?.fullName || empId;
-
-    // Terminate active mentee assignments for this mentor so students are unassigned safely
-    await MentorAssignment.updateMany(
-      { mentor: faculty._id, status: 'ACTIVE' },
-      {
-        status: 'TERMINATED',
-        assignedUntil: new Date(),
-        changeReason: 'Faculty mentor profile deleted by Administrator',
-      }
-    );
-
-    // Delete faculty profile and user login account
-    await Promise.all([
-      Faculty.deleteOne({ _id: faculty._id }),
-      User.deleteOne({ _id: facUserId }),
-    ]);
+    const { employeeId: empId, fullName: facName } = await cascadeDeleteFaculty(faculty);
 
     await logAudit({
       userId: req.user!.id,

@@ -625,6 +625,11 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
           {filteredDocs.map((doc, index) => {
             const isPrimaryForm = doc.isPrimary || doc.documentType === 'student_details_form';
             const isPdf = doc.fileType?.includes('pdf') || doc.fileName?.toLowerCase().endsWith('.pdf');
+            // An achievement certificate whose bytes are genuinely missing from
+            // the server is still listed (never hidden), but its file actions are
+            // disabled so the student is shown a clear message instead of a
+            // broken preview.
+            const fileMissing = doc.fileAvailable === false;
             // Authoritative capabilities from the API. Every action button below
             // is gated on these, never on the role alone.
             const perms = readPermissions(doc);
@@ -714,6 +719,22 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
                         {isPrimaryForm && <ShieldCheck size={12} color="var(--gold-400)" aria-hidden="true" />}
                         Type: {docTypeLabel}
                       </span>
+
+                      {doc.source === 'progress' && (
+                        <span
+                          style={{
+                            fontSize: '0.68rem',
+                            fontWeight: 700,
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                            backgroundColor: '#F5F3FF',
+                            color: '#6D28D9',
+                          }}
+                          title="Uploaded from My Progress (Achievements). Manage this certificate from the My Progress tab."
+                        >
+                          From My Progress
+                        </span>
+                      )}
                     </div>
 
                     {/* Verification Status Badge */}
@@ -825,6 +846,27 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
                         <strong>Rejection Reason:</strong> {doc.rejectionReason || 'Requires revision.'}
                       </div>
                     )}
+
+                    {/* Missing-file note: the record exists but its bytes are
+                        genuinely absent from the server. Told plainly, never
+                        hidden and never faked. */}
+                    {fileMissing && (
+                      <div
+                        style={{
+                          marginTop: '8px',
+                          padding: '6px 8px',
+                          backgroundColor: '#FFFBEB',
+                          border: '1px solid #FDE68A',
+                          borderRadius: '6px',
+                          color: '#92400E',
+                          fontSize: '0.75rem',
+                        }}
+                      >
+                        <strong>File unavailable.</strong> This record exists but its stored file is
+                        missing on the server. Ask your mentor to check it or re-upload the
+                        certificate from My Progress.
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -854,6 +896,8 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
                         fontWeight: 600,
                       }}
                       onClick={() => openPreview(doc)}
+                      disabled={fileMissing}
+                      title={fileMissing ? 'The stored file is missing on the server.' : 'Preview this document'}
                     >
                       <Eye size={13} /> View
                     </button>
@@ -870,6 +914,8 @@ export const StudentDocumentsManager: React.FC<StudentDocumentsManagerProps> = (
                         fontWeight: 600,
                       }}
                       onClick={() => handleDownload(doc)}
+                      disabled={fileMissing}
+                      title={fileMissing ? 'The stored file is missing on the server.' : 'Download this document'}
                     >
                       <Download size={13} /> Download
                     </button>

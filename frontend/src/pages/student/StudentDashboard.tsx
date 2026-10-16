@@ -688,7 +688,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
                   className="btn btn-secondary btn-sm"
                   onClick={() => handleDownloadPdf('mentor-documents')}
                   disabled={pdfDownloading}
-                  title="Download the mentor documents (meetings / counselling / evidence) PDF"
+                  title="Download the mentor documents (meetings / mentoring / evidence) PDF"
                 >
                   Mentor Documents
                 </button>
@@ -1634,14 +1634,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
         <div>
           <PageHeader
             eyebrow="Student"
-            title="5-Domain Counselling & Mentoring History"
-            subtitle="Counselling sessions and mentor assignment history maintained by the institution."
+            title="5-Domain Mentoring History"
+            subtitle="Mentoring sessions and mentor assignment history maintained by the institution."
           />
 
           {/* Counselling Table */}
           <div className="card" style={{ marginBottom: '1.5rem' }}>
             <div className="card-header">
-              <h3 className="card-title"><BookOpen size={18} /> Counselling Sessions Recorded</h3>
+              <h3 className="card-title"><BookOpen size={18} /> Mentoring Sessions Recorded</h3>
             </div>
             {profile?.counsellingRecords && profile.counsellingRecords.length > 0 ? (
               <div className="table-responsive">
@@ -1670,7 +1670,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
               </div>
             ) : (
               <div style={{ textAlign: 'center', padding: '1.5rem', color: '#64748B', fontSize: '0.85rem' }}>
-                No counselling records available.
+                No mentoring records available.
               </div>
             )}
           </div>
@@ -1752,7 +1752,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ currentTab, 
               <FileText size={36} />
             </div>
             <p style={{ fontSize: '0.9rem', color: '#64748B', marginBottom: '1.75rem', lineHeight: 1.6 }}>
-              Download your complete verified academic dossier containing demographics, parents information, schooling, semesters 1 to 8 CGPA/arrears, mentor assignment lineage, and all Saturday meeting & counselling logs.
+              Download your complete verified academic dossier containing demographics, parents information, schooling, semesters 1 to 8 CGPA/arrears, mentor assignment lineage, and all Saturday meeting & mentoring logs.
             </p>
             <button
               className="btn btn-pdf"

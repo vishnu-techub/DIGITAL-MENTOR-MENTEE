@@ -150,6 +150,15 @@ export async function getStudents(req: AuthRequest, res: Response) {
       }).select('student');
       const studentIds = activeAssignments.map((a) => a.student);
       filter._id = { $in: studentIds };
+    } else if (assignmentStatus === 'assigned' || assignmentStatus === 'unassigned') {
+      // Mentoring-coverage filter. Applied at the QUERY level (not to the page
+      // after it is fetched) so `total` and the pager are correct: filtering the
+      // returned page would report the unfiltered total and hide reachable rows.
+      const activeAssignments = await MentorAssignment.find({ status: 'ACTIVE' }).select(
+        'student'
+      );
+      const assignedIds = activeAssignments.map((a) => a.student);
+      filter._id = assignmentStatus === 'assigned' ? { $in: assignedIds } : { $nin: assignedIds };
     }
 
     // ---- Pagination -------------------------------------------------------
@@ -1963,6 +1972,48 @@ export async function clearArrear(req: AuthRequest, res: Response) {
   }
 }
 
+/**
+ * Remove a student and every associated institutional record.
+ *
+ * Single-record delete (`deleteStudent`) and the bulk-delete endpoint BOTH call
+ * this, so the two paths can never diverge. It deletes the metadata rows only:
+ * uploaded files on disk are intentionally left untouched, exactly as the
+ * original single-record delete always did (the files are not exposed once the
+ * owning records are gone, and preserving them avoids destroying evidence).
+ *
+ * Returns the identifiers needed for an audit entry.
+ */
+export async function cascadeDeleteStudent(student: any): Promise<{
+  studentId: any;
+  userId: any;
+  registerNumber: string;
+  fullName: string;
+}> {
+  const studentId = student._id;
+  const userId = student.user;
+
+  await Promise.all([
+    Student.deleteOne({ _id: studentId }),
+    User.deleteOne({ _id: userId }),
+    AcademicRecord.deleteMany({ student: studentId }),
+    MentorAssignment.deleteMany({ student: studentId }),
+    Meeting.deleteMany({ student: studentId }),
+    CounsellingRecord.deleteMany({ student: studentId }),
+    MonthlyProgress.deleteMany({ student: studentId }),
+    // StudentDocument keys its owner as `studentId` (not `student`); the old
+    // single-record delete filtered on the wrong field, so document metadata
+    // rows were silently orphaned. Deleted correctly here for both paths.
+    StudentDocument.deleteMany({ studentId: studentId }),
+  ]);
+
+  return {
+    studentId,
+    userId,
+    registerNumber: student.registerNumber,
+    fullName: student.fullName,
+  };
+}
+
 // Admin permanently deletes student account and associated data
 export async function deleteStudent(req: AuthRequest, res: Response) {
   const id = req.params.id as string;
@@ -1973,22 +2024,7 @@ export async function deleteStudent(req: AuthRequest, res: Response) {
       return sendError(res, 'Student profile not found.', 404);
     }
 
-    const studentId = student._id;
-    const userId = student.user;
-    const regNo = student.registerNumber;
-    const fullName = student.fullName;
-
-    // Delete associated institutional records
-    await Promise.all([
-      Student.deleteOne({ _id: studentId }),
-      User.deleteOne({ _id: userId }),
-      AcademicRecord.deleteMany({ student: studentId }),
-      MentorAssignment.deleteMany({ student: studentId }),
-      Meeting.deleteMany({ student: studentId }),
-      CounsellingRecord.deleteMany({ student: studentId }),
-      MonthlyProgress.deleteMany({ student: studentId }),
-      StudentDocument.deleteMany({ student: studentId }),
-    ]);
+    const { studentId, registerNumber: regNo, fullName } = await cascadeDeleteStudent(student);
 
     await logAudit({
       userId: req.user!.id,

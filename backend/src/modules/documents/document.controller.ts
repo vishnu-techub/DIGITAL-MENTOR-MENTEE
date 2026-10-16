@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { StudentDocument, Student } from '../../models/index.js';
+import { StudentDocument, Student, StudentProgress } from '../../models/index.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
@@ -18,8 +18,19 @@ import {
   isTerminal,
   type RecordState,
 } from '../../utils/record-permission.util.js';
-import { syncStudentDetailsPdf } from './student-details-pdf.service.js';
-import { resolveWritableUploadsDir, locateStoredUpload } from '../../config/storage.js';
+import { syncStudentDetailsPdf, STUDENT_DETAILS_FORM_RENDER_VERSION } from './student-details-pdf.service.js';
+import {
+  resolveWritableUploadsDir,
+  locateStoredUpload,
+  sniffStoredFileType,
+} from '../../config/storage.js';
+// Reuse the ONE canonical certificate-unification routine the mentor review
+// screen already uses, so My Documents and the mentor view can never disagree
+// about which physical certificate each record represents (no duplicates).
+import {
+  buildUnifiedProgressRecords,
+  type UnifiedProgressRecord,
+} from '../student-progress/student-progress.controller.js';
 import { watermarkDocumentBuffer, isWatermarkableMime, WATERMARK_TEXT } from '../../services/document-watermark.service.js';
 import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
 
@@ -244,7 +255,7 @@ async function ensureWatermarkedCopy(doc: any): Promise<string | null> {
  * version. The original stays on disk untouched as the permanent source of
  * truth, and every file endpoint still passes the same ownership check first.
  */
-async function resolveServedDocumentPath(doc: any): Promise<string | null> {
+export async function resolveServedDocumentPath(doc: any): Promise<string | null> {
   // A watermarked copy — existing or freshly generated from the untouched
   // original — is always preferred, so old and new records both display the
   // KSRCE watermark. Every file endpoint still passes its ownership check first.
@@ -296,6 +307,110 @@ async function findStudent(idOrReg: string) {
     if (byId) return byId;
   }
   return Student.findOne({ registerNumber: String(idOrReg).toUpperCase() });
+}
+
+/**
+ * Certificates a student uploads through the achievement ("My Progress")
+ * module live in `StudentProgress`, NOT in `StudentDocument`. My Documents must
+ * still show them, so they are read through the SAME de-duplicating unification
+ * routine the mentor review screen already uses and normalised onto the
+ * document response shape.
+ *
+ * Important guarantees:
+ *   - No StudentDocument row is ever created for these, so nothing is
+ *     duplicated in storage.
+ *   - A certificate whose stored file already has a StudentDocument row is
+ *     excluded here (the unification routine folds it in), so it is listed
+ *     exactly once.
+ *   - These entries are DISPLAY-ONLY in this view. The record's lifecycle
+ *     (edit / submit / verify / delete) belongs to the achievement module, so
+ *     the capability set is deliberately read-only and never points at the
+ *     document endpoints.
+ */
+async function formatAchievementCertificates(studentId: any, req: AuthRequest): Promise<any[]> {
+  const unified = await buildUnifiedProgressRecords(studentId);
+
+  return unified
+    .filter((r) => r.source === 'PROGRESS')
+    .map((r: UnifiedProgressRecord) => {
+      const located = r.certificateUrl
+        ? locateStoredUpload(r.certificateUrl, { fileName: r.fileName })
+        : null;
+      const filePath = located?.path ?? null;
+      const available = Boolean(filePath && fs.existsSync(filePath));
+
+      let fileType = '';
+      let fileSize = 0;
+      if (available && filePath) {
+        try {
+          fileSize = fs.statSync(filePath).size;
+        } catch {
+          /* best effort — size is presentation only */
+        }
+        fileType = sniffStoredFileType(filePath) || '';
+      }
+      if (!fileType) {
+        const lower = String(r.fileName || r.certificateUrl || '').toLowerCase();
+        fileType = lower.endsWith('.pdf')
+          ? 'application/pdf'
+          : lower.endsWith('.png')
+          ? 'image/png'
+          : /\.(jpe?g)$/.test(lower)
+          ? 'image/jpeg'
+          : 'application/octet-stream';
+      }
+
+      const base = deriveRecordPermissions(r.status, req.user?.role);
+      const fileName = r.fileName || path.basename(r.certificateUrl || '') || 'Certificate';
+
+      return {
+        id: String(r._id),
+        _id: String(r._id),
+        studentId: String(r.studentId),
+        documentType: 'certificate',
+        isPrimary: false,
+        // Marks an achievement-module certificate. Older consumers ignore the
+        // extra fields, so this stays backward compatible.
+        source: 'progress',
+        sourceCollection: 'StudentProgress',
+        // Whether the bytes are actually on disk, so the UI can explain a
+        // genuinely missing file instead of rendering a broken preview.
+        fileAvailable: available,
+        fileName,
+        fileUrl: r.certificateUrl,
+        // Served by the document file endpoints, which resolve StudentProgress
+        // ids as well as StudentDocument ids (same ownership rules).
+        fileUrlDownload: `/api/documents/${r._id}/download`,
+        fileUrlView: `/api/documents/${r._id}/file`,
+        fileType,
+        fileSize,
+        watermarkStatus: 'unsupported',
+        watermarkText: '',
+        title: r.activityName || fileName,
+        category: r.category || 'Other',
+        eventName: r.eventName || '',
+        organizer: r.organization || '',
+        eventDate: r.date || '',
+        description: r.description || '',
+        verificationStatus: r.status,
+        permissions: {
+          ...base,
+          canEdit: false,
+          canDelete: false,
+          canSubmit: false,
+          canReview: false,
+          canConfirm: false,
+          canReject: false,
+          reason: base.reason ?? 'Manage this certificate from My Progress.',
+        },
+        rejectionReason: r.rejectionReason || '',
+        rejectedByName: null,
+        rejectedDate: null,
+        uploadedByName: null,
+        uploadedAt: r.createdAt,
+        updatedAt: r.createdAt,
+      };
+    });
 }
 
 // 1. Upload Student Certificate / Document
@@ -474,12 +589,17 @@ export async function getStudentDocuments(req: AuthRequest, res: Response) {
       return sendError(res, access.message, access.status);
     }
 
-    // Auto-generate the Student Details Form once when missing.
+    // Auto-generate the Student Details Form once when missing, and REFRESH it
+    // in place when it was produced by an older renderer version. The form is a
+    // derived artefact (never an uploaded certificate), so a refresh is safe and
+    // prevents a stale pre-fix PDF from being served after a backend update.
     const existingForm = await StudentDocument.findOne({
       studentId: student._id,
       $or: [{ isPrimary: true }, { documentType: 'student_details_form' }],
     });
     if (!existingForm && student.profileCompleted) {
+      await syncStudentDetailsPdf(student._id);
+    } else if (existingForm && existingForm.renderVersion !== STUDENT_DETAILS_FORM_RENDER_VERSION) {
       await syncStudentDetailsPdf(student._id);
     }
 
@@ -521,7 +641,12 @@ export async function getStudentDocuments(req: AuthRequest, res: Response) {
       updatedAt: d.updatedAt,
     }));
 
-    return sendSuccess(res, formatted);
+    // Achievement certificates live in StudentProgress, not StudentDocument.
+    // Merge them in (de-duped against the document store) so My Documents shows
+    // the student's uploaded certificates WITHOUT creating a duplicate record.
+    const achievementCertificates = await formatAchievementCertificates(student._id, req);
+
+    return sendSuccess(res, [...formatted, ...achievementCertificates]);
   } catch (err: any) {
     console.error('getStudentDocuments error:', err);
     return sendError(res, 'Failed to retrieve student documents.', 500);
@@ -529,8 +654,37 @@ export async function getStudentDocuments(req: AuthRequest, res: Response) {
 }
 
 /**
+ * Send stored bytes with the standard private-document headers. Shared by the
+ * StudentDocument and StudentProgress branches so both paths are identical.
+ */
+function sendStoredFile(
+  res: Response,
+  filePath: string,
+  mime: string | undefined | null,
+  disposition: 'inline' | 'attachment',
+  safeName: string
+) {
+  res.setHeader('Content-Type', mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `${disposition}; filename="${safeName}"`);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  // Private student data, and the served bytes can change (a watermark is
+  // generated on access for pre-fix records). Never let a browser reuse a
+  // previously cached copy.
+  res.setHeader('Cache-Control', 'no-store');
+  return res.sendFile(filePath);
+}
+
+/**
  * Serve a document's bytes after verifying the caller may access the owner.
  * `disposition` selects inline viewing (PDF/images) or forced download.
+ *
+ * A certificate uploaded through the achievement ("My Progress") module is
+ * stored as a `StudentProgress` row, not a `StudentDocument`. The same file
+ * endpoints therefore resolve BOTH id spaces, always passing the record's owner
+ * through the single canonical `checkStudentAccess` rule, so a progress
+ * certificate can be previewed/downloaded exactly like a document one without
+ * duplicating either record.
  */
 async function streamDocumentFile(req: AuthRequest, res: Response, disposition: 'inline' | 'attachment') {
   const documentId = req.params.documentId as string;
@@ -540,37 +694,56 @@ async function streamDocumentFile(req: AuthRequest, res: Response, disposition: 
   }
 
   const doc = await StudentDocument.findById(documentId);
-  if (!doc) {
+  if (doc) {
+    const student = await Student.findById(doc.studentId);
+    if (!student) {
+      return sendError(res, 'The owning student record no longer exists.', 404);
+    }
+
+    const access = await checkStudentAccess(req.user, student);
+    if (!access.allowed) {
+      return sendError(res, access.message, access.status);
+    }
+
+    const filePath = await resolveServedDocumentPath(doc);
+    if (!filePath || !fs.existsSync(filePath)) {
+      return sendError(res, 'Physical file not found on server.', 404);
+    }
+
+    // Safe download filename: strip any path components the stored name may carry.
+    const safeName = path.basename(doc.fileName || 'document').replace(/["\r\n]/g, '_');
+    return sendStoredFile(res, filePath, doc.fileType, disposition, safeName);
+  }
+
+  // Not a document-store record: it may be an achievement certificate. Resolve
+  // it through StudentProgress under the exact same ownership rules, serving the
+  // ORIGINAL stored file (progress certificates are never watermarked).
+  const progress = await StudentProgress.findById(documentId);
+  if (!progress) {
     return sendError(res, 'Document not found.', 404);
   }
 
-  const student = await Student.findById(doc.studentId);
-  if (!student) {
+  const owner = await Student.findById(progress.studentId);
+  if (!owner) {
     return sendError(res, 'The owning student record no longer exists.', 404);
   }
 
-  const access = await checkStudentAccess(req.user, student);
+  const access = await checkStudentAccess(req.user, owner);
   if (!access.allowed) {
     return sendError(res, access.message, access.status);
   }
 
-  const filePath = await resolveServedDocumentPath(doc);
+  const filePath =
+    locateStoredUpload(progress.certificateUrl, { fileName: progress.fileName })?.path ?? null;
   if (!filePath || !fs.existsSync(filePath)) {
     return sendError(res, 'Physical file not found on server.', 404);
   }
 
-  // Safe download filename: strip any path components the stored name may carry.
-  const safeName = path.basename(doc.fileName || 'document').replace(/["\r\n]/g, '_');
-
-  res.setHeader('Content-Type', doc.fileType || 'application/octet-stream');
-  res.setHeader('Content-Disposition', `${disposition}; filename="${safeName}"`);
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
-  // Private student data, and the served bytes can change (a watermark is
-  // generated on access for pre-fix records). Never let a browser reuse a
-  // previously cached copy.
-  res.setHeader('Cache-Control', 'no-store');
-  return res.sendFile(filePath);
+  const mime = progress.fileType || sniffStoredFileType(filePath) || 'application/octet-stream';
+  const safeName = path
+    .basename(progress.fileName || progress.certificateUrl || 'certificate')
+    .replace(/["\r\n]/g, '_');
+  return sendStoredFile(res, filePath, mime, disposition, safeName);
 }
 
 /** Inline view used by the certificate preview. Never forces a download. */

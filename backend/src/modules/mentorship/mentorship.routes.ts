@@ -12,10 +12,15 @@ import {
 import { authenticate } from '../../middleware/auth.middleware.js';
 import { authorize } from '../../middleware/rbac.middleware.js';
 import { ROLES } from '../../config/constants.js';
+import bulkAssignmentRoutes from './bulk-assignment.routes.js';
 
 const router = Router();
 
 router.use(authenticate);
+
+// Bulk mentee assignment (template / validate / assign / report). Declared
+// before the single-student routes so its `/bulk/*` paths are never shadowed.
+router.use('/bulk', bulkAssignmentRoutes);
 
 // Download Overall Mentee Data as Institutional Excel (.xlsx) (Faculty, Admin, HOD)
 router.get('/export/mentees', authorize(ROLES.FACULTY, ROLES.HOD, ROLES.ADMIN), exportMentorMenteesExcel);

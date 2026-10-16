@@ -17,9 +17,11 @@ import {
   StudentProgress,
   StudentEditRequest,
   AcademicEditRequest,
+  Subject,
 } from '../models/index.js';
 import { connectDB } from '../config/database.js';
 import { dataDir, describeDataDir } from '../services/localStorage.service.js';
+import { backfillSubjectScopes } from '../models/Subject.model.js';
 
 /**
  * ============================================================================
@@ -58,6 +60,7 @@ const ALL_MODELS = [
   StudentProgress,
   StudentEditRequest,
   AcademicEditRequest,
+  Subject,
 ];
 
 /** Collections that must never lose data, and so must never expire. */
@@ -71,6 +74,7 @@ const PERMANENT_MODELS = [
   Meeting,
   MonthlyProgress,
   User,
+  Subject,
 ];
 
 const ID_PATTERN = /^[0-9a-f]{24}$/i;
@@ -82,6 +86,14 @@ export async function runMigrations(): Promise<void> {
     await connectDB();
 
     await Promise.all(ALL_MODELS.map((model) => model.syncIndexes()));
+
+    // Upgrade subject records written before multi-select existed: copy their
+    // scalar department/semester/year/regulation into the canonical arrays. This
+    // is idempotent and does nothing to a store that has no legacy subjects.
+    const backfilledSubjects = await backfillSubjectScopes();
+    if (backfilledSubjects > 0) {
+      console.log(`✓ Backfilled ${backfilledSubjects} subject record(s) into multi-select scope arrays.`);
+    }
 
     let totalRecords = 0;
     const report: string[] = [];

@@ -17,6 +17,11 @@ import {
   getMyIdentityEditRequests,
 } from './student-edit-request.controller.js';
 import {
+  getStudentSelectionIds,
+  bulkDeleteStudents,
+  bulkDownloadStudentDocuments,
+} from './student-bulk.controller.js';
+import {
   createAcademicEditRequest,
   getMyAcademicEditRequests,
   listAcademicEditRequests,
@@ -74,6 +79,17 @@ router.post('/:id/complete-profile', authorize(ROLES.STUDENT, ROLES.ADMIN), subm
 
 // Directory listing (Admin, HOD, own assigned mentees only — scoped in controller)
 router.get('/', authorize(ROLES.ADMIN, ROLES.HOD, ROLES.FACULTY), getStudents);
+
+// ---------------------------------------------------------------------------
+// Bulk actions (Student Master)
+// ADMIN, plus HOD scoped to its own department. The controller re-validates
+// every id and re-checks department scope per record, so a forged payload can
+// never read or delete outside the caller's scope. Mounted before `/:id` so the
+// literal paths always win.
+// ---------------------------------------------------------------------------
+router.get('/selection/ids', authorize(ROLES.ADMIN, ROLES.HOD), getStudentSelectionIds);
+router.post('/bulk-delete', authorize(ROLES.ADMIN, ROLES.HOD), bulkDeleteStudents);
+router.post('/bulk-documents', authorize(ROLES.ADMIN, ROLES.HOD), bulkDownloadStudentDocuments);
 
 // Admin reset student password
 router.post('/:id/reset-password', authorize(ROLES.ADMIN), resetStudentPassword);

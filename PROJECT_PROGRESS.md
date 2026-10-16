@@ -22,6 +22,586 @@ Status legend: `PASS` | `PARTIAL` | `FAIL` | `PENDING`
 
 ## Current Status
 
+- **Admin overview stat cards are now clickable drill-downs + an "About Us" search result (2026-10-16):** each of the seven Admin overview cards (Total Students, Total Faculty, Assigned Mentees, Unassigned Students, Active Arrears, Mentoring Sessions, Uploaded Documents) is now a focusable `role="button"` control (pointer cursor, hover/focus states, chevron affordance) that opens a modal listing the **real records** behind the number. Four cards reuse existing paginated endpoints — Total Students / Assigned / Unassigned via `GET /api/students` (`isActive=true`, and the previously **ignored** `assignmentStatus` query param is now applied at the QUERY level so `total` and the pager are correct), Total Faculty via `GET /api/admin/faculty`; the remaining three use new ADMIN-only endpoints `GET /api/admin/dashboard-details/{active-arrears,mentoring-sessions,documents}` (no college-wide list for them existed, and per-student fetching would be N+1). Each detail aggregate is derived with the **same** rule as its card (`calculateArrearStatistics(...).activeArrearsCount`; `CounsellingRecord.countDocuments()`; `StudentDocument.countDocuments()`), so totals reconcile. Modals match the navy/gold system, show loading/empty/error states, debounced search and pagination, close on Escape/backdrop and lock background scroll. Separately, typing the **exact** phrase `About Us` (case-insensitive, trimmed) in the Mentor Assignment search surfaces an `About Us — View Page` result (an incomplete `Abou` never triggers it) that navigates (click **or** Enter) to a new standalone `/about` route built only from verified institutional facts (`backend/src/modules/pdf/institutional-header.ts`); ordinary mentor search is unchanged. **Verification:** new backend suite `test:admin-stat-details` **9/9** (detail totals == `/api/admin/dashboard-stats`, search/pagination honesty, assigned+unassigned == total, HOD 403 / anonymous 401 on all three detail endpoints, client-route lock); **headless-Chrome CDP** run `.runtime-verify/admin-stats/verify.mjs` **10/10** (7 cards focusable + pointer; each opens the correctly-titled dialog with real rows and Escape closes it; Total Students card=157 == dialog=157; Assigned 103 + Unassigned 54 == Total 157; Enter opens a card; exact `About Us` shows the result and navigates to `/about` while `Abou` does not; Enter navigates; normal mentor search still returns rows; 390px mobile opens a fitting dialog; 0 console errors / 0 exceptions); regressions `test:admin-routes` 8/8, `test:directory` 16/16, `test:admin` 23/23; backend + frontend `tsc --noEmit` exit 0; frontend `npm run build` exit 0 (emits the `AboutUsPage` chunk). Branch `temp`, uncommitted.
+
+- **Kavitha 3D robot floating launcher added to the AI assistant (2026-10-16):** the AI assistant launcher now uses the **approved 3D Kavitha robot image** (`frontend/public/assets/kavitha-3d-robot.png`, 385×405 RGBA) in a circular deep-navy badge at the **bottom-right corner**, with a gentle **floating animation (`kavitha-float` 3.8s)**, a **subtle hover lift/scale and electric-blue glow (`kavitha-glow`)**, and a **tooltip "Kavitha — AI Assistant"** on hover/focus. Accessibility: `aria-label` "Open/Close Kavitha — AI Assistant", `aria-expanded`, `aria-haspopup="dialog"`, decorative images use `alt=""` + `aria-hidden="true"`, focus-visible outline; **prefers-reduced-motion** is respected. Clicking opens/closes the **existing Kavitha chatbot**, preserving conversation history and AI integration (`api.ai.*`, `localStorage.aiAssistant_lastConversationId`). The asset is served (`/assets/kavitha-3d-robot.png` → HTTP 200 image/png 238,757 bytes), intrinsic dimensions (385×405) prevent layout shift, and the panel is positioned above the launcher. **Live browser verification** (headless Chrome CDP, scratch backend + Vite frontend) — **25/25 PASS**: launcher visible, robot image loaded (naturalWidth>0), mask/float structure, tooltip, a11y, sizes (88px desktop / 72px mobile), on top of content, panel opens/closes (single panel), header shows "Kavitha — AI Assistant" with header robot, chat request issued + **real Gemini reply received**, retry-on-blocked-request works, panel fits mobile viewport, reduced-motion honoured, 0 console errors, 0 exceptions. Frontend `tsc --noEmit` exit 0; `npm run build` exit 0 (dist includes the asset). Branch `temp`, uncommitted.\n\n- **FIX — College PDF header consolidated + diagonal watermark corrected (2026-10-15):** the shared institutional
+  header was re-implemented as **one** spec (`backend/src/modules/pdf/institutional-header.ts`) used by the **Repeating
+  per-page record-book header, the annexure cover sheets, and the legacy jsPDF fallback** — previously each drew its own
+  slightly different copy (logo box 15 vs 17mm, name 13 vs 14pt, the annexure cover **omitted** the affiliation/address
+  lines, dividers at 28.4 / 28.5 / 33mm, margins 12 vs 14mm). The cover sheet now prints the **full** header (navy bar,
+  logo top-left, centred `K.S.R. COLLEGE OF ENGINEERING`, affiliation subtitle, address) with the **`Annexure N` label
+  below the college name** and the divider beneath, and the record-book cover margin is now 12mm (matching the base
+  pages). The `K S R C E` watermark now runs **bottom-left → top-right** (a `/` diagonal; was `\`) and is **clearly
+  visible but still translucent** — CSS layer changed from `rgba(128,128,128,0.08)` @ `rotate(45deg)` (composited ≈245,
+  effectively invisible) to `rgba(102,102,102,0.26)` @ `rotate(-45deg)` (composited ≈215). **Verified on the real
+  generated PDF** (live backend `:5050`, `.runtime-verify/pdf/live-*.pdf`): header centred on every page
+  (name 12.3mm, subtitle 18.3mm, address 21.2mm, `midOff=+0pt`), annexure cover `Annexure 1` at 24.7mm + divider at
+  30.6mm, verbatim certificate page preserved (landscape, no header), watermark measured `meanX up 108mm → down 88mm`
+  (`/`) with `minGray 216` (was 221); `test:record-book-header` **75/75** (new watermark-visibility check included),
+  `test:record-book-certificates` **27/27**, `test:runtime` **38/38**, `test:certificate-visibility` **22/22**,
+  `test:document-watermark` **44/44**, `test:document-watermark-runtime` **46/46**, `test:leaderboard` **35/35**,
+  `test:state-machine` **137/137**, `test:security-hardening` **8/8**; backend + frontend `tsc` clean; both `npm run
+  build` exit 0. Branch `temp`, uncommitted.
+
+- **BUG FIX — uploaded achievement certificates missing from the Official Record Book (PDF) (2026-10-15):** a certificate a student uploaded through
+  **My Progress & Achievements** appeared in the portal (and, after the previous fix, in My Documents) but the downloaded **Official Record Book (PDF)**
+  (`GET /api/pdf/student/:id?mode=full|mentor-documents`) printed "**0 student-uploaded document(s) on record**" and appended **no** certificate pages.
+  **Root cause:** the record-book data collector read **only** `StudentDocument` — the same collection split as the My Documents bug — and on a real
+  record every `StudentDocument` row is the auto-generated `student_details_form` (listed, but deliberately never self-embedded), so the actual
+  certificate (a `StudentProgress` row) was neither listed nor attached. The legacy jsPDF fallback had the identical defect in its own query.
+  **Fix (no duplicates, no re-upload, points untouched):** a new shared collector `collectStudentDocumentArchive` reads **both** collections, maps them onto
+  the existing record-book shape (`source: 'DOCUMENT' | 'PROGRESS'`) and de-duplicates by one shared stored-file identity rule
+  (`backend/src/utils/uploaded-file-key.util.ts`, now also used by `student-progress.controller.ts`); **both** renderers use it; records with no file
+  attached get a clear, honest "no certificate file attached" message instead of the misleading "administrator repair" wording; the annexure cover sheet
+  names the real upload channel; and `internal` mode (marks-only) no longer appends document annexures, matching the legacy renderer.
+  **Verified on the real generated PDF:** `mode=full` 3 → **5 pages**, certificate listed and its original `adobe.pdf` text **reproduced verbatim** on p5;
+  `mode=mentor-documents` 2 → **4 pages**; a live upload→regenerate→delete round trip **17/17** (2 docs / 2 covers with both texts, then PDF restored
+  **byte-identical**, file removed, rows restored, leaderboard unchanged); new `test:record-book-certificates` **27/27**; regressions
+  `test:record-book-header` **74/74**, `test:certificate-visibility` **22/22**, `test:runtime` **38/38**, `test:document-watermark-runtime` **46/46**,
+  `test:leaderboard` **35/35**, `test:state-machine` **137/137**, `test:security-hardening` **8/8**; backend + frontend `tsc` clean; backend + frontend
+  `npm run build` exit 0. Branch `temp`, uncommitted.
+
+- **BUG FIX — achievement certificates missing from a student's "My Documents" (2026-10-15):** a certificate a student uploaded through
+  **My Progress & Achievements** did not appear on the **My Documents** tab even though it was visible in My Progress and the achievement
+  points/leaderboard worked. **Root cause:** the certificate lives in the achievement/participation ledger (`StudentProgress`), a *different*
+  collection from the document store (`StudentDocument`) that `getStudentDocuments` read — and the file endpoints (`/api/documents/:id/file|download`)
+  resolved **only** `StudentDocument` ids, so the stored file could not be fetched either (`/uploads/*` is authenticated and resolves only via
+  `StudentDocument`). **Fix (backend + one frontend file; no migration, no duplicate records):** `getStudentDocuments` now merges the student's
+  achievement certificates onto the document list by reusing the **one canonical** de-duplicating routine the mentor review screen already uses
+  (`buildUnifiedProgressRecords`), normalised onto the document shape (`source:'progress'`, real `verificationStatus`, `fileAvailable`, read-only
+  capabilities); `streamDocumentFile` resolves `StudentProgress` ids too under the **same** `checkStudentAccess` ownership rule, serving the
+  **original** bytes; the My Documents card tags them "From My Progress" and disables View/Download with a clear note when `fileAvailable === false`.
+  A file already represented by a `StudentDocument` is folded by the shared routine, so it is listed **exactly once** and nothing is duplicated.
+  **Points untouched** — no point value, eligibility rule, ranking, verification or scoring code changed; leaderboard totals verified identical.
+  **Verified:** real **headless Chrome** (CDP, `.runtime-verify/cert/browser-docs.mjs`) **14/14 PASS** — certificate card displayed, tagged, exactly
+  one, View previews the **certificate** via a secure blob iframe (`/api/documents/6acfbc…/file` 200, title `adobe.pdf`), 0 error boundary / 0
+  console errors; live API probes confirmed owner preview/download 200, anonymous 401, other student 403, no duplicate, and upload→appears→cleanup;
+  new `test:certificate-visibility` **22/22**, `test:runtime` **38/38**, `test:document-watermark-runtime` **46/46**, `test:leaderboard` **35/35**,
+  `test:state-machine` **137/137**, `test:security-hardening` **8/8**; backend `tsc` + frontend `tsc`/`vite build` clean. Branch `temp`, uncommitted.
+
+- **BUG FIX — Achievement Leaderboard "Something Went Wrong" (Rules-of-Hooks violation) (2026-10-15):** the student
+  (and every role's) **Achievement Leaderboard** page rendered the KSRCE error boundary — "Something Went Wrong — An
+  unexpected error occurred." — even though `/api/leaderboard` returned **200** with real data. **Root cause
+  (`frontend/src/components/leaderboard/LeaderboardView.tsx` only):** the 2026-10-15 performance-optimisation pass added a
+  `useMemo` for the derived presentation **after** two early returns (`if (error) return …;` and `if (!data) return
+  <LeaderboardSkeleton/>;`), so the hook count changed between renders — the loading render (`data === null`) ran
+  `useState×3 + useCallback + useEffect` (**5 hooks**); the loaded render additionally ran the `useMemo` (**6**) → React
+  threw `Rendered more hooks than during the previous render. at LeaderboardView (…:244)`, which the nearest `ErrorBoundary`
+  turned into the "Something Went Wrong" screen. **Fix:** hoisted `entries` + the whole `derived = useMemo(…)` block to run
+  **unconditionally above both early returns**, made the memo null-safe for the loading render (`data?.entries ?? []`,
+  `(data?.verifiedAchievements ?? 0) > 0`, `data?.me ? … : null`), deleted the duplicated block and left an explanatory
+  comment; hook order is now stable on every render. No backend/API/scoring/RBAC/styling/dependency change. **Audit:** all
+  9 other `useMemo` sites in the frontend (`PrincipalDashboard`, `AdminMentoringDashboard`, `HodMarksManagement`,
+  `AdminSubjectManagement`, `AdminBulkUpload`, `MarksEntryTable`, `ClassRosterPanel`, `MultiSelect`, `BulkAssignMentees`)
+  already sit **before** their early returns — `HodDashboard` even carries an explicit comment about it — so `LeaderboardView`
+  was the only wrong site. **Verified in a real browser** (headless Chrome via CDP, dev server 3000 + real backend 5050,
+  logged in as student `73152421125`): pre-fix **reproduced** (error boundary + the exact Rules-of-Hooks
+  console error + 200 on the API); post-fix **8/8 PASS** — `.lb-root` present, hero "Achievement Leaderboard", **157 students
+  in scope**, 0 error-boundary, 0 exceptions, **0 console errors**. Regressions: `test:leaderboard` **35/35**; frontend
+  `tsc --noEmit` **exit 0**; `vite build` **exit 0**. Harness kept at `.runtime-verify/achv/verify.mjs`. Branch `temp`,
+  uncommitted, no commit/push.
+
+- **Admin Subject Management + subject-aware marks upload (2026-10-15):** the subject list that marks are entered
+  against was previously *implicit* — `InternalMark` stored a denormalised `subjectCode`/`subjectName`/`semesterNumber`
+  and the selectable subjects were derived from whatever marks already existed, so an Admin could not define a subject
+  before the first upload. A new **Admin → Subject Management** catalogue now owns that list, and the HOD marks workflow
+  consumes it. **Storage/model:** new `backend/src/models/Subject.model.ts` (`code, name, department (ref Department),
+  semester 1-8, academicYear "YYYY-YYYY", regulation?, subjectType THEORY|PRACTICAL|PROJECT|ELECTIVE, maxMarks 1-1000,
+  passMarks ≤ maxMarks, status ACTIVE|INACTIVE, createdBy/updatedBy, timestamps`, collection `subjects`) with a compound
+  unique index `{code, department, semester, academicYear}`; exported from `models/index.ts` and added to
+  `ALL_MODELS`/`PERMANENT_MODELS` in `database/migrate.ts` (i.e. it is a permanent collection and persists across
+  restarts). **API:** new `backend/src/modules/subjects/` (`subject.controller.ts` + `subject.routes.ts`) mounted at
+  `/api/admin/subjects` **before** the general `/api/admin` router; every route is `ADMIN`-only via
+  `authorize(ROLES.ADMIN)` and each handler re-checks the role. Routes: `GET /` (search + department/semester/academic
+  year/type/status filters + server-side pagination + per-row marks/student usage counts), `GET /meta` (filter
+  vocabulary), `POST /`, `GET/PUT /:id`, `PATCH /:id/status`, `DELETE /:id`. A duplicate code in the same scope returns
+  **409** with a clear message; a cross-field check rejects `passMarks > maxMarks` (400); a subject that has recorded
+  marks cannot be hard-deleted (409, “deactivate instead”). **Marks engagement (additive, backward-compatible):**
+  `getSubjectsForClass` now returns the **union** of the Admin catalogue (for the department + cohort year's two
+  semesters) and the legacy marks-derived subjects, each tagged `source: MASTER|MARKS`, `isActive`, `status`, and the
+  catalogue fields (`id/maxMarks/passMarks/subjectTypeLabel/regulation`) so the existing `{subjectCode, subjectName,
+  semesterNumber}` shape still works. `validateMarksExcel`/`executeMarksImport` consult the catalogue **only once the
+  department has ≥1 catalogue subject**: at that point the named subject must exist and be **ACTIVE** (unknown → “not
+  registered …”; inactive → “inactive and cannot be used for new marks uploads”) and its `maxMarks` bounds the assessment
+  max and the recorded mark. Departments with **no** catalogue keep the exact legacy free-form behaviour, so
+  `security-hardening.test.ts` (which imports `SEC201` with no master entry) still passes. **Frontend:**
+  `frontend/src/api/client.ts` gained `SubjectRow/SubjectListResponse/SubjectMeta/SubjectInput/HodSubjectOption` types
+  and `admin.subjects.{list,meta,getById,create,update,setStatus,remove}`; the HOD `getSubjects` return type is now
+  `HodSubjectOption[]`. New page `frontend/src/pages/admin/AdminSubjectManagement.tsx` (premium navy/gold design —
+  heading + description, Add Subject, debounced search, department/semester/academic-year/type/status filters, paginated
+  table with status badges + marks/student usage, add/edit modal with frontend **and** server validation, deactivate
+  confirmation, delete-when-unused confirmation, loading/empty/error states, responsive). Wired as the `subjects` tab in
+  `AdminDashboard.tsx` and a `Subject Management` item in the Admin **ACADEMIC** sidebar section; the HOD upload/subject
+  dropdowns (`HodMarksManagement.tsx`, `HodClassManagement.tsx`) now **disable** inactive options and prefer an active
+  subject on auto-select. Once a department has adopted a catalogue, a **legacy** marks-derived code that is not in it
+  stays **listed but view-only** (`source:MARKS`, `isActive:false`) so history stays visible in reports while the upload
+  selector greys it out — the selector never offers a subject the server would then reject. **Verified:** backend API
+  suite `npm run test:subject-management` **17/17 PASS** (add · duplicate 409 · pass>max 400 · edit · deactivate/reactivate
+  · inactive refused for upload · correct subject associated · row-level invalid-mark errors · unknown-subject refusal once
+  a catalogue exists · edit never rewrites an existing mark · history still listed · legacy subject view-only once a
+  catalogue exists · delete rules · non-Admin 403 + no cross-department leak · search/filter/pagination · persistence
+  in `subjects.json`); browser UI suite `.runtime-verify/subjects/verify.mjs` **12/12 PASS** in headless Chrome against a
+  scratch store (sidebar entry → page header → empty state → add → duplicate rejected → edit → deactivate confirm →
+  reactivate → search → pagination → semester filter → **0 runtime exceptions**). Regressions checked: `test:security-hardening`
+  8/8, `test:hod-class-management` 8/8, `test:internal-marks` 97/97, `test:bulk-upload` 23/23, `test:hod-scope` 33/33,
+  `test:admin-routes` 8/8, `test:admin-auth` 13/13; `tsc --noEmit` exit 0 (frontend **and** backend); `vite build` exit 0.
+  Honest limitation: the HOD dropdown **disabling** is enforced server-side and proven by the API suite, but was not
+  itself clicked in a browser (the HOD marks page exposes no stable selectors and the selection flow is multi-step).
+  Branch `temp`, uncommitted, no commit/push.
+
+- **Subject Management — multi-select scope (2026-10-15):** a subject now applies to **several** departments,
+  semesters, academic years and regulations at once. `Subject.model.ts` stores the canonical scope as arrays
+  (`departments/semesters/academicYears/regulations`) **and** keeps the original scalars as the first element of each
+  array — the scalars preserve the existing unique index, API shape and readers, while the arrays are the source of
+  truth compared in JavaScript (the local store's matcher cannot test membership on a top-level array field — verified
+  empirically). Exported helpers `subjectDepartments/subjectSemesters/subjectAcademicYears/subjectRegulations/
+  normaliseSubjectScopes/subjectAppliesTo`, plus an idempotent `backfillSubjectScopes()` run from `runMigrations()` that
+  upgrades any legacy scalar-only record. The Admin controller accepts **both** the array and legacy scalar input shapes,
+  requires ≥1 of each mandatory field, rejects a same-code subject whose scope **overlaps** an existing one (409) while
+  allowing a disjoint reuse of the code, resolves department ids to labels, and computes usage across every combo;
+  `getSubjectsForClass` expands a multi-semester subject into one option per applicable semester;
+  `resolveUploadSubject` matches code + `semesters` + (when supplied) `academicYears`, with `academicYear` threaded
+  through `validateMarksExcel`/`executeMarksImport`. Frontend: a new reusable `MultiSelect` component
+  (`frontend/src/components/common/MultiSelect.tsx` — chips, search, select-all/clear-all, keyboard, creatable mode,
+  drop-up placement) replaces the four single-value fields in `AdminSubjectManagement.tsx`, the table shows department
+  chips + comma-joined values, and the navy/gold `.ms-*`/`.subj-tag` styles were added to `index.css`. **Verified:**
+  `npm run test:subject-management` **26/26 PASS** (the 17 original checks unchanged plus 9 multi-select checks: multi
+  create + mirrors · overlap 409 / disjoint 201 · empty-field 400s · edit preserves selections · value removal narrows ·
+  compatible upload succeeds · incompatible semester **and** department refused · marks untouched · arrays on disk); UI
+  harness `.runtime-verify/subjects/verify.mjs` **16/16 PASS** (adds chips-render · multi-select create · empty-required
+  inline errors · chip removal on edit; **0 runtime exceptions**). Regressions: `test:security-hardening` 8/8,
+  `test:bulk-upload` 23/23, `test:hod-class-management` 8/8, `test:hod-scope` 33/33, `test:internal-marks` 97/97,
+  `test:admin-routes` 8/8, `test:admin-auth` 13/13; `tsc --noEmit` exit 0 (both); `vite build` exit 0. Honest limits:
+  scope matching is JS-side (fine for the full-scan local store, revisit before a real DB); regulation is stored/
+  displayed/filterable but **not** upload-enforced (no `Student.regulation`); MultiSelect gestures/screen-reader order
+  not separately audited. Branch `temp`, uncommitted, no commit/push.
+
+- **Login page — pixel-match to `A:\movies\ref.png` (64.5/35.5 split · reference type scale) (2026-10-15):** matched the
+  **real rendered page** to the supplied reference screenshot (`ref.png`, 1696×927), read numerically with a `sharp` +
+  Chrome-DevTools pixel harness (this environment has no image *viewer*, but it can measure pixels precisely).
+  **Measured from the reference:** panel seam x≈1093; white card 482×777 at x1156; hero copy left edge x≈64; heading is
+  **three display lines ~47–48 px** with a small **"WELCOME TO" kicker** above them (ink ~13 px, width 165 px); four
+  feature rows **73 px** apart (block ~255 px). **Changes — `frontend/src/styles/index.css` (`.lg-*` only):** grid
+  `minmax(0,64fr) minmax(0,36fr)` → **`64.5fr/35.5fr`** (seam lands on the reference axis; card x moves 1151 → **1156**,
+  an exact match); `--lg-gutter` `clamp(…,3.2vw,…)` → **`clamp(…,3.7vw,…)`** (copy starts at x64, not x54);
+  `.lg-hero-title` `clamp(1.42rem,2.3vw,1.95rem)` → **`clamp(calc(var(--lg-u)*1.42), 2.8vw, calc(var(--lg-u)*2.6))`** with
+  `line-height:1.1`; new **`.lg-hero-line:first-child`** kicker rule (`font-size:max(0.7rem,0.44em)`, `line-height:1.5`,
+  `letter-spacing:0.09em`, `margin-bottom:0.62em`, `color:rgba(255,255,255,.9)`); `.lg-features` `gap` `1.9vh` →
+  **`clamp(calc(var(--lg-u)*0.8), 2.98vh, calc(var(--lg-u)*1.6))`** (row pitch 63 → **73 px**, feature block 224 → **254 px**).
+  **Verified on the running app** (Chrome headless via CDP, fractional DPR so the CSS viewport renders at 1696×927):
+  card **x1156** exact, y75, **479×776** (ref 482×777), centre Δ 0; panel x1094 (ref 1093); heading ink bands — kicker
+  **y183** (ref 185), `DIGITAL` **y228** (225), `MENTOR–MENTEE` **y280** (277), `MANAGEMENT SYSTEM` **y333** (329) — all
+  **within 4 px**; title **47.4 px** (ref ~48), line pitch **52.1 px** (ref 52); feature title bands **74/71/75 px** apart
+  (ref 74/73/75); password toggle, wrong-password alert, successful login → app shell, **0 console errors**; manifest +
+  service worker register, and a **trusted** (input-dispatched, not JS `.click()`) press on the install button raises the
+  native prompt with no exception and no `alert()`; **1440/1024/768/390/320** all free of horizontal overflow with the card
+  centred; `tsc --noEmit` **exit 0** (frontend **and** backend); `vite build` **exit 0** (CSS 144.46 kB). **Known
+  residuals (deliberate):** the reference's lead paragraph wraps to **2 lines (~90 chars)** while this component's copy —
+  taken verbatim from the earlier written spec — wraps to **3**, so the hero feature list sits ~22 px and the bottom
+  tagline ~24 px lower than the reference; the copy and the tagline inset were **not** changed (that copy is
+  spec-mandated, and trimming it would be inventing text). Branch `temp`, uncommitted, no commit/push.
+
+- **Login page — reference-match pass: 64/36 split, 420 px card, `OR` separator (2026-10-15):** matched the written reference spec.
+  **Campus image:** verified `A:\movies\K.S.R.C.E. Campus at Twilight.png` is **byte-identical** (SHA-256
+  `F57DF013…A6DA13`, 2,580,028 B, 1672×941) to `frontend/public/assets/ksrce-campus-twilight.png`, which the CSS already
+  loads via `/assets/ksrce-campus-twilight.png` — so the exact reference photograph was already in place and no duplicate
+  asset was created. (A separate `assets/ksrce-campus-login.png` exists but is referenced by no source file.) **Layout:**
+  `.lg-page` grid changed **62/38 → 64/36** (`minmax(0,64fr) minmax(0,36fr)`); `.lg-card` `max-width` **440 → 420 px**;
+  card vertical rhythm tightened (head margin 1.6→1.4 rem, college 0.9→0.8, divider 1/0.8→0.85/0.7, form-group
+  1.15→1.05, foot 1.25/1→1.05/0.9) so the card measures **420×682** at the reference viewport. **`OR` separator:** added
+  the `OR` rule between the sign-in button and the PWA action (`.lg-or-sep` / `.lg-or-line` / `.lg-or-text`), rendered
+  only when `!isInstalled` so it never dangles. **Content:** the component's copy already matched the spec exactly
+  (crest, 4-line heading with gold `MENTOR–MENTEE`, exact description, the four named features, `EMPOWERING FUTURE
+  ENGINEERS`, card header, both labels/placeholders/required stars, `Sign In to Portal` + arrow, `Download / Install KSRCE
+  Web App`, footer) — no text changes, and **no** remember-me / forgot-password controls were added because no real
+  functionality exists for them. **Verified on the running app** in headless Chrome at the **reference viewport
+  1490×810**: split exactly 954/536 = **64 / 36 %**, card **420×682** centred (Δ 0, 64 px top/bottom margin), hero left
+  edge x=48 for crest/heading/paragraph/features/tagline, gaps 88/28/29/88 px, heading 31.2 px (4 lines), lead 3 balanced
+  lines (317/294/362), four 36×36 icons at one x; **1440×900** → 922/518, card 420×681; **1024×768** → 655/369, card
+  313×695 centred; **390 / 320** stacked with **no horizontal overflow** and vertical scroll. Campus photo `200`
+  (2,580,328 B) and logo `200` (naturalWidth 205) load; password toggle / wrong-password alert / successful login / PWA
+  button all work with **0 console errors** (only the expected 401); `tsc --noEmit` exit 0; `vite build` exit 0 (CSS
+  138.91 kB). **Honest limitation:** this environment has **no image input**, so the attached reference screenshot could
+  not be viewed or pixel-diffed — the page was matched to the spec's stated text and measurements and validated with
+  computed styles, element geometry and sharp pixel statistics. Branch `temp`, uncommitted, no commit/push.
+
+- **Login page — hero refinement: smaller headline, balanced lead, feature contrast (2026-10-15):** a second, focused pass on the left hero only (right panel untouched). **Headline:** reduced slightly so the four-line block feels balanced — desktop `clamp(1.42rem,2.3vw,1.95rem)` → **31.2 px** (was 33.6 px), tablet `clamp(1.28rem,2vw,1.72rem)` → **20.48 px** (was 22.02 px); all four lines keep one consistent `line-height` (1.2 → 37.44 px / 24.58 px) and weight 700 with identical left x. **Lead paragraph:** heading→paragraph gap raised to **31 px** (was 25) for breathing room, and the measure constrained to **40ch** (383.6 px desktop / 353.3 px tablet) so the copy wraps into **three balanced lines** (widths 317 / 294 / 362 px, ~9 % spread). **Vertical order:** crest→heading 130 px, heading→paragraph 31 px, paragraph→features 32 px, features→tagline 129 px — every gap positive, nothing collides. **Feature list:** four icons **36×36 at the same x**, every title/description at the same text-column x (96 desktop / 82 tablet), uniform 57 px row pitch; the localised navy scrim behind the copy was widened (`radial-gradient(150% 125% at 0% 52%, rgba(6,27,54,.66) …)`) so the row-gap backgrounds measure luminance 36–54 while the bright image band to the right of the list is ~76 — text sits over the darker area, no opaque boxes added. **Tagline:** `EMPOWERING FUTURE ENGINEERS` still at the hero's left edge (x=46) and near the bottom (y=851, 32 px padding); on a 720 px-tall window every gap stays positive (features→tagline 66 px) so it never overlaps the list. **Right panel:** untouched — deep-navy gradient, white card 440×670 centred (Δ ≤1 px), logo/heading/inputs/toggle/button/PWA/footer preserved; no new decorations or animations. **Verified on the running app** in headless Chrome: alignment at **1440** (all blocks x=46; 62/38 split) and **1024** (all blocks x=32; card Δ 0); **390/320** stacked with **no horizontal overflow** and vertical scroll (docH 944 / 992); logo `200` (naturalWidth 205) and campus photo `200` (2,580,028 B) load; gold `MENTOR–MENTEE` fits with no clipping 280→1440 px; password toggle / wrong-password alert / successful login / PWA button all still work with **0 console errors** (only the expected 401). `tsc --noEmit` exit 0; `vite build` exit 0 (CSS 138.62 kB). Honest limitation: screenshots can't be visually inspected here (no image input) — validated via computed styles, element geometry and sharp pixel statistics. Branch `temp`, uncommitted, no commit/push.
+
+- **Login page — final UI polish: hero alignment, spacing, panel cleanup (2026-10-15):** refined the existing
+  split-screen login **in place** (no rebuild). **Left hero:** the crest, hero copy, feature list and bottom tagline
+  now live inside one shared content column (`.lg-brand-inner`) so they inherit a single left edge (measured x=46 at
+  1440, x=32 at 1024, x=18 on mobile), one vertical rhythm and one set of gaps. The vertical rhythm was opened up so the
+  heading no longer feels cramped: heading `line-height` 1.16 → 1.2, heading→paragraph gap 17 → 25 px,
+  paragraph→feature-list gap 27 → 33 px, feature-row gap 15.3 → 17.1 px. All four headline lines keep identical
+  size/weight/line-height and `MENTOR–MENTEE` stays gold with `white-space: nowrap`. **Feature list:** all four icon
+  boxes measure exactly 36×36 at the same x, every title/description starts at the same text-column x (96 desktop /
+  82 tablet), thin `rgba(245,189,53,.32)` gold borders and uniform gaps; nothing overlaps the heading, paragraph or
+  tagline. **Campus background:** `.lg-brand` repositioned to `46% 42%` after a sharp pixel profile of the 1672×941
+  photograph (per-column edge energy + brightness bands) so the building structure stays in frame while the warm sunset
+  cluster stays visible; the navy veil was lightened (left stop 0.84 → 0.72) so the image is no longer over-darkened
+  (hero-region mean R rose 65 → 71) while the localised scrim behind the copy keeps the text background at luminance
+  38–53 (white text contrast preserved). **Right panel:** the decorative dot-grid/bloom layer was removed entirely
+  (`.lg-panel-decor` element + rules deleted), leaving only the smooth deep-navy → midnight gradient with the card as the
+  single focal point; the white card, thin gold border, 20 px radius and soft shadow are unchanged and it remains
+  centred (measured centre delta ≤1 px) at 440×670 (not enlarged). **Responsive:** 62/38 two-column at 1440 & 1024, one
+  column ≤960 px; no horizontal overflow at 1440/1024/768/390/320; short/mobile screens scroll vertically (docH 944 at
+  390×844, 992 at 320×568) instead of clipping. **Preserved:** auth API/payload/fields/errors, `useAuth`/session/role
+  redirects, password toggle, PWA install, the campus asset and every other page; no new dependency. **Verified on the
+  running app** (3000 + real auth 5050) in headless Chrome: layout/geometry as above; password toggle
+  password→text→password; wrong password → `Invalid username or password.`; correct (`Ksrce@admin` / `Ksrce@1234`) →
+  token + app shell + sidebar; **0 console errors/exceptions** (only the expected 401 on the wrong-password attempt);
+  `tsc --noEmit` exit 0; `vite build` exit 0 (CSS 138.62 kB); campus asset `200 image/png` 2,580,028 B. Honest
+  limitation: screenshots cannot be visually inspected here (no image input), so pixels were validated with sharp
+  statistics. Branch `temp`, uncommitted, no commit/push.
+
+- **Login page — right-panel premium navy + left-hero alignment fix (2026-10-15):** follow-up to the split-screen
+  redesign, fixing the two defects found by inspection: (a) the right-hand sign-in area read as a flat, faintly-outlined
+  block (the page gradient showed through the transparent `.lg-panel` and two oversized decorative circles/borders
+  crowded the card) and (b) the left hero copy did not share one alignment/spacing system. The panel now paints its own
+  rich deep-navy → midnight gradient edge-to-edge (radial top-right blue lift + a barely-there bottom-left gold bloom
+  over a `162deg #0d2a4d → #0a2342 → #061b36 → #04101f` wash); the oversized circles were removed and replaced with a
+  single soft gold radial bloom plus a very faint, mask-faded dot grid inside `.lg-panel-decor` (clipped separately so
+  the card shadow is never cut); the white card is the focal point — thin gold border (`rgba(245,189,53,.42)`), 20 px
+  radius, layered navy shadow — centred on both axes and never overlapping the navy/gold divider. The left hero now
+  uses one shared left edge (`.lg-brand-body`) with four explicit headline lines (`WELCOME TO` / `DIGITAL` /
+  `MENTOR–MENTEE` — the whole line gold via `.lg-hero-accent` + `white-space: nowrap` / `MANAGEMENT SYSTEM` white), a
+  controlled paragraph `max-width: min(52ch,100%)`, four feature rows with identical 36×36 gold icon boxes, a fixed
+  `0.9rem` icon→text gap and one text column, and the `EMPOWERING FUTURE ENGINEERS` tagline pinned bottom-left. Split
+  is `grid-template-columns: minmax(0,62fr) minmax(0,38fr)`, `min-height:100dvh`, safe-area padding, `overflow-x: clip`;
+  it stacks to one column ≤960px and scrolls vertically instead of clipping. No auth/API/payload/field/redirect change;
+  password toggle and PWA install kept; no new dependency. Verified on the running app (3000 + real auth 5050) in
+  headless Chrome via CDP: 62/38 split at 1440 & 1024; panel `background-color: rgb(6,27,54)` with its gradient and
+  navy corner samples (13,42,77)/(32,62,90)/(4,16,31); card 440×670 centred exactly on the panel centre at 1440
+  (x 946–1386, y 115–785) with white samples (255,255,255); `MENTOR–MENTEE` computed `rgb(245,189,53)`; all four hero
+  lines share one left x and one line-height; feature icons all 36×36 with a consistent text x; no horizontal overflow
+  at 1440/1024/768/390/320; password toggle password→text works, wrong password → `Invalid username or password.`,
+  correct login (`Ksrce@admin` / `Ksrce@1234`) stores the token and renders the app shell; real API **401** (wrong) /
+  **200 role ADMIN + token** (correct); **0 console errors**; `tsc --noEmit` exit 0 and `vite build` exit 0
+  (CSS 139.08 kB). Honest limitation: screenshots cannot be visually inspected in this environment (no image input),
+  so the result was validated from computed styles, geometry and rendered-pixel statistics. Branch `temp`, uncommitted,
+  no commit/push.
+
+- **Login page — premium split-screen redesign v2 (2026-10-15):** the login UI was restructured to deliver a visibly new experience. Asset: `frontend/public/assets/ksrce-campus-twilight.png` (2.46 MB) copied from `A:\movies\K.S.R.C.E. Campus at Twilight.png` and applied via CSS `background-size: cover` on the left hero. Left panel (≈62%) now uses an editorial, multi-line headline: WELCOME TO / DIGITAL / MENTOR–MENTEE (with MENTEE in gold) / MANAGEMENT SYSTEM; features: crest + college name/subtitle, refined paragraph, four feature rows (gold-accented icons), bottom "EMPOWERING FUTURE ENGINEERS" tagline with gold line. Right panel (≈38%): deep navy background, vertically centered warm-white login card (thin gold border, ~22px radius, soft shadow), card header with logo/college/system, gold divider, "WELCOME BACK" + subtitle. All existing auth logic, password toggle, token/session/role redirects, PWA install behavior, field names, and API calls remain unchanged. Responsive at 1440/1024/768/390/320. Typechecks pass (frontend/backend). Build passes. AI tests: ai-assistant 47/47, gemini-integration 38/38. Uncommitted changes preserved. No commit/push.
+
+- **Grammar engine — broad vocabulary, modular rules, optional local model (2026-10-13):** the deterministic writing
+  assistant was scaled from the small curated dataset to a **modular, broad-coverage** engine, using **licensed**
+  vocabulary sources (never a fabricated or inflated list) plus an **optional** local-model path. New modules under
+  `backend/src/modules/grammar/` — `vocabulary/morphology.ts` (pure English morphology: irregular verbs/plurals,
+  inflections, `FORM_TO_BASE`, `PAST_FORMS`), `vocabulary/domain-vocabulary.ts` (curated safe sets),
+  `vocabulary/lexicon.ts` (a one-time, cached **370,103-word** dictionary + **50,000-word** frequency ranking),
+  `grammar.rules.ts` (ordered reusable rules: subject–verb agreement, verb form after modal/`to`/do-auxiliary, perfect,
+  progressive, missing `did`, quantifier/partitive plurals, a/an, collocations), `grammar.spelling.ts` (conservative
+  dictionary-gated typo correction) and `grammar.context.ts` (the optional Ollama adapter, **OFF by default**).
+  Provenance and licences are in `vocabulary/data/SOURCES.md` (`words_alpha.txt` — dwyl/english-words, **The Unlicense**;
+  `en_50k.txt` — hermitdave/FrequencyWords, **MIT**). The contract is unchanged: normalise → protect official values →
+  spelling/vocabulary → ordered rules → optional local model when configured → validate/reject unsafe output → return the
+  original when unreliable. Benchmarks: one-time lexicon load **~614 ms / ~49.5 MB**, steady-state **~3,544
+  corrections/s** (≈0.28 ms/call), a 2,498-char paragraph **~3.0 ms** (p95 ~4.6 ms). New suites
+  `test:grammar-coverage` **1084/1084** and `test:grammar-context` **35/35** (real mock Ollama server); regressions
+  `test:grammar-api` **63/63**, `test:grammar-dataset` **85/85**, `test:grammar-safety` **45/45**, `test:grammar` green.
+  No local model is installed on this machine, so that path stays OFF and is verified against a mock server only; setup
+  instructions are recorded below. UI, RBAC, the API contract and the local JSON storage are unchanged. Branch `temp`,
+  uncommitted. See Completed + Log.
+
+- **Grammar engine — missing-auxiliary repair now covers `coming` (2026-10-13):** the running Mentoring form returned
+  `He not coming tomorrow.` for `he not coming tomorrow` instead of `He is not coming tomorrow.` **Root cause:** the
+  missing-auxiliary repair is curated/list-gated, and `coming` was simply absent from `MISSING_AUX_GERUNDS`, so the
+  clause never matched and only capitalisation + terminal punctuation ran (the rule order in `grammar.service.ts` —
+  word corrections → `fixMissingAuxiliaryVerbs` → `PHRASE_RULES` → capitalisation/punctuation — was already correct).
+  Fixed by adding `coming` (plus a curated set of other unambiguous action participles — going, talking, asking,
+  telling, waiting, …; noun/adjective `-ing` words such as morning/evening/meeting/building stay excluded) to
+  `backend/src/modules/grammar/grammar.dataset.ts`, and by tightening `grammar.structure.ts` so the optional
+  object-plural normalisation runs only when the clause continues past the bare object — a bare `she not attending
+  class` now becomes `She is not attending class.` while `…attending class regularly` still becomes
+  `…attending classes regularly.` Verified over the **live** server (via the frontend proxy, the exact path the form
+  uses) and in the suites: `test:grammar-dataset` **85/85**, `test:grammar-safety` **45/45**, `test:grammar-api`
+  **63/63**, `test:grammar` green, backend `tsc` + frontend `vite build` exit 0. Branch `temp`, uncommitted. See
+  Completed + Log.
+
+- **Login page — premium polish pass (2026-10-13):** the existing navy/gold login page
+  (`frontend/src/pages/auth/LoginPage.tsx` + the scoped `.lg-*` block in `frontend/src/styles/index.css`) was refined
+  **in place**, not rebuilt. The excessive dark veil that hid the campus building was replaced with a lighter,
+  localised scrim (a readable radial wash behind the copy while the diagonal/vertical washes drop to ~`0.3`–`0.68`),
+  so `/assets/ksrce-campus-login.png` (unchanged, 2 728 283 B, byte-identical) is clearly visible; the crest, heading
+  hierarchy, card padding/border/layered shadow, 50 px inputs with a gold `:focus`/`:focus-visible` ring, a 38×38
+  password toggle, a 52 px Sign-In button (hover/focus/disabled/loading), the secondary-but-accessible PWA button, the
+  grid/arc accents, and the responsive layout (compact mobile banner + full-width form at ≤480 px) were all refined.
+  Everything is scoped to `.lg-*` — the shared `.login-*` rules (`ChangePasswordPage`) are untouched. **No** change to
+  authentication, request format, error handling, role redirects, PWA install, storage or any other role's dashboard;
+  no new dependency; no credentials hardcoded. Verified live: `3000` → 200; campus PNG → 200 `image/png`
+  byte-identical; `POST /api/auth/login` → 200 (ADMIN + token) and **401** for a wrong password; `tsc && vite build`
+  exit 0. Branch `temp`, uncommitted. See Completed + Log.
+
+- **Dataset-based grammar engine — deterministic, conservative, extensible (2026-10-13):** the writing assistant's
+  correction engine was extracted from the inline rule function in `ai-assistant.service.ts` into a new modular
+  `backend/src/modules/grammar/` package (`grammar.dataset.ts` curated exact sentences + word dictionary + ordered
+  phrase rules; `grammar.normalize.ts` matching-only normalisation and similarity; `protected-values.ts` official-value
+  guard; `grammar.service.ts` `correctText` orchestrator). It is **not** a language model and makes **no** claim of
+  exhaustive coverage: known sentences are corrected by exact match, near-identical variants by a similarity-gated
+  approximate match (curated opt-in only, threshold 0.9), and everything else by careful word/phrase rules. If no
+  reliable correction exists it returns the text **unchanged** with an explicit status (`NO_RELIABLE_CORRECTION`); for a
+  close-but-unsafe match it refuses with `AMBIGUOUS_INPUT` — it never substitutes a similar sentence, never fabricates
+  facts, and official values (names, register numbers, subject codes, marks, CGPA, dates) are protected. The existing
+  advisory **Improve Grammar** flow, RBAC, local JSON storage and every unrelated feature are unchanged. A same-day
+  follow-up added a sentence-anchored **missing-verb repair** for fragmentary clauses
+  (`student not attending class regularly` → `The student is not attending classes regularly.`): it inserts the missing
+  article/auxiliary only for a curated subject list at a sentence start and only when no other finite verb follows the
+  participle, so already-correct clauses and reduced relatives (`Students facing difficulty should approach…`) are never
+  touched. New suite `test:grammar-dataset` **73/73**; regressions `test:grammar-safety` **45/45**, `test:grammar-api`
+  **54/54**, `test:grammar` green, backend `tsc` + frontend `tsc`/`vite build` clean. Branch `temp`, uncommitted. See
+  Completed + Log.
+
+- **Premium login page redesign — campus-photo hero + navy/gold card (2026-10-13):** the login page
+  (`frontend/src/pages/auth/LoginPage.tsx`) was rebuilt to a premium institutional layout using the supplied
+  campus photograph `A:\movies\eb72e87c-e8c7-44b1-9a40-baa0134bc3ab.png`, copied verbatim to
+  `frontend/public/assets/ksrce-campus-login.png` (2 728 283 B; source preserved). Desktop is a full-screen
+  60/40 split — a campus **branding panel** (photo as `object-fit: cover` dominant visual under a navy veil,
+  fine dotted-grid texture, curved gold arcs, the verified college crest + `K.S.R. COLLEGE OF ENGINEERING` /
+  `AUTONOMOUS • TIRUCHENGODE`, the gold-accented `Digital Mentor–Mentee Management System` hero, the supporting
+  sentence, four icon feature highlights — Mentor & Mentee Management, Academic Records & Analytics, Placement
+  Monitoring & Achievements, Department & Institution Insights — and the `Empowering Future Engineers` footer)
+  beside a **sign-in panel** with a compact white card (gold border + top accent, college logo/name, `Welcome Back`,
+  the form, the PWA install button and the `Permanent Academic Records System / Secured Institutional Access •
+  K.S.R. College of Engineering` footer). All new styling is a scoped `.lg-*` block in
+  `frontend/src/styles/index.css`; the existing `.login-*` classes are **deliberately kept untouched** because
+  `ChangePasswordPage.tsx` reuses them. Form, validation, error display, show/hide password, loading state, PWA
+  install and every API/auth rule are unchanged (no Remember-Me or Forgot-Password existed, so none was invented;
+  no credentials hardcoded); no dashboard, route, endpoint, request format or session behaviour changed. Verified on
+  the **live dev server (3000)** with headless Chrome: desktop 1440×900 two-column (left panel = navy-family +
+  photo-blend, gold accents present, white card), tablet 1024×768 two-column, mobile 390×844 stacked banner + card;
+  real `POST /api/auth/login` returns **200** (ADMIN) and **401** for a wrong password; frontend `tsc` + `vite build`
+  exit 0; `test:critical` **12/12**. Branch `temp`, uncommitted. See Completed + Log.
+
+- **User-facing "Counselling" → "Mentoring" — remaining labels cleared (2026-10-12):** a previous UI update set the
+  user-facing term to **Mentoring** (stated in the code) but many visible labels still read **Counselling**; the most
+  obvious was the mentor's mentee-profile view, which mixed both (`5-Domain Mentoring Records` card foot but tab
+  `6. Counselling`, card `Counselling Sessions`, `Mentee Counselling Records & Dossier`, the add/edit record modal,
+  field labels and the empty state). Every remaining **user-visible** mentoring-workflow occurrence now reads
+  **Mentoring**: the sidebar (`Counselling Records` → `Mentoring Records`, `5-Domain Counselling` → `5-Domain
+  Mentoring`, the student `Mentoring & Counselling` → `Mentoring History`); the mentor profile view (tab, summary
+  card + aria-label, dossier title, record `Mentoring Date`, edit button, empty state, add-modal title/subtitle/
+  field labels/errors); the Faculty dashboard (`Add/Pending/Recent Mentoring`, `5-Domain Mentoring`, mentoring-record
+  table + `Open Mentoring Desk`); the Admin **5-Domain Mentoring Hub** (page title, `Student Mentoring Directory`,
+  `Mentoring Action`, `View Student Mentoring`); the HOD faculty detail (`Mentoring History`, `Mentoring records`,
+  `Last Mentoring`, `Mentoring provided`); the Student 5-domain history; the Principal KPI hint/table/note; and the
+  AI-assistant prompts. **Deliberately preserved:** the unrelated admission category `Counselling (Govt Quota)`
+  (StudentDashboard, CompleteProfileWizard, mentor admission display), every internal identifier (tab keys,
+  `/counselling/*` API paths, `counselling*` fields, `CounsellingRecord`, component/type names, code comments) and
+  backend/generated-PDF text. Display-only: no route, id, endpoint, field, stored record or business rule changed.
+  Frontend `tsc` + `vite build` clean; the built bundle and the running dev server (3000) contain **only** the two
+  admission-type `Counselling (Govt Quota)` strings and none of the mentoring-workflow ones. Branch `temp`,
+  uncommitted. See Completed + Log.
+
+- **Bulk Upload & Assign Mentees — ADMIN college-wide / HOD own-department (2026-10-12):** a clearly visible
+  **Bulk Assign Mentees** button now sits on the Admin **Mentor Assignment Desk** header and the HOD **Departmental
+  Mentor Assignment** header. It opens a self-contained 4-step modal (`Upload → Preview & Validate → Confirm →
+  Results`): download an **Excel (.xlsx)** or **CSV** template, drag/choose a file, review a fully validated preview
+  (row no., register no. + student name, employee id + mentor name, current mentor, proposed mentor, status, message;
+  status filter chips + search), then explicitly confirm. Validation is **server-side on every row** — required
+  columns, unknown student/mentor, inactive mentor, HOD department scope (student **AND** mentor), duplicates, existing
+  assignments (create vs reassign), malformed values, and file type/size/row limits (5 MB / 1000 rows). Invalid and
+  duplicate rows are **never** written; a student who already has a mentor needs an **explicitly authorised,
+  reason-backed reassignment** and their previous mentor is preserved as `COMPLETED` history. `maxMentees` is **not**
+  enforced anywhere in the app, so it is a WARNING only and never blocks (cross-department is a WARNING for ADMIN).
+  Execution re-validates from the raw `{registerNumber, employeeId}` pairs (client statuses are never trusted), is
+  per-row and reports `ASSIGNED` / `REASSIGNED` / `SKIPPED` / `FAILED` with reasons, writes the same
+  `MentorAssignment` / `Notification` / `AuditLog` (`ASSIGN_MENTOR` / `REASSIGN_MENTOR` plus a `BULK_ASSIGN_MENTORS`
+  summary) records as the single flows, prevents duplicate submissions, and offers downloadable **validation** and
+  **results** reports (CSV + Excel). Templates ship illustrative example rows (`261T001/EMP1001`, `261T002/EMP1002`)
+  that are always detected and can never create an assignment. Verified end-to-end over the real HTTP stack **29/29**;
+  regressions `test:critical` 12/12, `test:bulk-upload` 23/23, `test:bulk-actions` 15/15, `test:hod` 33/33,
+  `test:admin` 23/23, `test:security-hardening` 8/8. Branch `temp`, uncommitted. Browser-driven UI pass still PENDING.
+  See Completed + Log.
+
+- **Principal dashboard — compact, premium Principal-only redesign (2026-10-12):** the Principal portal
+  (`frontend/src/pages/principal/PrincipalDashboard.tsx`) is a self-contained, Principal-specific executive dashboard
+  (deep-navy/gold, premium cards, restrained radii/shadows, Lucide icons). The **oversized navy hero banner has been
+  removed** — in-banner title, marketing subtitle, the `Principal · Institutional Leadership` and
+  `Read-only executive access` badges, repeated college branding, welcome message, in-banner date and the whole large
+  empty card are gone (the element no longer renders, so no empty space remains). The page now opens directly into a
+  **compact heading** (`Principal Dashboard` + `Institutional performance at a glance` + a small current-date chip)
+  with reduced top padding, then **8 real KPI cards**, dependency-free SVG/CSS analytics (coverage-by-department bars,
+  reporting-month coverage ring, weekly activity columns, and a students / faculty / **mentors** distribution), premium
+  department cards with the existing read-only drill-down (department → mentors → mentees), and a real institutional
+  activity + pending-attention panel. **Scope respected:** the shared `AdminMentoringDashboard`, the global `Navbar`
+  (which keeps the college crest + name) and every other role are untouched; all Principal styling lives in a scoped
+  `pd-*` block. It reads the same server-computed `/api/admin/overview/*` surface (still view-only by the server
+  allow-list). Verified in a real headless browser **50/50**; suites `test:principal` **53/53**, `test:admin` **23/23**,
+  `test:hod` **33/33**, `test:critical` **12/12**, `test:bulk-actions` **15/15**. Branch `temp`, uncommitted.
+  See Completed + Log.
+
+- **Faculty Mentor Cards + click-through detail — HOD "Department Faculty Mentors" (2026-10-12):** the HOD faculty
+  table was replaced by responsive **cards** (desktop 3 / tablet 2 / mobile 1 per row; loading, empty and error states)
+  showing name, employee ID, email, designation, department, cabin, contact number (when present), current mentee count,
+  coverage % and active/inactive status, plus the existing in-card actions (**View Details**, **Edit**) and the
+  **Add Faculty** button. Clicking a card (or View Details) opens one dedicated **detail dialog** with tabs that exist
+  only where the app has data — Overview, Mentees, Counselling History, Meetings, Documents, Assignment History — all
+  fed by **real, HOD-department-scoped** records; a mentee's existing student page opens from the Mentees tab when
+  permitted. **No hardcoded faculty data.** The detail is served by **extending the existing `getMentorDetail`**
+  (`GET /api/hod/mentor/:mentorId`) with dept-scoped `assignments` (ACTIVE **and** historical `MentorAssignment` rows
+  for that mentor), `counselling` (records authored by that mentor), `meetings` (that mentor's meetings) and
+  `documents` (metadata for the current mentees' `StudentDocument`s) — no new routes, no N+1 frontend calls.
+  Relationships are keyed by **stable ids**, never names; current vs historical assignments are distinguished by
+  status; reassigned students appear once as current and once as history, never duplicated. Counselling notes are shown
+  only to the HOD of the owning department (the module's existing rule) and no raw geo-tagged evidence photos are
+  exposed. Verified in a **real headless browser** against the built SPA and the real backend (**34/34** checks): cards
+  replace the table, the correct faculty opens, 3/2/1 responsive columns, each tab's real data, empty state, Edit
+  independent of the card click, keyboard Enter, cross-department 404, and mentee → student navigation. Branch `temp`,
+  uncommitted. See Completed + Log.
+
+- **Bulk selection · bulk delete · bulk document (ZIP) download — Student Master + Faculty / Mentors (2026-10-12):** the
+  two admin management screens now support multi-row selection (header checkbox = current page, per-row checkbox, live
+  selected count, selected rows tinted with a gold rail), and a sticky action bar appears as soon as ≥1 row is selected:
+  **Select all** (server-resolved whole eligible set within the caller's scope, not just the visible page), **Clear**,
+  **Download documents** and **Delete selected**. Selection is keyed by **record id**, so it survives pagination and a
+  refresh, and never "jumps" to a different record; it is cleared when the filter set or the tab changes. **Bulk delete**
+  is a hard delete that reuses the real cascade, validates every id server-side and enforces scope per record (ADMIN
+  anywhere; **HOD own department only** — bulk deliberately widens the ADMIN-only single delete to HOD-with-scope, an
+  explicit product decision), reports partial failures per record (`{requested, deleted, failed}`), refreshes the list and
+  drops only the ids that were actually deleted. As a side effect a **latent single-delete bug was fixed**:
+  `deleteStudent` filtered `StudentDocument` by `student`, but the model keys its owner as `studentId`, so document
+  metadata rows were silently orphaned — both paths now delete correctly (files on disk are still deliberately left
+  untouched, matching the pre-existing policy). **Bulk download** streams a real ZIP `Bulk_Documents_YYYY-MM-DD.zip` with
+  `Students/Student_Name_StudentID/…` (and `Faculty/…` / `Mentors/…`) folders using collision-safe filenames, plus a
+  `manifest.csv`; it serves the existing **watermarked** copy via `resolveServedDocumentPath` and never modifies
+  originals, and there are **no** fabricated or placeholder entries. Zero eligible documents returns HTTP 200 JSON
+  `{hasDocuments:false,…}` with a per-record reason (no empty ZIP); the UI shows an informational toast instead of
+  downloading nothing. Because no faculty/mentor document store exists, Faculty/Mentor bulk download returns an explicit
+  "no documents available" result. New suite `test:bulk-actions` **15/15**. Backend `tsc --noEmit` + `npm run build` and
+  frontend `tsc --noEmit` + `vite build` all exit 0. Verified on the **running app** (live 5050): selection ids 128
+  students / 1 faculty, search scoping, a real ZIP (135 743 B → `Students/Vishnuvarthan P_73152421125/Student Details
+  Form.pdf` + a header+row `manifest.csv`), the no-documents and faculty JSON paths, 400 on empty ids, and per-record
+  bulk-delete failure reporting — all correct. The bulk **UI** is build-verified but not yet click-verified in a headless
+  browser (see Pending). Branch `temp`, uncommitted. See Completed + Log.
+
+- **Student record book — two headings removed ("INSTITUTIONAL VERIFICATION & DIGITAL ENDORSEMENT" and "OFFICIAL DIGITAL
+  MENTOR–MENTEE RECORD BOOK") (2026-10-12):** both headings were removed from the **generated PDF** in all three places
+  they were emitted, not merely hidden: (1) the signature heading — the `.sigheading` div in `signatureBlockHtml()`
+  (the invisible reserve copy), the pdf-lib `drawText` in `stampPageFurniture`, and the jsPDF fallback
+  (`pdf.service.ts`); (2) the full-mode document title — `docTitleFor('full')` now returns `''`, `stampPageFurniture`
+  skips the title line, and the jsPDF fallback skips it too. The other two document types keep their own titles
+  (`OFFICIAL INTERNAL ASSESSMENT REPORT`, `MENTORING RECORDS & DOCUMENT ARCHIVE`) — verified present on **every page**
+  of those renders. **Blank space reclaimed:** the signature reserve dropped (`margin-top` 16 mm → 9 mm; the heading +
+  its 12 mm margin deleted) and the header band shrank for the full book only (top margin **35 → 31.5 mm**, divider
+  **30.6 → 28.4 mm**) so the removed title line leaves no gap (the two titled modes keep 35 mm / 30.6 mm); the
+  watermark centring offset is derived from the band so it stays centred. The `StudentDocument.renderVersion` stamp was
+  bumped to `2026-10-12-removed-headings`, so the stale **stored Student Details Form** is regenerated in place. Verified
+  on the **real HTTP path** (`GET /api/pdf/student/73152421125?mode=…`): `full` 2 pp, `internal` 1 p, `mentor-documents`
+  1 p — neither removed heading present on any page; college name / logo header (ink from 12.3 mm, body from 34.9 mm on
+  the full book), `K S R C E` watermark, `Page X of Y` footer and the four signing captions all intact; page counts
+  unchanged. Full matrix green: `test:record-book-header` **74/74**, `test:runtime` **38/38**, `test:critical`
+  **12/12**, `test:document-watermark` **44/44**, `test:document-watermark-runtime` **46/46**; `tsc --noEmit` +
+  `npm run build` both exit 0. Branch `temp`, uncommitted. See Log.
+
+- **Student record book — signature block now bottom-anchored; "big blank below the signature" closed (2026-10-11):**
+  the previous fix (body 10 pt/1.42, 7.5 mm signing lines, `margin-top: 16 mm`) only nudged the signature down —
+  on the real live 2-page book page 2 still ended at y≈593 with **~204 pt blank below the signature**, and the
+  single-page `internal` report ended at y≈394 with **~403 pt blank** (it read as "content crammed at the top with
+  a void under the signatures"). Root cause: the signature block was emitted **in normal flow** right after the
+  content, so on a short final page it floated up with the page's unused height left below it. It is now anchored to
+  the **bottom of the final page**: `signatureBlockHtml()` emits an invisible, geometry-identical
+  `.signatures.sig-reserve` placeholder (so the paginator still reserves the block's height and the content can never
+  reach the signature band) and `stampPageFurniture` draws the **visible** block once, with pdf-lib, near the page
+  bottom of the last Chrome-rendered page (heading y≈692, signing lines y≈757, captions y≈764–775; columns at
+  x≈34/169/304/439 across the 12 mm side margins). Measured on the **real HTTP path** (`POST /api/auth/login` admin →
+  `GET /api/pdf/student/73152421125?mode=…`): `full` **2 pages**, last-page body now ends y≈775 with the signatures at
+  the bottom (was 593); `internal` **1 page**, y≈775 (was 394); `mentor-documents` **1 page**, y≈775. Page counts are
+  **unchanged** (placeholder keeps pagination identical); long 120-row synthetic still **9 pages** with the signature
+  on the last page. Two further "old PDF served" vectors were closed: (a) the live `GET /api/pdf/student/:id` now
+  sends `Cache-Control: no-store` + `Pragma/Expires` so a browser can never replay a stale download; (b) the
+  **stored Student Details Form** (generated once via `syncStudentDetailsPdf` and served from disk) was stale on this
+  machine — both the original (201 893 B, 08 Oct) and the watermarked copy (200 479 B, 09 Oct) predated the fix and
+  showed the old ~337 pt-blank layout. A `renderVersion` stamp was added to `StudentDocument`; `getStudentDocuments`
+  now regenerates the derived form in place when its stamp is out of date (idempotent — verified only one refresh),
+  and the served form is now the new layout (136 463 B original / 137 350 B watermarked, signature captions y≈764).
+  Full matrix green: `test:record-book-header` **68/68**, `test:runtime` **38/38**, `test:critical` **12/12**,
+  `test:document-watermark` **44/44**, `test:document-watermark-runtime` **46/46**; `tsc --noEmit` + `npm run build`
+  both exit 0. Branch `temp`, uncommitted. See Log.
+
+- **Servers restarted cleanly — one fresh backend (5050) + one fresh frontend (3000) on localhost (2026-10-11):**
+  every stale project dev process was identified by command line and project path, then the backend tree
+  (launcher `powershell` 13568 → npm 29692 → cmd 28004 → `tsx watch` 25280 → server child **21204** on 5050) was
+  stopped with `taskkill /PID 13568 /T /F` (descendants only — the OpenCode service parent 28436 and the unrelated
+  `chrome-devtools-mcp` processes were deliberately left running). Port 5050 confirmed released and no project
+  Node process remained; no frontend/Vite had been running (3000/5173/4173 free). Fresh servers started from the
+  project's own config: backend `npm run dev` (`tsx watch src/index.ts`) → new server **PID 19744** on 5050,
+  `/api/health` → `{"status":"ok","database":"connected"}`; frontend `npm run dev` (Vite v6.4.3) → **PID 7688** on
+  `http://localhost:3000/`, title `KSRCE Mentoring | K.S.R. College of Engineering`. The Vite `/api` → `localhost:5050`
+  proxy reaches the new backend (proxied `/api/health` ok; `POST /api/auth/login` as `Ksrce@admin` 200; `GET
+  /api/pdf/student/:id?mode=full` 200 `application/pdf`, `%PDF-`, ~137 KB for two real students). Nothing was
+  deleted or reset — no source, `.env`, `backend/data/`, uploads, `node_modules`, Git history or uncommitted changes
+  touched. See the Completed entry + Log.
+
+- **Student record book — "content compressed at the top, big blank below the signature" fixed (2026-10-11):** the
+  live short records spilled onto page 2 where only ~44% of the height was used — sections 5–10 and a tiny
+  signature block sat in the top third with ~440 pt blank below. Cause: the print type was small/tight
+  (body 9 pt/line-height 1.32; table cells 8 pt @ 1.1 mm padding; a crammed one-line signature underline) and a
+  genuinely short record simply leaves a sparse last page. Fix enlarges/spaces the print typography
+  (body **10 pt/1.42**; cells **9 pt @ 1.5 mm** padding; banner/annexure/photo text scaled up) and rebuilds the
+  signature block with a real **7.5 mm signing line** per column plus `break-inside: avoid`. On the two real live
+  students page 1 still fills to ~776 pt and page 2 now carries sections 5–10 with the signature captions at
+  y≈582–593 pt (was 340–353 pt) → the blank tail shrank from ~440 pt to ~200 pt, still **2 pages (no third-page
+  spill)**. The long 120-row synthetic record book (7 → **9 pages** with the larger type) still repeats column
+  headers on all 8 subject-row pages, keeps the header inside its band and clips nothing (max body bottom 788 <
+  797 pt); the `K S R C E` watermark is centred on the physical page on all 9 pages (and on the live 2-page
+  books). One renderer check was corrected to measure the watermark's own PDF geometry — the old pixel-diff
+  bbox was biased on sparse pages where opaque cells are painted over the background mark. Full matrix green:
+  `test:record-book-header` **68/68**, `test:runtime` **38/38**, `test:document-watermark` **44/44**,
+  `test:document-watermark-runtime` **46/46**, `test:internal-marks` **97/97**, `test:critical` **12/12**;
+  backend `tsc --noEmit` + `npm run build` both exit 0. Branch `temp`, uncommitted. See Log.
+
+- **Student PDF persists in the real running app — root cause found & closed (2026-10-11):** the layout fix was
+  already in the working tree and every renderer-level test was green, yet the user still saw the old broken PDF
+  in the browser. The missing link was the **live process**: the backend on 5050 (`tsx watch` child PID 17128)
+  had started at 21:36:53 — the *same second* the fix file was last saved — i.e. it was running a snapshot taken
+  at the moment of that write, so the browser kept hitting code that never included the final fixes
+  (start-time/file-mtime race; not provable after the fact, which is why the process was restarted). After
+  restarting 5050 with the current code (authorized), the real HTTP path was driven exactly like the browser
+  (`POST /api/auth/login` as admin → `GET /api/pdf/student/:id?mode=full`): three real live students now produce
+  fixed record books (header + `Page X of Y` + `K S R C E` on every page; body starts below the 30.6 mm header
+  rule; nothing clipped). Multi-page/continuation behaviour was then verified over the same endpoint on an
+  isolated scratch instance (port 5098, temp store; live data untouched) seeded with 120 internal-marks rows,
+  40 meetings, evidence photos, JPEG scans and a real 3-page PDF annexure: **19-page full record book** — header,
+  watermark and correct footnote on all 15 Chrome pages, long-table column headings repeated on its 5
+  continuation pages, zero body/header overlap, no clipping, uploaded photos/scans byte-identical afterwards,
+  watermark proven a true background layer via pixel-diff vs an un-watermarked control (document ink unchanged,
+  `\` slope ≈ +0.95, centred y≈424 vs 421 pt); `internal` and `mentor-documents` modes likewise furnished with
+  their annexure tails preserved. Full regression matrix still green: `test:record-book-header` **56/56**,
+  `test:runtime` **38/38**, `test:document-watermark` **44/44**, `test:document-watermark-runtime` **46/46**,
+  `test:internal-marks` **97/97**, `test:critical` **12/12**; `tsc --noEmit` + `npm run build` both exit 0. No
+  product code changed in this follow-up (verification + process restart only). See Log. Branch `temp`, still
+  uncommitted.
+
+- **Student PDF — watermark, header & content-overlap final pass (2026-10-11):** the `K S R C E` watermark is a
+  true background layer on every rendered page — proven by pixel-diff of the watermarked render against an
+  un-watermarked control (document ink byte-identical; ≤0.4% edge-blend pixels shift ≤18/255), centred on the
+  **physical page** (ink bbox centre y≈424pt vs page centre 421pt) and running the required bottom-right →
+  top-left `\` diagonal (slope ≈ +0.95). The KSRCE institutional header repeats on every page through the
+  pdf-lib `stampPageFurniture` mechanism inside a reserved 35mm top band (navy rule + verified
+  `assets/ksrce-logo.png` + college name + autonomous/AICTE/Anna University line + Tiruchengode address + gold
+  document title + subtle divider), and long tables now **repeat their column headers on every continuation
+  page** via real `<thead>` rows (`table.grid thead { display: table-header-group }`). No body text is clipped
+  (min bottom margin 5.5pt) and nothing overlaps the header or watermark. Verified on a synthetic 7-page /
+  120-row record book (`test:record-book-header` **56/56**), the real HTTP pipeline (`test:runtime` **38/38**
+  incl. the image annexure page), the uploaded-document watermark service (`test:document-watermark` **44/44**,
+  `test:document-watermark-runtime` **46/46**), plus regressions `test:internal-marks` **97/97** and
+  `test:critical` **12/12**; backend `tsc --noEmit` and `npm run build` both **exit 0**. See the Completed entry
+  + Log; nothing committed / pushed.
+
+- **Repeating KSRCE institutional header on every page of the student documents: PASS (2026-10-11)** — the
+  record book (and the `internal` / `mentor-documents` downloads that share the pipeline) now carries the
+  college header — college name, autonomous/AICTE/Anna University affiliation line, Tiruchengode address, the
+  gold document title and the verified `assets/ksrce-logo.png` — on **page 1 and every subsequent page**. A
+  real top band is reserved (`@page { margin: 35mm 12mm 16mm }`) and the header is **stamped per page with
+  pdf-lib** (`stampPageFurniture`, the mechanism the footer already used), because Chrome's print engine
+  supports neither `@page` margin boxes nor a space-reserving `position: fixed` header (measured: fixed header
+  text y≈107pt vs body y≈96pt at a 34mm top margin → overlap, which is why the old code emitted the header
+  once on page 1 only). Long tables, image montages and any content flowing to a new page therefore never
+  cover the header; the `K S R C E` watermark is untouched. Verified on a real 7-page / 120-row record book
+  (`test:record-book-header` **50/50**, per-page bounding-box proof of zero body/header overlap) plus the real
+  HTTP pipeline (`test:runtime` **38/38**, header on every footered page incl. the image annexure). Full
+  backend matrix **30/30 EXIT 0**; backend build exit 0. See the Completed entry + Log. No commit/push made.
+
 - **Browser E2E verification + two UI defects fixed (2026-10-11):** a real headless-Chromium
   click-through over a disposable sandbox (second backend on 5056 over a fresh temp store; SPA
   rebuilt with a temp `VITE_API_URL`; the live 5050/3000 servers untouched) — **42/42 checks PASS**
@@ -281,6 +861,1406 @@ Status legend: `PASS` | `PARTIAL` | `FAIL` | `PENDING`
 
 ## Completed
 
+### Uploaded achievement certificates missing from the Official Record Book (PDF) — unified into the shared archive, real pages reproduced (2026-10-15) — PASS
+
+**Symptom.** A certificate the student uploaded through **My Progress & Achievements** was visible in the portal (and, after the previous fix, in My Documents), but the downloaded **Official Record Book (PDF)** listed only the system *Student Details Form*, printed "**0 student-uploaded document(s) on record**", and appended **no** certificate pages. The intended behaviour (stated in the module's own comments) is to embed the **actual uploaded pages** — images inline, PDFs appended as annexures after the signed record — not a summary or a link.
+
+**Reproduced on the real running app** (student `73152421125`). `GET /api/student/progress` returned the certificate (`Verified`, `Hackathon Certificate`, `certificateUrl=/uploads/progress/prog-1791999062825-454237-adobe.pdf`); `GET /api/pdf/student/73152421125?mode=full` returned **200**, 3 pages, a documents section listing only the form, **0** annexure cover sheets and none of the certificate's text (`mode=mentor-documents` likewise, 2 pages). `backend/data/student_documents.json` held **only** `student_details_form` rows; the certificate lived in `student_progress.json`.
+
+**Root cause.** The record-book data collector (`collectRecordBookData`, `record-book-html.data.ts`) queried **only** `StudentDocument`. On a real record every `StudentDocument` row is the auto-generated `student_details_form` (`isPrimary: true` → `is_system_form`), which the embed loop deliberately skips so the dossier never embeds itself — so the certificate in `StudentProgress` was neither listed nor attached. The legacy jsPDF fallback (`pdf.service.ts`) had its **own** inline `StudentDocument` query with the identical defect.
+
+**Fix — one shared archive collector, used by both renderers; no duplicate records.**
+
+- **New shared util** `backend/src/utils/uploaded-file-key.util.ts` — `normaliseStoredFileKey(url)`, the single canonical stored-file identity rule (compares only the stable `uploads/...` logical path). `student-progress.controller.ts`'s local `normaliseFileKey` now delegates to it, so the My Documents merge and the PDF archive can never disagree about when two rows are the same physical file.
+- **New shared collector** `collectStudentDocumentArchive(studentObjectId)` in `record-book-html.data.ts` — reads **both** `StudentDocument` (sorted `isPrimary`/`uploadedAt`) and `StudentProgress` (oldest first), maps both onto the existing record-book document shape (`id, source, title, file_name, document_type, category, event_details, uploaded_on, verification_status, is_system_form, file_type, file_size, file_url`), and de-duplicates by `normaliseStoredFileKey`. A progress row that folds into an already-listed file only **enriches** generic metadata (title/event/category); it never changes the listed verification status. Used by **both** `collectRecordBookData` (HTML renderer) and `pdf.service.ts` (legacy fallback, whose inline query was removed).
+- **Clear no-file message** in both embed loops (`record-book-html.service.ts` `resolveDocumentFiles`, `pdf.service.ts`): a record with `file_url === ''` is a real listed record with nothing to reproduce, reported plainly ("This record has no certificate file attached…") — never as a lost file or "needs administrator repair".
+- **Accurate provenance** on the annexure cover sheet: "…uploaded by the student through **My Progress & Achievements**" vs "through Student Documents", driven by `source`.
+- **Related consistency fix:** the HTML renderer appended PDF annexures even for `mode=internal`, although it renders no documents section for that mode — the legacy jsPDF renderer already guarded both together. `appendPdfAnnexures` is now guarded by `mode !== 'internal'` too, so the unified archive cannot leak certificate pages into the marks-only internal report.
+
+**Preserved.** No change to any point value, eligibility rule, ranking, verification or scoring code; watermarking, RBAC/ownership and the `is_system_form` self-embed guard are untouched. Original certificate files are never modified. A file referenced by both stores is listed and reproduced **exactly once**.
+
+**Verification.**
+
+| Check | Result |
+|---|---|
+| Real HTTP path, pre-fix (`mode=full`) | 200, **3 pages**, documents section = form only, "**0 student-uploaded document(s) on record**", **0** annexure covers, certificate text absent |
+| Real HTTP path, post-fix (`mode=full`) | 200, **5 pages**, **2** listed rows, **1** annexure cover, `adobe.pdf` text **reproduced verbatim** on p5 (`.runtime-verify/pdf/repro.mjs`, `.runtime-verify/pdf/dump.mjs`) |
+| Real HTTP path, post-fix (`mode=mentor-documents`) | 200, **4 pages**, certificate listed + reproduced (p4) |
+| Live upload → regenerate → delete (`.runtime-verify/pdf/probe-live-e2e.mjs`) | **17/17 PASS** — second cert uploads (201 Pending) → 2 docs / 2 covers / both texts present → delete (admin) → PDF **byte-identical** to baseline, file removed, row set restored, points unchanged (rank 1 / 5 pts / 1 achievement) |
+| New suite `npm run test:record-book-certificates` | **27/27 PASS** — listing, verbatim PDF page, image inline at real dimensions (240×160), form never self-embedded, cross-student isolation, both-store de-dup (listed + reproduced once), missing / unsupported / no-file clear reasons, internal mode document-free, read-only (file hashes + record fingerprints unchanged) |
+| `npm run test:record-book-header` | **74/74 PASS** |
+| `npm run test:certificate-visibility` | **22/22 PASS** |
+| `npm run test:runtime` | **38/38 PASS** |
+| `npm run test:document-watermark-runtime` | **46/46 PASS** |
+| `npm run test:leaderboard` | **35/35 PASS** |
+| `npm run test:state-machine` | **137/137 PASS** |
+| `npm run test:security-hardening` | **8/8 PASS** |
+| backend / frontend `tsc --noEmit` | exit 0 |
+| backend / frontend `npm run build` | exit 0 |
+
+**Remaining issues / notes (reported, not fabricated).**
+- **Orphaned pre-existing record:** `StudentProgress` row `6ac69edac00f5614c49174be` (KAVIN S, `731523205099`, `Pending`) points at a student id absent from `students.json`, and its file is absent from disk. Unreachable from any record book; left untouched.
+- **Pre-existing test artifact (left in place per "do not add or remove points"):** `backend/data/achievements.json` holds one Approved achievement, `PROBE Workshop Attendance` (5 points), from an earlier probe. Removing it would change the leaderboard, so it was left as-is.
+- The record book prints the verification status the ledger already holds; it never re-verifies. A `Pending` progress certificate therefore appears as `Pending`.
+
+Branch `temp`, uncommitted, no commit/push.
+
+### Achievement certificates missing from "My Documents" — merged from the participation ledger without duplicating records (2026-10-15) — PASS
+
+**Symptom.** A certificate the student uploaded through **My Progress & Achievements** was invisible in **My Documents**, even though it showed in My Progress, and the achievement points / leaderboard worked.
+
+**Reproduced on the real running app** (student `73152421125`). `GET /api/student/progress` returned the certificate (`Verified`, `Hackathon Certificate`, `certificateUrl=/uploads/progress/prog-1791999062825-454237-adobe.pdf`), but `GET /api/documents/student/:id` returned **only** the `student_details_form`. The stored files proved the split: `backend/data/student_progress.json` held the certificate row while `backend/data/student_documents.json` held only `student_details_form` rows. Fetching the stored file directly (`/uploads/progress/…`) returned 401/404 because the authenticated `/uploads/*` route resolves paths **only** through a `StudentDocument`.
+
+**Root cause.** The certificate lives in the achievement/participation ledger (`StudentProgress`, what **My Progress** writes to), a *different collection* from the document store (`StudentDocument`) that **My Documents** reads. `getStudentDocuments` listed only `StudentDocument`, so an achievement certificate had no record to appear from — and `streamDocumentFile` (`/api/documents/:id/file|download`) resolved **only** `StudentDocument` ids, so its file could not be served either. This is a **visibility** defect; the points system was already correct and is untouched.
+
+**Fix — backend + one frontend file, no migration, no duplicate records.**
+
+- `backend/src/modules/documents/document.controller.ts`
+  - `getStudentDocuments` now merges the student's achievement certificates onto the document list by reusing the **one canonical** de-duplicating routine the mentor review screen already uses (`buildUnifiedProgressRecords`) and normalising them onto the document response shape (`documentType:'certificate'`, `source:'progress'`, real `verificationStatus`, `fileAvailable`, `title`=activity, `category`/`eventName`/`organizer`/`eventDate`, plus a deliberately **read-only** capability set with a "Manage this certificate from My Progress." reason — so no action button points at the document endpoints). A file already represented by a `StudentDocument` is folded by the shared routine, so it is listed **exactly once** and nothing is written.
+  - `streamDocumentFile` (serving both `/file` and `/download`) now resolves `StudentProgress` ids as well as `StudentDocument` ids, applying the **same** `checkStudentAccess` ownership rule and serving the **original** stored bytes (progress certificates are not watermarked). Header handling extracted into one `sendStoredFile` helper used by both branches.
+- `frontend/src/components/documents/StudentDocumentsManager.tsx`
+  - Tags achievement certificates "From My Progress"; when `fileAvailable === false` the View/Download buttons are disabled and a clear "File unavailable." note replaces a broken preview. (The default `ALL` filter already renders them, and `openPreview`/`handleDownload` already use `doc.id`, which the backend now resolves.)
+- Removed the superseded, unused `backend/src/utils/certificate-achievement.util.ts` (dead code from an earlier plan; referenced nowhere).
+
+**Preserved.** No change to any point value, eligibility rule, ranking, verification or the achievement points service. Existing certificate records and files were neither deleted nor rewritten. Existing document permissions are unchanged; achievement certificates are read-only in this view and remain manageable in My Progress.
+
+**Verification.**
+
+| Check | Result |
+|---|---|
+| Real headless Chrome (`.runtime-verify/cert/browser-docs.mjs`, CDP, dev 3000 → backend 5050) | **14/14 PASS** — certificate card displayed, tagged "From My Progress", **exactly one**, View previews the **certificate** via a secure blob iframe (`/api/documents/6acfbc56f975f18de9ebb8cb/file` → 200, iframe title `adobe.pdf`), 0 error boundary, 0 exceptions, 0 console errors |
+| Live API (`.runtime-verify/cert/probe-verify.mjs`) | My Documents returned **2** rows (form + certificate, `source=progress`); owner preview/download 200 (`application/pdf`, 246 778 B, original filename `adobe.pdf`); anonymous 401; another student 403; no duplicate |
+| Upload → appears → cleanup (`.runtime-verify/cert/probe-e2e.mjs`) | before 2 → upload 201 (Pending) → after 3 (visible + previews 200) → cleanup delete 200 → back to 2; leaderboard unchanged (rank 1, totalPoints 5, achievementCount 1) |
+| Missing-file path (`.runtime-verify/cert/probe-missing2.mjs`) | a record whose bytes are gone is **still listed** (`fileAvailable=false`) and its preview returns 404 — never a fabricated file |
+| New regression suite `npm run test:certificate-visibility` | **22/22 PASS** (merge, ownership, dedup, read-only perms, points-neutral) |
+| `npm run test:runtime` | **38/38 PASS** |
+| `npm run test:document-watermark-runtime` | **46/46 PASS** |
+| `npm run test:leaderboard` | **35/35 PASS** |
+| `npm run test:state-machine` | **137/137 PASS** |
+| `npm run test:security-hardening` | **8/8 PASS** |
+| backend `tsc --noEmit` | exit 0 |
+| frontend `tsc --noEmit` + `npm run build` | exit 0 |
+
+**Remaining issues / notes (reported, not fabricated).**
+- **Orphaned pre-existing record:** `StudentProgress` row `6ac69edac00f5614c49174be` (KAVIN S, `731523205099`, `Pending`) points at student id `6ac69edac00f5614c49174bc`, which does **not** exist in `students.json`, and its file `backend/storage/uploads/progress/sih2026_cert.pdf` is **absent from disk**. It is unreachable from any student's My Documents and is left untouched.
+- **Pre-existing test artifact (left in place per "do not add or remove points"):** `backend/data/achievements.json` holds one Approved achievement, `PROBE Workshop Attendance` (5 points), created by an earlier verification probe. Removing it would change the leaderboard, so it was left as-is — delete it if unwanted.
+- Browser-level verification uses headless Chrome via CDP (the repo has no Playwright/jsdom), the same technique the leaderboard entry used.
+
+Branch `temp`, uncommitted, no commit/push.
+
+### Achievement Leaderboard "Something Went Wrong" — Rules-of-Hooks violation in `LeaderboardView` (2026-10-15) — PASS
+
+**Symptom.** Opening **Achievement Leaderboard** (student view; the component is shared, so every role was affected)
+rendered the KSRCE error boundary — *"Something Went Wrong — An unexpected error occurred."* — while `GET /api/leaderboard`
+returned **200** with real data, i.e. the backend was healthy.
+
+**Root cause (FINAL).** A React **Rules-of-Hooks** violation in `frontend/src/components/leaderboard/LeaderboardView.tsx`,
+introduced by the 2026-10-15 performance-optimisation pass that memoised the derived presentation. The new `useMemo` was
+placed **after** the two early returns:
+
+```
+if (error)  return (…error card…);
+if (!data)  return <LeaderboardSkeleton />;          // render 1 (data === null) stops here
+const derived = useMemo(() => { … }, [data, entries]); // reached only from render 2 onward
+```
+
+Render 1 (loading, `data === null`) ran `useState×3 + useCallback + useEffect` = **5 hooks**; render 2 (loaded) added the
+`useMemo` = **6**. React threw `Rendered more hooks than during the previous render. at LeaderboardView (…:244)`, which the
+`ErrorBoundary` surfaced as the generic error screen. No exception reached `window.onerror` — it appeared as the console
+error above plus the boundary.
+
+**Fix (one file).** Hoisted the `entries` line and the entire `derived = useMemo(…)` block to run **unconditionally, above
+both early returns** (immediately after the `load`/`useEffect` hooks); made the memo null-safe for the loading render
+(`data?.entries ?? []`, `(data?.verifiedAchievements ?? 0) > 0`, `data?.me ? … : null`); removed the now-duplicated block;
+added a comment explaining why it must stay above the early returns. Hook order is now stable on **every** render. No
+backend, API, scoring, RBAC, styling or data-shape change; no dependency added.
+
+**Why no other page broke.** All nine other `useMemo` sites in the frontend were audited and already sit **before** their
+early returns (`PrincipalDashboard`, `AdminMentoringDashboard`, `HodMarksManagement`, `AdminSubjectManagement`,
+`AdminBulkUpload`, `MarksEntryTable`, `ClassRosterPanel`, `MultiSelect`, `BulkAssignMentees`); `HodDashboard` already
+carried an explicit "hooks before early returns" comment. `LeaderboardView` was the single wrong site.
+
+**Verification.**
+
+| Check | Result |
+|---|---|
+| Pre-fix, real browser (`.runtime-verify/achv/verify.mjs`, headless Chrome, dev 3000 → backend 5050, student `73152421125`) | **FAIL reproduced** — error boundary; console error `Rendered more hooks than during the previous render. at LeaderboardView (…:244)`; `/api/leaderboard` 200 |
+| Post-fix, same harness | **8/8 PASS** — `.lb-root` present, hero "Achievement Leaderboard", **157 students in scope**, 0 error-boundary, 0 exceptions, **0 console errors** |
+| `npm run test:leaderboard` | **35/35 PASS** |
+| frontend `tsc --noEmit` | **exit 0** |
+| frontend `vite build` | **exit 0** |
+
+Branch `temp`, uncommitted, no commit/push.
+
+### Admin Subject Management + subject-aware marks upload (2026-10-15) — PASS
+
+**Objective.** Give the Administrator a first-class subject catalogue and make the marks workflow use it: create/edit/
+activate/deactivate subjects with department · semester · academic year · regulation · type · maximum & pass marks,
+without inventing departments or replacing any existing college data, and without breaking the legacy subject flow.
+
+**Design constraint that shaped everything.** `security-hardening.test.ts` uploads a mark with `subjectCode: 'SEC201'`
+that has **no** catalogue entry and requires `imported === 1`. So the catalogue could not be made mandatory. The
+implemented rule is **additive**: enforcement switches on **per department**, only once that department has at least one
+catalogue subject. Before that, the legacy free-form code is accepted exactly as before. No subjects are seeded, so
+every existing install keeps the legacy path until an Admin adds the first subject.
+
+**Files changed.**
+- **New** `backend/src/models/Subject.model.ts` — schema, `SUBJECT_TYPES`/`SUBJECT_STATUSES`, `isSubjectType`/
+  `isSubjectStatus`/`normaliseSubjectType`, `SUBJECT_TYPE_LABEL`, compound unique index
+  `{code, department, semester, academicYear}`.
+- `backend/src/models/index.ts` — export the new model.
+- `backend/src/database/migrate.ts` — `Subject` added to `ALL_MODELS` **and** `PERMANENT_MODELS`.
+- **New** `backend/src/modules/subjects/subject.controller.ts` — `getSubjects` (search/filter/paginate + usage counts),
+  `getSubjectMeta`, `getSubjectById`, `createSubject` (409 duplicate, 400 pass>max), `updateSubject`, `setSubjectStatus`,
+  `deleteSubject` (409 when marks exist), and `loadDepartmentSubjects` (used by the HOD marks list).
+- **New** `backend/src/modules/subjects/subject.routes.ts` — ADMIN-only router.
+- `backend/src/index.ts` — mount `app.use('/api/admin/subjects', subjectRoutes)` **before** the general `/api/admin`
+  router.
+- `backend/src/modules/hod/hod.controller.ts` — `getSubjectsForClass` rewritten to union catalogue + legacy subjects;
+  import `loadDepartmentSubjects`; legacy subjects become view-only (`isActive:false`) once the department has a catalogue.
+- `backend/src/modules/hod/marks-bulk-upload.service.ts` — `resolveUploadSubject` helper; subject enforcement in
+  `validateMarksExcel` (blocking unknown/inactive; per-row max-marks bounds) and `executeMarksImport` (per-row, so a
+  direct POST cannot bypass `/validate`).
+- `frontend/src/api/client.ts` — subject types + `admin.subjects.*`; HOD `getSubjects` → `HodSubjectOption[]`.
+- **New** `frontend/src/pages/admin/AdminSubjectManagement.tsx` — the page.
+- `frontend/src/pages/admin/AdminDashboard.tsx` — import + `if (currentTab === 'subjects')` dispatch (before the shared
+  loading/error gates).
+- `frontend/src/components/common/Sidebar.tsx` — `Subject Management` item in the Admin **ACADEMIC** section.
+- `frontend/src/pages/hod/HodMarksManagement.tsx`, `frontend/src/pages/hod/HodClassManagement.tsx`,
+  `frontend/src/pages/hod/ClassManagementClassCard.tsx` — subject option type gains the catalogue fields; inactive
+  options are `disabled`; auto-select prefers an active subject.
+- **New** `backend/src/tests/subject-management.test.ts` + `test:subject-management` script.
+- **New** `.runtime-verify/subjects/verify.mjs` — headless-Chrome UI verification (scratch `DATA_DIR`, real dev server).
+
+**Backend verification — `npm run test:subject-management` → 17/17 PASS.** Add · duplicate code rejected (409, exactly one
+row) · pass>max rejected (400) · edit · deactivate/reactivate round-trip · inactive subject flagged `isActive=false` in
+the HOD list **and** refused by `/import` with an explanatory reason (nothing written) · a valid upload associates the
+mark with the correct student+subject (`ia1=44`) · over-range mark fails with a row-level “between 0 and 50” reason ·
+unknown subject refused once the department has a catalogue · editing a subject leaves the existing mark untouched ·
+historical subject still listed for the class · a legacy subject is listed view-only (`source=MARKS`, `isActive=false`)
+once its department has a catalogue while the catalogued subject stays selectable · delete refused when marks exist (409)
+/ allowed when unused · HOD create/edit/deactivate all 403 and no cross-department subject leak ·
+search/filter/pagination/meta · `subjects.json` contains the row on disk (restart-safe).
+
+**UI verification — `.runtime-verify/subjects/verify.mjs` → 12/12 PASS.** Boots a scratch backend + `vite` dev server,
+logs in through the real form, then: sidebar entry opens the page · page header renders · fresh catalogue shows the empty
+state · add from the modal · duplicate rejected (modal stays open, error shown, no second row) · edit · deactivate asks
+for confirmation then shows `INACTIVE` · reactivate · search narrows to one row · server-side pagination present and
+moves pages (13 subjects → 10 + 3) · semester filter returns only matching rows · **0 runtime exceptions / 0 unexpected
+console errors**.
+
+**Regression + build.** `test:security-hardening` 8/8 · `test:hod-class-management` 8/8 · `test:internal-marks` 97/97 ·
+`test:bulk-upload` 23/23 · `test:hod-scope` 33/33 · `test:admin-routes` 8/8 · `test:admin-auth` 13/13 · backend
+`tsc --noEmit` exit 0 · frontend `tsc --noEmit` exit 0 · `vite build` exit 0. Branch `temp`, uncommitted.
+
+### Subject Management — multi-select scope (departments · semesters · academic years · regulations) (2026-10-15) — PASS
+
+**Objective.** Let one subject apply to **several** departments, semesters, academic years and regulations at once, with
+chip/searchable multi-selects in the Add/Edit form, and make the marks-upload scoping respect those selections — while
+preserving every existing subject and mark, all uncommitted work, and the established permission model.
+
+**Design decision — arrays of record + scalar mirrors.** The local file store's query matcher resolves a dotted path the
+Mongo way for **nested** arrays (`nested.arr.k`) but **not** for a top-level array field — verified empirically:
+`matchesFilter({ departments: ['d1','d2'] }, { departments: 'd1' })` is `false`. Rather than risk a broad change to the
+shared matcher, each subject now stores the canonical scope as arrays **and** keeps the original scalar fields as the
+**first element of each array**. The scalars preserve the existing unique index, the legacy API shape and every existing
+reader; the arrays are the source of truth compared in JavaScript via the new helpers in `Subject.model.ts`. All query
+sites that need scope matching load the (small) subject collection once and filter in JS, which is equivalent in cost to
+the store's own full scan.
+
+- `departments: LocalId[]`, `semesters: number[]`, `academicYears: string[]`, `regulations: string[]` (required except
+  regulations); mirrors `department`/`semester`/`academicYear`/`regulation`.
+- New exported helpers: `subjectDepartments`, `subjectSemesters`, `subjectAcademicYears`, `subjectRegulations`,
+  `normaliseSubjectScopes`, `subjectAppliesTo`, and `backfillSubjectScopes`.
+- **Legacy migration:** idempotent `backfillSubjectScopes()` copies scalars into the arrays for any record missing them,
+  invoked from `runMigrations()` after `syncIndexes()`. It is a no-op on a store whose subjects already have arrays.
+
+**Files changed.**
+- `backend/src/models/Subject.model.ts` — array scope fields + scalar mirrors; the four scope helpers + `backfillSubjectScopes`.
+- `backend/src/database/migrate.ts` — call `backfillSubjectScopes()` at boot (logs the count when > 0).
+- `backend/src/modules/subjects/subject.controller.ts` — `parseSubjectInput` accepts **both** the array shape
+  (`departmentIds`/`semesters`/`academicYears`/`regulations`) **and** the legacy scalar shape (wrapped into 1-element
+  arrays), validates ≥1 of each required field, de-duplicates, and normalises; new `findScopeConflict` rejects a
+  same-code subject whose scope **overlaps** any (department, semester, academic-year) combo (409) while allowing a
+  **disjoint** reuse of the code; `serialiseSubject` returns `departmentIds/departments[]/semesters/academicYears/
+  regulations` **plus** the first-element mirrors; `getSubjects` filters by array membership in JS; `getSubjectMeta`
+  unions academic years from subjects + batches and regulations from subjects; `computeSubjectUsage` sums marks/students
+  across every (department, semester) combo; `loadDepartmentSubjects` matches any selected department/semester/year and
+  is used, unscoped-safe, by the HOD list.
+- `backend/src/modules/hod/hod.controller.ts` — `getSubjectsForClass` expands a catalogue subject that covers several
+  semesters into **one option per applicable semester** (intersection with the class's semesters); regulation read via
+  `subjectRegulations`.
+- `backend/src/modules/hod/marks-bulk-upload.service.ts` — `resolveUploadSubject(deptId, code, semester, academicYear?)`
+  now filters the department's catalogue in JS and matches code **and** the subject's `semesters` **and** (only when a
+  year is supplied) its `academicYears`; `validateMarksExcel` passes its `academicYear`; `executeMarksImport` gains an
+  optional `academicYear` (threaded from `req.body.academicYear`).
+- `frontend/src/api/client.ts` — `SubjectRow` gains `departmentIds/departments[]/semesters/academicYears/regulations`
+  (keep scalar mirrors); `SubjectInput` is now the multi-select shape.
+- **New** `frontend/src/components/common/MultiSelect.tsx` — a reusable, accessible (ARIA combobox + multi-selectable
+  listbox) multi-select: removable chips, search, select-all/clear-all, keyboard (arrows/Enter/Escape/Backspace/Tab),
+  duplicate-proof, `creatable` mode (used for academic years + regulations) with a validator, drop-up placement when
+  space is tight, and a `+N more` overflow.
+- `frontend/src/pages/admin/AdminSubjectManagement.tsx` — the four scope fields are now `MultiSelect`s (departments and
+  semesters fixed; academic years and regulations type-to-add); the form state/validation use arrays (≥1 required,
+  YYYY-YYYY years); the table shows department chips plus comma-joined semesters/years/regulations; option vocabularies
+  are built from `meta`.
+- `frontend/src/styles/index.css` — the `.ms-*` MultiSelect design system (navy/gold) and `.subj-tag` table tags.
+- `backend/src/tests/subject-management.test.ts` — 9 new checks (see below).
+- `.runtime-verify/subjects/verify.mjs` — MultiSelect helpers (`msOpen/msPick/msType/msPickOrAdd/msChips/msRemoveChip/
+  msError`) and 4 new UI checks.
+
+**Backend verification — `npm run test:subject-management` → 26/26 PASS** (the 17 original checks still pass unchanged
+on the multi-select engine, plus: create with several departments/semesters/academic-years/regulations and correct
+first-element mirrors · overlapping duplicate rejected (409) **and** a disjoint same-code scope accepted (201) · empty
+department / empty semester / malformed academic year all rejected 400 with nothing stored · edit preserves every
+selection · removing a value narrows only that array · upload succeeds for a class the subject applies to (MS200, CSE
+year-1 sem-1, imported `ia1=33`) · uploads for an incompatible **semester** (MS300 semester-3-only) and an incompatible
+**department** (MS400 ECE-only, also absent from the CSE selector) are both refused · existing CS101 mark untouched
+(`ia1=44`) · scope arrays present in `subjects.json` on disk).
+
+**UI verification — `.runtime-verify/subjects/verify.mjs` → 16/16 PASS** in headless Chrome against a scratch store:
+sidebar → header → empty state → add (chips render) → duplicate rejected → **multi-select create (2 departments,
+Sem 3+4, two academic years) shown as chips and in the table** → **empty required selections blocked with inline
+errors** → **edit pre-fills every chip and removing one narrows the saved selection** → edit → deactivate confirm →
+reactivate → search → pagination (14 subjects → 10 + 4) → semester filter → **0 runtime exceptions**.
+
+**Regression + build.** `test:security-hardening` 8/8 · `test:bulk-upload` 23/23 · `test:hod-class-management` 8/8 ·
+`test:hod-scope` 33/33 · `test:internal-marks` 97/97 · `test:admin-routes` 8/8 · `test:admin-auth` 13/13 · backend
+`tsc --noEmit` exit 0 · frontend `tsc --noEmit` exit 0 · `vite build` exit 0. Branch `temp`, uncommitted.
+
+**Honest limitations.** (1) The store's matcher does **not** support membership on a top-level array field, so scope
+matching is done in JavaScript after loading the subject collection — correct for the current full-scan local store, but
+it is **not** an indexed query and would need revisiting before a real database. (2) Regulation is stored, displayed and
+filterable but is **not** enforced during uploads, because `Student` carries no regulation field to compare against.
+(3) The `MultiSelect` was exercised through the real page via CDP (open · pick · type-to-add · remove chip · required
+errors), but its drag/touch gestures and screen-reader announcement order were not separately audited.
+
+
+
+**Objective.** Make the **actually rendered** login page match the supplied reference **image**
+(`A:\movies\ref.png`, 1696×927) as closely as possible — layout, typography, spacing, colours, panel
+proportions and card — and correct every difference that can be established from the raster.
+
+**Method.** This environment cannot *view* images, so the reference was analysed **numerically**:
+`sharp` extracts raw pixels and custom scripts render ASCII luminance maps, threshold "band" scans,
+and a `diff` heat-map of `ref.png` against a live capture. The live page is screenshotted through Chrome
+headless with `--remote-debugging-port` and a **fractional `deviceScaleFactor`** (1488 CSS px @ 1.1398)
+so the capture lands on the reference's exact pixel dimensions, and element geometry/computed styles are
+read over CDP. Helper scripts live in `.runtime-verify/login-ref/` (analysis) and `.runtime-verify/login-v2/`
+(`measure.mjs`, `lines.mjs`, `funcs.mjs`, `pwa-verify.mjs`, capture harness).
+
+**What the reference measures.** Panel seam x≈1093. White card 482×777 at x1156 (≈14 px below the
+viewport centre). Hero copy's left edge x≈64. The heading is **three display lines at ~47–48 px** (ink
+height 34–35, pitch 52) with a **"WELCOME TO" kicker** above them — ink only ~13 px tall but 165 px wide,
+i.e. ~44 % of the display size, not a fourth display line. Four feature rows whose title bands sit
+**73 px** apart (block ≈255 px tall).
+
+**Files changed.** `frontend/src/styles/index.css` — the login `.lg-*` block only:
+- `.lg-page` grid `minmax(0,64fr) minmax(0,36fr)` → `minmax(0,64.5fr) minmax(0,35.5fr)`.
+- `.lg-page` `--lg-gutter` `clamp(calc(var(--lg-u)*1.5), 3.2vw, calc(var(--lg-u)*3.25))` →
+  `clamp(calc(var(--lg-u)*1.5), 3.7vw, calc(var(--lg-u)*3.45))`.
+- `.lg-hero-title` `font-size` `clamp(1.42rem, 2.3vw, 1.95rem)` (33.6 px desktop) →
+  `clamp(calc(var(--lg-u)*1.42), 2.8vw, calc(var(--lg-u)*2.6))` (≈47.4 px at the reference framing);
+  `line-height` `1.2` → `1.1`.
+- New `.lg-hero-line:first-child` (the kicker): `font-size: max(0.7rem, 0.44em)`, `line-height: 1.5`,
+  `letter-spacing: 0.09em`, `margin-bottom: 0.62em`, `color: rgba(255,255,255,0.9)`. The `0.7rem` floor
+  keeps it legible on the ≤1180/≤960/≤480 breakpoints where the display size is under ~28 px.
+- `.lg-features` `gap` `clamp(calc(var(--lg-u)*0.8), 1.9vh, calc(var(--lg-u)*1.15))` →
+  `clamp(calc(var(--lg-u)*0.8), 2.98vh, calc(var(--lg-u)*1.6))`.
+No JSX/markup change; no new dependency. **Root cause of the headline mismatch:** the reference's heading
+is a full step larger than the old rem cap allowed, and "WELCOME TO" is a kicker rather than a 4th display
+line (ref/old width ratios: `DIGITAL` 1.35×, `MENTOR–MENTEE` 1.34×).
+
+**Verification — the actual running app** (dev 3000 + real auth 5050), headless Chrome via CDP:
+- **1696×927 framing:** panel x**1094** (ref 1093); card x**1156** (exact), y75, **479×776** (ref 482×777),
+  centre Δ 0; crest x63 y44; heading ink bands kicker **y183–197** (ref 185–197), `DIGITAL` **y228–260**
+  (225–260), `MENTOR–MENTEE` **y280–312** (277–312), `MANAGEMENT SYSTEM` **y333–365** (329–362) — within
+  **4 px**; `titleFont 47.4032px`, `titleLh 52.1435px`; feature title bands **539/613/684/759** = pitch
+  **74/71/75** (ref **517/591/664/739** = 74/73/75); feature block **254 px** (ref 255).
+- **Responsive:** 1440/1024/768/390/320 → **no horizontal overflow**; card centred (Δ ≤1); at 768/390/320 the
+  hero stacks to a banner, the lead paragraph and feature list are hidden as before, `docH` 1005/955/1010
+  (vertical scroll, expected); the kicker's `0.7rem` floor engages at ≤1024.
+- **Assets:** campus background resolves to `http://localhost:3000/assets/ksrce-campus-twilight.png` and
+  loads (`campusResource.t` 2,580,328 B, 56 ms); logo `complete` naturalWidth 205.
+- **Flows (unchanged behaviour):** password toggle `password → text → password` (`aria-pressed` true/false);
+  wrong password → `Invalid username or password.` and stays on login; correct admin credentials → token
+  stored + app shell + sidebar; **0 console errors / 0 exceptions** (only the expected 401 network log).
+- **PWA:** `link[rel=manifest]` = `/manifest.json`; service worker registered (scope `http://localhost:3000/`);
+  a **trusted** `Input.dispatchMouseEvent` click on `Download / Install KSRCE Web App` raises Chrome's native
+  install prompt (deferredPrompt present) with **no exception and no `alert()`**. Note: a *JS* `.click()`
+  is not a user gesture, so `prompt()` throws `NotAllowedError` — an artefact of the probe, not a page bug.
+- **Static:** `npx tsc --noEmit` **exit 0** in `frontend` **and** `backend`; `npx vite build` **exit 0**
+  (CSS 144.46 kB, gzip 25.69 kB).
+- **Pixel diff** `ref.png` vs capture (48×26 grid, photo-dominated): mean abs diff **25.28 / 255** (was
+  26.29 before this pass); the residual is the campus photograph and anti-aliasing, not structure.
+
+**Known residuals (deliberate, not fixed).** (1) The reference's lead paragraph wraps to **2 lines**
+(line-1 ink 491 px, line-2 238 px ≈ 90 chars); this component's copy is longer and wraps to **3**. That
+copy came verbatim from the earlier written spec, so it was **left unchanged** rather than inventing text
+— the consequence is that the hero feature list sits ~22 px and the bottom tagline ~24 px lower than the
+reference (the body is ~31 px taller and the hero distributes with `space-between`). (2) The reference's
+bottom tagline is inset further from the panel edge (ink y851 vs 876) and reads slightly larger; the inset
+was left at the spec's value because raising it would push the headline ~16 px above the reference's
+(which is the element the user asked to match). (3) The reference card sits ~14 px below the viewport
+centre; the card here is exactly centred (`cardCenterDelta 0`) — the reference offset is likely a capture
+artefact, so it was not hard-coded. All three are recorded here so they can be revisited if the copy or
+the tagline inset is allowed to change.
+
+**Preserved / untouched.** Auth API, payloads, field names, error strings, role redirects,
+`useAuth`/token storage, password show/hide, PWA install flow, the campus asset, `.login-*`
+(`ChangePasswordPage`), all other pages; no new dependency; no commit or push (branch `temp`).
+
+### Login page — reference-match pass (64/36 · 420 px card · `OR` separator) — PASS (2026-10-15)
+
+**Objective.** Match the written reference spec as closely as possible: two-panel desktop layout (~64 % campus hero /
+~36 % navy login), ~420 px login card, `OR` separator before the PWA action, exact copy, cinematic campus photo.
+
+**Reference-image finding.** `A:\movies\K.S.R.C.E. Campus at Twilight.png` is **byte-identical** to
+`frontend/public/assets/ksrce-campus-twilight.png` (SHA-256 match, 2,580,028 B, 1672×941). The CSS already references it
+as `/assets/ksrce-campus-twilight.png`, so the exact reference photograph was already present — nothing to copy, and no
+duplicate created. A second asset, `assets/ksrce-campus-login.png`, is referenced by no source file (left untouched).
+
+**Files changed.**
+- `frontend/src/styles/index.css` (scoped `.lg-*` only):
+  - `.lg-page` grid `minmax(0,62fr) minmax(0,38fr)` → `minmax(0,64fr) minmax(0,36fr)`.
+  - `.lg-card` `max-width` `440px` → `420px`.
+  - New `.lg-or-sep` / `.lg-or-line` / `.lg-or-text` (the `OR` rule).
+  - Card rhythm: `.lg-card-head` margin-bottom `1.6rem`→`1.4rem`; `.lg-card-college` margin-top `0.9rem`→`0.8rem`;
+    `.lg-card-divider` `margin:1rem 0 .8rem`→`0.85rem 0 0.7rem`; `.lg-card .form-group` `1.15rem`→`1.05rem`;
+    `.lg-pwa-row` margin-top `1.15rem`→`0.9rem`; `.lg-foot` `margin-top:1.25rem;padding-top:1rem`→`1.05rem`/`0.9rem`.
+- `frontend/src/pages/auth/LoginPage.tsx`: wrapped the conditional PWA block in `<>…</>`, adding
+  `<div class="lg-or-sep">…OR…</div>` above the PWA button (rendered only when `!isInstalled`).
+
+**Content:** already matched the spec verbatim (crest, heading lines + gold `MENTOR–MENTEE`, description, four features,
+tagline, card header, labels/placeholders/required stars, submit + arrow, PWA button, footer). Remember-me and
+forgot-password were **not** added (no real functionality exists — spec says add only if functional).
+
+**Preserved (unchanged).** Auth API/payload/fields/errors, `useAuth`/session/token storage, role redirects, password
+show/hide, PWA install, campus asset, all other pages; `.login-*` (`ChangePasswordPage`) untouched; no new dependency.
+
+**Verification — actual running app (dev 3000 + real auth 5050), headless Chrome via CDP.**
+- **1490×810 (reference):** split 954 / 536 = **64 / 36 %**; card **420×682** at (1012, 64), centre Δ 0, bottom margin
+  64 px; hero left edge **x=48** for crest/heading/paragraph/features/tagline; gaps 88 / 28 / 29 / 88 px; heading 31.2 px
+  (4 lines); lead 3 balanced lines (317/294/362); four 36×36 icon boxes at one x (titles x=98); no horizontal overflow
+  (docH 810).
+- **1440×900:** 922 / 518; card 420×681 centred. **1024×768:** 655 / 369; card 313×695 centred; gaps 106/28/26/106.
+- **390×844 / 320×568:** stacked banner, card 355×665 / 285×715 centred; **no horizontal overflow**; vertical scroll
+  (docH 958 / 1006).
+- **Assets:** campus photo `200 image/png` 2,580,028 B, logo `200` naturalWidth 205; right panel has no extra decor.
+- **Pixel (sharp):** hero region [72,69,70]; text-background luminance 33–47 with the bright image band right of the copy
+  ~124; card samples all-white; panel corners navy; coverage navy 38.1 % / nearWhite 20.6 % / gold 0.9 %.
+- **Flows:** password toggle password→text→password; wrong password → `Invalid username or password.`; correct
+  (`Ksrce@admin` / `Ksrce@1234`) → token + app shell + sidebar; PWA button present. **0 console errors / 0 exceptions**
+  (only the expected 401).
+- `npx tsc --noEmit` **exit 0**; `npx vite build` **exit 0** (CSS 138.91 kB).
+- **Honest limitation:** no image input in this environment, so the attached screenshot could **not** be viewed or
+  pixel-diffed; the implementation was matched to the spec's stated text/dimensions and validated with computed styles,
+  geometry and rendered-pixel statistics. Remaining uncertainty: exact crop/position and micro-spacing could not be
+  confirmed against the raster reference.
+
+### Login page — hero refinement (smaller headline · balanced lead · feature contrast) — PASS (2026-10-15)
+
+**Objective.** Second, focused pass on the left hero only: reduce the headline slightly so it balances in the panel,
+open the gap under it, make the lead copy wrap into balanced lines, tighten the feature-list contrast over the photo,
+and keep the tagline clear of the list — with the right-side login card left essentially untouched.
+
+**Files changed.** `frontend/src/styles/index.css` (scoped `.lg-*` block only):
+- `.lg-hero-title` font-size `clamp(1.5rem,2.5vw,2.1rem)` → `clamp(1.42rem,2.3vw,1.95rem)` (33.6 → 31.2 px desktop).
+- `.lg-hero-text` `margin-top` `clamp(1.4rem,2.8vh,1.9rem)` → `clamp(1.75rem,3.4vh,2.4rem)`; `max-width` `min(52ch,100%)` → `min(40ch,100%)`.
+- `.lg-brand-body::before` scrim `radial-gradient(125% 105% at 0% 46%, rgba(6,27,54,.6) 0%, …0 70%)` → `radial-gradient(150% 125% at 0% 52%, rgba(6,27,54,.66) 0%, …0 74%)`.
+- Tablet media (961–1180px): `.lg-hero-title` `clamp(1.35rem,2.15vw,1.85rem)` → `clamp(1.28rem,2vw,1.72rem)`; `.lg-hero-text` `max-width` `44ch` → `40ch`.
+- `LoginPage.tsx` **not** touched in this pass (no markup/behaviour change).
+
+**Why 40ch / three lines.** A width sweep (30–54ch) in the live page showed the wrap options; 38–40ch yields three
+balanced lines (317/294/362 px, ~9 % spread) while 52ch yields two lines (496/482 px). Three balanced lines were chosen
+to pair with the reduced headline and give the hero a deliberate, filled composition.
+
+**Preserved (unchanged).** Login API/payload/fields/errors, `useAuth`/session/token storage, role redirects, password
+show/hide, PWA install, the campus asset and every other page. Only `.lg-*` selectors changed; `.login-*`
+(`ChangePasswordPage`) untouched; no new dependency; no credential hardcoded.
+
+**Verification — actual running app (dev server 3000, real auth API 5050), headless Chrome via CDP.**
+- `npx tsc --noEmit` **exit 0**; `npx vite build` **exit 0** (CSS 138.62 kB); campus photo `200 image/png` 2,580,028 B;
+  logo `200 image/png` (naturalWidth 205).
+- **1440×900:** headline 31.2 px, 4 lines, line-height 37.44 px; lead 3 lines (317/294/362) at 383.6 px; gaps
+  crest→heading 130 / heading→paragraph 31 / paragraph→features 32 / features→tagline 129 px (all positive); four
+  feature icons 36×36 at x=46 with titles at x=96; tagline y=851; card 440×670 centred (Δ 1 px); 62/38 split; no overflow.
+- **1024×768:** headline 20.48 px (lh 24.58); lead 3 lines (292/271/334) at 353.3 px; gaps 106/28/26/106 px; icons 36×36
+  at x=32, titles x=82; card 333×678 centred (Δ 0); no overflow.
+- **390×844 / 320×568:** stacked banner 390×231 / 320×229, crest+headline+tagline all at x=18 (paragraph and feature
+  list hidden ≤960 px by design); **no horizontal overflow**; vertical scroll where required (docH 944 / 992).
+- **Contrast (sharp):** heading/paragraph/feature backgrounds luminance 37–54; bright image band right of the copy ~131
+  (sunset preserved); feature row-gap backgrounds 36–54 vs busy right area 76; panel corners navy; card samples all-white;
+  coverage navy 39.3 % / nearWhite 19.7 % / gold 0.6 %.
+- **Gold line:** `MENTOR–MENTEE` text width 317 px in a 611 px box at 1440 (fits), no clipping or document overflow from
+  280 → 1440 px.
+- **Flows:** password toggle password→text→password; wrong password → `Invalid username or password.` staying on the form;
+  correct login (`Ksrce@admin` / `Ksrce@1234`) → `ksrce_token` stored + app shell + sidebar; PWA install button present.
+  **0 console errors, 0 exceptions** (only the expected 401 log).
+- **Honest limitation:** screenshots could **not** be visually inspected in this environment (no image input) — results
+  validated from computed styles, element geometry and rendered-pixel statistics.
+
+### Login page — final UI polish (hero alignment · spacing · panel cleanup) — PASS (2026-10-15)
+
+**Objective.** Keep the existing split-screen login but make it cleaner, better aligned, more readable and visually
+balanced: one shared left content column for the hero, consistent spacing, a calmer campus crop, and a distraction-free
+right panel — without touching authentication.
+
+**Files changed.**
+- `frontend/src/pages/auth/LoginPage.tsx` — wrapped the crest, hero copy, feature list and bottom tagline in a single
+  `<div className="lg-brand-inner">` (one shared content column); removed the `<span className="lg-panel-decor">`
+  element from the sign-in panel.
+- `frontend/src/styles/index.css` (scoped `.lg-*` block only):
+  - New `.lg-brand-inner` — `position: relative; z-index: 1; display: flex; flex-direction: column;
+    justify-content: space-between; gap: var(--lg-stack); flex: 1 1 auto; min-width/height: 0`.
+  - `.lg-brand` `background-position: center 44%` → `46% 42%` (tablet `46% 44%`, mobile `46% 56%`).
+  - `.lg-brand-veil` left stop `0.84 → 0.72`, mid `0.6 → 0.46`, and the right stops lightened.
+  - `.lg-hero-title` `line-height` `1.16 → 1.2`.
+  - `.lg-hero-text` `margin-top` `clamp(1.15rem,2.2vh,1.6rem) → clamp(1.4rem,2.8vh,1.9rem)`.
+  - `.lg-features` `margin-top` `clamp(1.4rem,3vh,2rem) → clamp(1.7rem,3.6vh,2.35rem)`; `gap`
+    `clamp(.7rem,1.7vh,1rem) → clamp(.8rem,1.9vh,1.15rem)`.
+  - Deleted `.lg-panel-decor`, `.lg-panel-decor::before` and `.lg-panel-decor::after`.
+
+**Why the campus crop moved.** A `sharp` profile of `frontend/public/assets/ksrce-campus-twilight.png` (1672×941) gave a
+per-column edge-energy + brightness profile: structural detail is strongest on the left/mid (x ≈ 0.1–0.4) and the warm
+sunset cluster sits centre-right (x ≈ 0.4–0.8). At the desktop `cover` ratios the image is height-limited (only
+horizontal position matters), so `46%` keeps both the building structure and the sunset in the visible window; the
+vertical value is kept explicit for clarity.
+
+**Preserved (unchanged).** `POST /api/auth/login`, request payload, field names, validation/error messages,
+`useAuth`/session/token storage, role redirects, password show/hide, PWA install (`!isInstalled` + `promptInstall`), the
+campus asset and every other role's page. Only `.lg-*` changed; the shared `.login-*` rules (`ChangePasswordPage`) are
+untouched. No new dependency; no credential hardcoded.
+
+**Verification — the actual running app (dev server 3000, real auth API 5050), headless Chrome via CDP.**
+- Build: `npx tsc --noEmit` **exit 0**; `npx vite build` **exit 0** (CSS 138.62 kB); campus asset `200 image/png`
+  **2,580,028 B**.
+- Alignment (one shared left edge): crest / heading / paragraph / feature list / tagline all at **x=46** (1440×900),
+  **x=32** (1024×768), **x=18** (390 / 320 stacked).
+- Spacing (1440×900): crest→heading 140 px, **heading→paragraph 25 px** (was 17), **paragraph→features 33 px**
+  (was 27), features→tagline 139 px; feature rows evenly spaced 57 px apart (rows at y 501/558/615/672).
+- Heading: four lines all `33.6 px`, `line-height 40.32 px` (×1.2), weight 700, identical left x; `MENTOR–MENTEE`
+  gold `rgb(245,189,53)` and `white-space: nowrap`.
+- Feature list: all four icons **36×36** at the same x; every title/description at text-column x **96** (desktop) /
+  **82** (tablet); gaps uniform; no overlap. Smallest measured feature gap 17.1 px.
+- Right panel: `.lg-panel-decor` is gone (probe returns `null`); panel is just the gradient with `rgb(6,27,54)` base;
+  card 440×670, **centred** (centre delta ≤ 1 px) with `intent` border `rgba(245,189,53,.42)`, radius 20 px.
+- Responsive / overflow: 62/38 at 1440 (893/547) and 1024 (635/389); stacked ≤960 (brand 290 px at 768, 231 px at
+  390, 229 px at 320; card 460/355/285 px wide, centred); **no horizontal overflow at 1440 / 1024 / 768 / 390 / 320**;
+  vertical scroll where needed (docH 944 at 390×844, 992 at 320×568).
+- Readability (sharp pixel stats): hero-region mean brightened (R 65 → 71) so the sunset is less washed out; the pure
+  background behind the copy measured luminance **38–53** (white text keeps very high contrast) while the bright image
+  band to the right of the copy measured luminance ~132 (sunset preserved).
+- Flows: password toggle `password → text (aria-pressed true) → password (false)`; wrong password → alert
+  `Invalid username or password.` staying on the form; correct login (`Ksrce@admin` / `Ksrce@1234`) → `ksrce_token`
+  stored, login page gone, app shell + `.sidebar` present. **0 console errors, 0 exceptions** (only the expected 401
+  log for the wrong-password attempt).
+- Honest limitation: screenshots could **not** be visually inspected in this environment (no image input), so the
+  visual result was validated from computed styles, element geometry and rendered-pixel statistics.
+
+### Login page — right-panel premium navy + left-hero alignment fix — PASS (2026-10-15)
+
+**Objective.** Follow-up to the split-screen redesign: make the right-hand navy area read as a deliberate premium panel
+(not a flat translucent block) and give every left-hero block one consistent alignment/spacing system, verified in the
+actual running app — without changing authentication.
+
+**Files changed.**
+- `frontend/src/pages/auth/LoginPage.tsx` — the whole `MENTOR–MENTEE` headline line is now wrapped as
+  `<span className="lg-hero-line lg-hero-accent">` (previously only `MENTEE` was gold). The rest of the v2 markup
+  (`.lg-page`, `.lg-brand`, `.lg-panel`, `.lg-card`, `.lg-features`, `.lg-brand-foot`) landed with the redesign entry
+  below.
+- `frontend/src/styles/index.css` (scoped `.lg-*` block only, ~lines 5928–6577) — `.lg-panel` now paints its own full
+  deep-navy → midnight gradient (`162deg #0d2a4d → #0a2342 → #061b36 → #04101f`) with a radial top-right blue lift and a
+  faint bottom-left gold bloom; `.lg-panel-decor` reduced to a single soft gold radial bloom (`::before`) plus a
+  mask-faded dot grid (`::after`) — the oversized circles / hard borders are gone; `.lg-card` border
+  `rgba(245,189,53,.42)`, radius 20 px, layered navy shadow; `.lg-hero-title-v2` four explicit `.lg-hero-line` blocks on
+  a shared left edge with one `line-height: 1.16`; `.lg-hero-accent` gold + `white-space: nowrap`; paragraph
+  `max-width: min(52ch,100%)`; `.lg-feature-icon` fixed 36×36 with a fixed `0.9rem` gap and one text column;
+  `.lg-brand-foot` tagline bottom-left; `min-height: 100dvh`, safe-area padding and `overflow-x: clip` on `.lg-page`;
+  one-column stack ≤960px.
+
+**Preserved (unchanged).** `POST /api/auth/login` endpoint, request payload, field names, validation and error
+messages, `useAuth`/session/token storage, role redirects, password show/hide toggle, PWA install
+(`!isInstalled` + `promptInstall`), the `/assets/ksrce-campus-twilight.png` hero asset, and every other role's
+dashboard. Only the `.lg-*` family changed; the shared `.login-*` rules (reused by `ChangePasswordPage`) are untouched.
+No new dependency; no credential hardcoded.
+
+**Verification — the actual running app (dev server 3000, real auth API 5050), headless Chrome via CDP.**
+- Build: `npx tsc --noEmit` **exit 0**; `npx vite build` **exit 0** (CSS 139.08 kB).
+- Right panel: computed `background-color: rgb(6, 27, 54)` with the gradient image; corner samples navy
+  `rgb(13,42,77)` / `rgb(32,62,90)` / `rgb(4,16,31)` (top-left / bottom-left / bottom-right), i.e. a real depth ramp,
+  not a flat or transparent fill.
+- Card: 440 × 670 px, centre **exactly** the panel centre at 1440 (x 946–1386, y 115–785); interior samples all
+  `rgb(255,255,255)`; never overlaps the navy/gold divider.
+- Split / overflow: **62 % / 38 %** at 1440 and 1024 (brand 893 px / panel 547 px at 1440);
+  `scrollWidth === clientWidth` (no horizontal overflow) at 1440 / 1024 / 768 / 390 / 320.
+- Left hero: `MENTOR–MENTEE` computed `rgb(245, 189, 53)`; all four headline lines share one left x and one
+  `line-height` (38.98 px at 33.6 px); heading→paragraph gap 20 px; all four feature icons exactly 36 × 36 px with a
+  consistent text x; `EMPOWERING FUTURE ENGINEERS` tagline bottom-left.
+- Flows: password toggle `password → text`; wrong password → alert `Invalid username or password.` staying on the
+  form; correct login (`Ksrce@admin` / `Ksrce@1234`) → token stored, login page gone, app shell + `.sidebar` present;
+  real API **401** (wrong) / **200 role ADMIN + token** (correct); **0 console errors/exceptions**.
+- Honest limitation: screenshots could **not** be visually inspected in this environment (no image input), so the
+  visual result was validated from computed styles, element geometry and rendered-pixel statistics, not by eye.
+
+### Login page — premium redesign aligned to the latest navy/gold reference — PASS (2026-10-14)
+
+**Objective.** Refine the existing premium login page to match the latest navy/gold reference **without** touching
+authentication: a campus-photo hero on the left (≈62 %) with branding, title, description, a four-item icon feature list
+and the `EMPOWERING FUTURE ENGINEERS` footer, beside a ≈38 % navy panel holding a white, gold-bordered sign-in card.
+
+**Files changed.**
+- `frontend/src/pages/auth/LoginPage.tsx` — each `FEATURE_HIGHLIGHTS` entry gained a `description`; the feature list now
+  renders icon + title + description; a `<span className="lg-panel-decor" aria-hidden="true" />` was added inside the
+  sign-in panel.
+- `frontend/src/styles/index.css` (scoped `.lg-*` block only) — `flex: 1 1 62%` (`.lg-brand`) / `38%` (`.lg-panel`);
+  `.lg-hero-title` now `text-transform: uppercase` with letter-spacing and an adjusted clamp/max-width; `.lg-title`
+  (`Welcome Back`) is uppercase; new `.lg-feature-text` / `.lg-feature-desc` styles and a larger `.lg-feature-icon`;
+  new `.lg-panel-decor::before/::after` gold arcs (`rgba(245,189,53,.11)` / `.07`) inside a clipped layer; and
+  `.lg-card { z-index: 1 }` so the card sits above the decorations while its shadow stays unclipped.
+
+**Preserved (unchanged).** Login API endpoint + request payload, `useAuth` login, session/token storage
+(`ksrce_token`), role redirects, validation/error messages, password show/hide, button loading/disabled states, PWA
+manifest/service worker/install (still gated by the existing `!isInstalled` + `promptInstall` workflow), and all other
+role dashboards. No non-`.lg-*` (shared) style changed; the `.login-*` rules reused by `ChangePasswordPage` are
+untouched; no dependency added; no credential hardcoded.
+
+**Verification — the actual running app (dev server 3000, real auth API 5050), driven in headless Chrome via CDP.**
+- Build: `tsc && vite build` **exit 0** (CSS bundle 140.04 kB).
+- Layout: brand **62 %** / panel **38 %** at 1440 and 1024; stacked banner + form at 390;
+  **no horizontal overflow** (`scrollWidth === clientWidth`) at 1440 / 1024 / 390.
+- Design: `.lg-hero-title` computed `text-transform: uppercase` (35.2 px desktop / 23.55 px tablet / 20.48 px mobile)
+  with the `Mentor–Mentee` span gold `rgb(245, 189, 53)`; `.lg-title` (`Welcome Back`) uppercase; **4** feature rows
+  each with icon + title + description; card border `1px rgba(245,189,53,.32)` and radius 20 px; primary button navy
+  gradient `linear-gradient(135deg, #13315c, #071526)` with a gold border and a right-arrow icon.
+- Campus image: `/assets/ksrce-campus-login.png` loaded with natural size **1 672 × 941**; the left panel's rendered
+  pixels have mean luminance ≈ **66–77** (std-dev ≈ 29–47) and the building band only ≈ **3.7 %** near-black pixels —
+  i.e. clearly visible, not over-darkened.
+- Flows: password toggle `password → text (aria-pressed true) → password`; invalid login → alert
+  `Invalid username or password.` while staying on the form; valid login (`Ksrce@admin`) → `ksrce_token` stored and the
+  dashboard renders. **0 console errors** across the whole run.
+- Honest limitation: the captured screenshots could **not** be visually inspected in this environment (no image input),
+  so the visual result was validated from computed styles, layout metrics and rendered-pixel statistics — not by eye.
+
+### Grammar engine — broad vocabulary, modular rules, optional local model — PASS (2026-10-13)
+
+**Objective.** Scale the writing-assistant backend from the small curated dataset to a modular, broad-coverage
+deterministic engine backed by a large **licensed** vocabulary, with the pipeline *normalise → protect official values
+→ reliable spelling/vocabulary → ordered grammar rules → broader context engine when configured → validate/reject
+unsafe output → return the original when unreliable*. No fabricated/duplicate word list; keep the existing UI,
+RBAC, API contract and local JSON storage exactly as they were; measure memory and latency; evaluate a local model
+honestly.
+
+**Architecture (new + changed files).**
+- `backend/src/modules/grammar/vocabulary/morphology.ts` — hand-written English morphology (irregular verbs/plurals,
+  final-consonant doubling, `thirdPerson`/`pastTense`/`pastParticiple`/`presentParticiple`/`pluralize`,
+  `VERB_LEMMAS`, the reverse-lookup `FORM_TO_BASE` that drops ambiguous forms, and `PAST_FORMS`/`isPastForm`).
+  Pure data + pure functions, no I/O, not derived from any word list.
+- `backend/src/modules/grammar/vocabulary/domain-vocabulary.ts` — curated *safe* closed sets (`DOMAIN_WORDS`,
+  `COUNT_NOUNS`, `PLURAL_DETERMINERS`, `SINGULAR_SUBJECTS`, `PLURAL_SUBJECTS`, `AGREEMENT_VERBS`,
+  `PROGRESSIVE_VERBS`, article exceptions).
+- `backend/src/modules/grammar/vocabulary/lexicon.ts` — lazy, cached (loaded once per process) dictionary +
+  frequency layer with `isKnownWord`, `suggestSpelling`, `getLexiconStats`, `warmUpLexicon`.
+- `backend/src/modules/grammar/grammar.rules.ts` — ordered, reusable rules (see list below).
+- `backend/src/modules/grammar/grammar.spelling.ts` — conservative, dictionary-gated typo correction.
+- `backend/src/modules/grammar/grammar.context.ts` — optional Ollama adapter (OFF by default).
+- `backend/src/modules/grammar/grammar.service.ts` — pipeline wiring; `ai-assistant.service.ts` — optional local-model
+  branch before the deterministic engine, keeping exactly the five response keys
+  (`corrected,hasCorrections,original,source,status`).
+- `backend/src/index.ts` — one-time lexicon warm-up at boot (logged; non-fatal when the data is absent).
+- `backend/scripts/copy-grammar-data.cjs` + `postbuild` script — copy the data into `dist/` so a production build works.
+- Tests: `backend/src/tests/grammar-coverage.test.ts`, `grammar-context.test.ts`, `grammar-bench.ts`.
+
+**Vocabulary and licences (documented in `vocabulary/data/SOURCES.md`).**
+- `words_alpha.txt` — `dwyl/english-words`, **The Unlicense** (public domain). 4,234,910 B; SHA-256
+  `3ED0C946…2DA48`. Loaded into a `Set`; **370,103** entries at runtime (a tiny `NON_WORD_ENTRIES` override removes
+  `untill`, `tommorrow`, `enviroment` so the modern spelling can be offered; nothing on disk is edited).
+- `en_50k.txt` — `hermitdave/FrequencyWords` `content/2018/en/en_50k.txt`, **MIT**. 622,749 B; SHA-256 `5351FF40…FB458`.
+  Loaded into a `Map`; **50,000** ranked words. Only aggregate word frequencies are used.
+- `first20hours/google-10000-english` was evaluated and **rejected** (unclear/unattributed licence).
+- The load is a one-time synchronous read (`~614 ms`) cached for the whole process — **no per-request disk access and
+  no repeated parsing**, and no 500M-entry file/DB.
+
+**Rules the deterministic engine now applies (only when every word involved is in a curated set).**
+subject–verb agreement (singular *and* plural, with an `of`-guard so `one of the students has` is never re-agreed);
+`be`/`have`/`do` closed-class forms (`they is → are`, `he have → has`, `she do not → does not`); verb form after
+modal/`to`/do-auxiliary (`to submitted → to submit`); present perfect (`has go → has gone`, `have wrote → have written`);
+progressive (`is go → is going`); a missing `did` (`student not submitted → The student did not submit`); missing-verb
+fragments (`student not attending class regularly → The student is not attending classes regularly.`); `there is/are`;
+quantifier and partitive plurals (`many student → many students`, `none of the student → none of the students`);
+`a`/`an`; adjective + preposition collocations (`depend of → depend on`, `good in → good at`, `suffer with → suffer
+from`, `listen music → listen to music`, `inspite of → in spite of`, …); doubled words; capitalisation and terminal
+punctuation.
+
+**Safe handling.** Names, register numbers, subject codes (e.g. `24ITT36`), marks, CGPA/SGPA, percentages, dates and
+IDs are protected by the existing `preservesProtectedValues` guard and can never be matched by the letter/boundary
+rules. Curated domain terms (`mentee(s)`, `cgpa`, `nptel`, `hackathon`, `viva`, …) are whitelisted so the dictionary
+never "corrects" them. Ambiguous verb forms (`read`, `put`, `found`) and stative/adjective `-ing` words are never
+rewritten.
+
+**Optional local model (OFF by default — no model is installed on this machine).**
+- Enable with `GRAMMAR_LOCAL_MODEL=true` (also `1`/`on`/`yes`); endpoint/model/timeout via the shared
+  `OLLAMA_BASE_URL` / `OLLAMA_MODEL` / `OLLAMA_TIMEOUT_MS` (defaults `http://127.0.0.1:11434`, `qwen3:8b`, 60 s).
+- Setup: install Ollama, run `ollama serve`, then `ollama pull qwen3:8b` (or any model and set `OLLAMA_MODEL`), then
+  start the backend with `GRAMMAR_LOCAL_MODEL=true`. Hardware here: 16 GB RAM, 12 logical CPUs, no usable GPU info —
+  a 7–8B quantised model is feasible on CPU but slow; this path is optional and never required.
+- Any failure (disabled, unreachable, timeout, HTTP error, malformed, empty, unchanged output, or output that drops an
+  official value) silently falls back to the deterministic engine, and the model is never claimed to be running.
+
+**Benchmarks (`npm --prefix backend run bench:grammar`; Windows, Node v24.15.0, 16 GB RAM, 12 logical CPUs).**
+- Lexicon one-time load: **614 ms**, **~49.5 MB** heap; dictionary **370,103** words, ranked **50,000**; loaded once
+  (repeated access reports identical `loadMs`/counts).
+- Throughput: **5,000 mixed sentences in 1,411 ms ≈ 3,544 corrections/s (≈0.28 ms/call)**.
+- Latency: short sentence avg 0.35 ms / p95 0.78 ms; **2,498-char paragraph** avg 3.0 ms / p95 4.6 ms.
+- Heap after the runs: **~72 MB**.
+
+**Verification (real counts).**
+- `test:grammar-coverage` — **1084/1084** (hundreds of *varied* cases: agreement, be/have/do, verb form, perfect,
+  progressive, fragments, `there is/are`, quantifier/partitive plurals, a/an, collocations, spelling, capitalisation,
+  official values, already-correct text, unknown/ambiguous text, determinism + well-formedness invariants).
+- `test:grammar-context` — **35/35** against a real mock Ollama HTTP server (off-by-default sends no request; enabled +
+  valid is used; unchanged / value-dropping / commentary / HTTP 500 / malformed / empty / timeout / unreachable all fall
+  back to the deterministic engine; no model name or URL leaks).
+- Regressions: `test:grammar-api` **63/63** (real `src/index.ts` boot + real HTTP), `test:grammar-dataset` **85/85**,
+  `test:grammar-safety` **45/45**, `test:grammar` green. `npx tsc --noEmit` and `npm run build` (tsc + `postbuild`
+  data copy) exit 0.
+- Corpus checks are the honest scope: the deterministic engine is **not** a language model and no universal-correction
+  claim is made from unit tests alone.
+
+**Known limitations (documented, not hidden).**
+- Missing copula (`he able to solve`, `the student good in maths`) is left alone (only the preposition is fixed in the
+  latter) — there is no reliable safe rule for inserting `is/are` before an adjective.
+- A genuinely unknown token one edit from a common word can be "corrected" (`qubit → quit` is blocked because short
+  words are skipped, but this class of false positive cannot be fully eliminated by edit distance alone); distance-2
+  suggestions were removed entirely because they turned coinages (`xyzzy → dizzy`) into wrong corrections.
+- `capable to` was deliberately dropped (it produced ungrammatical `capable of do`).
+- Generic `want/need + noun` and reduced relatives are intentionally untouched to avoid changing meaning.
+- Some inputs close to a curated sentence return `AMBIGUOUS_INPUT` (original returned) rather than applying a rule.
+
+**Files:** `backend/src/modules/grammar/` (`grammar.rules.ts`, `grammar.spelling.ts`, `grammar.context.ts`,
+`grammar.service.ts`, `vocabulary/*`), `backend/src/modules/counselling/ai-assistant.service.ts`,
+`backend/src/index.ts`, `backend/scripts/copy-grammar-data.cjs`, `backend/src/tests/grammar-coverage.test.ts`,
+`backend/src/tests/grammar-context.test.ts`, `backend/src/tests/grammar-bench.ts`, `backend/package.json`. Branch
+`temp`, uncommitted — **no commit/push**.
+
+### Grammar engine — missing-auxiliary repair covers "coming" (`he not coming tomorrow`) — PASS (2026-10-13)
+
+**Reported.** From the running Mentoring form: `he not coming tomorrow` produced `He not coming tomorrow.` — only
+capitalised and punctuated, with the required auxiliary missing. Expected `He is not coming tomorrow.`
+
+**Root cause.** The missing-auxiliary repair is intentionally curated/list-gated: `fixMissingAuxiliaryVerbs` matches
+only a curated subject, an optional `not`, a curated participle (`MISSING_AUX_GERUNDS`) and the clause tail, and only
+at a sentence start. `coming` was **not** in `MISSING_AUX_GERUNDS`, so `he not coming tomorrow` / `student not coming
+tomorrow` never matched and fell through to the mechanical capitalisation + terminal-punctuation step. The rule
+ordering in `grammar.service.ts` (word corrections → `fixMissingAuxiliaryVerbs` → `PHRASE_RULES` →
+capitalisation/punctuation) was already correct.
+
+**Fix.**
+- `backend/src/modules/grammar/grammar.dataset.ts` — added `coming` to `MISSING_AUX_GERUNDS` together with a curated
+  group of other unambiguous action participles (`going`, `talking`, `asking`, `telling`, `bringing`, `waiting`,
+  `looking`, `watching`, `visiting`, `leaving`, `arriving`, `sending`, `eating`, `drinking`, `walking`, `sitting`,
+  `standing`, `wearing`, `paying`). Noun/adjective `-ing` words (morning, evening, meeting, building, ceiling,
+  something, …) remain deliberately excluded, so the rule stays safe and list-gated.
+- `backend/src/modules/grammar/grammar.structure.ts` — the optional object-plural normalisation
+  (`MISSING_AUX_OBJECT_PLURALS`) now runs only when the clause continues past the bare object. A bare, clause-final
+  object is left exactly as typed (`she not attending class` → `She is not attending class.`), while a continued clause
+  keeps the previously verified behaviour (`student not attending class regularly` → `The student is not attending
+  classes regularly.`). This satisfies the new examples without regressing the earlier pluralisation.
+
+**Results (real).**
+- `he not coming tomorrow` → `He is not coming tomorrow.` (`RULES_APPLIED`)
+- `student not coming tomorrow` → `The student is not coming tomorrow.`
+- `she not attending class` → `She is not attending class.`
+- `they not submitting assignments` → `They are not submitting assignments.`
+- `He is not coming tomorrow.` → unchanged (`NO_RELIABLE_CORRECTION`)
+- Reduced relatives (`Students coming late should report to the mentor.`) still untouched; protected values are never
+  touched (the repair copies the tail verbatim).
+
+**Verification.**
+- Added regression cases to `backend/src/tests/dataset-grammar.test.ts` (singular/plural subjects, existing
+  auxiliaries, reduced-relative/ambiguous clauses, punctuation variants) — suite **85/85**.
+- Added the exact failing input, the sibling examples and an already-correct clause to
+  `backend/src/tests/grammar-api.test.ts`, driven over the real `src/index.ts` boot as a real mentor — suite
+  **63/63**.
+- `test:grammar-safety` **45/45**; `test:grammar` green; backend `tsc` exit 0; frontend `tsc && vite build` exit 0.
+- **Live running server** (through the frontend dev proxy, the same `/api/mentor/grammar-check` route
+  `GrammarAssistField` calls): `he not coming tomorrow` → **He is not coming tomorrow.**, plus the four sibling cases
+  as above; the already-correct clause returns unchanged.
+
+**Files:** `backend/src/modules/grammar/grammar.dataset.ts`, `backend/src/modules/grammar/grammar.structure.ts`,
+`backend/src/tests/dataset-grammar.test.ts`, `backend/src/tests/grammar-api.test.ts`. Branch `temp`, uncommitted.
+
+### Login page — premium polish pass (campus visibility, card, form, responsive) — PASS (2026-10-13)
+
+**Objective.** Refine the existing navy-and-gold login page (`frontend/src/pages/auth/LoginPage.tsx` + its scoped
+`.lg-*` block in `frontend/src/styles/index.css`) into a more polished, premium institutional sign-in **in place** —
+no rebuild, no new dependency, and no change to authentication, routing, PWA behaviour, storage or any other role's
+dashboard.
+
+**Inspection.** Read `PROJECT_PROGRESS.md`; inspected `LoginPage.tsx`, the whole `.lg-*` CSS block, the global
+`.btn`/`.form-control`/`.form-label` tokens, `vite.config.ts` (dev port `3000`, `/api` → `localhost:5050`) and
+`PwaContext`; confirmed there is **no** Remember-Me / Forgot-Password control on the login page (so none was
+invented); verified the live dev servers were up (frontend `3000` → 200, backend `5050 /api/health` →
+`{"status":"ok","database":"connected"}`). Every pre-existing uncommitted change was preserved.
+
+**Changes (all inside the scoped `.lg-*` block; `.login-*` untouched).**
+- **Campus visibility:** replaced the very heavy veil (left `0.97`/`0.9`, vertical `0.72→0.88`) with a *localised*
+  radial scrim behind the copy (max `0.6`) plus lighter diagonal/vertical washes (`0.78→0.3`, `0.55→0.68`), so the
+  building/entrance stay clearly recognisable. Text readability is preserved by stronger, tighter `text-shadow` on the
+  hero title/copy/crest. Crop tuned to `object-position: center 42%` (desktop and mobile); the image file and its URL
+  are unchanged (`/assets/ksrce-campus-login.png`, still 2 728 283 B).
+- **Branding/crest:** badge 54→52 px with a 15 px radius and softer gold border; college name 0.95→1.0 rem; sub-line in
+  `--lg-gold-soft` with its own shadow; column left-aligned for a cleaner lock-up with the badge.
+- **Typography:** hero title `clamp(1.65rem, 2.9vw, 2.45rem)`, `line-height 1.17`, `max-width 21ch`, near-white;
+  supporting copy to `rgba(233, 239, 247, 0.95)` at `1.72`.
+- **Card:** padding `2.4 / 2.15 / 1.8 rem`, `max-width 440px`, radius 20 px, softer `rgba(245,189,53,0.32)` border and
+  a three-layer shadow (incl. a 1 px inset highlight); header rhythm retimed (divider, `Welcome Back` 1.5 rem,
+  sub `1.55`).
+- **Fields:** `min-height 50px`, `0.72rem` padding, a gold `3px rgba(245,189,53,0.28)` focus ring over a navy border
+  covering **both** `:focus` and `:focus-visible`; label gap `0.42rem`; the password toggle now has a real **38×38**
+  target (`right: 0.4rem`) with hover/active/focus-visible states (visibility logic unchanged).
+- **Sign In:** `min-height 52px` navy gradient with an inset highlight, brighter hover + lift, a gold focus ring, and
+  explicit `disabled` / `btn-loading` states (cursor, full opacity, spinner re-centred) — the global `.btn-loading`
+  spinner is reused, no new dependency.
+- **PWA button:** kept clearly secondary (gold glyph, softer `rgba(245,189,53,0.55)` border, quieter hover) but still
+  a full-height (≥44 px) accessible target.
+- **Decoration:** grid opacity `0.65→0.4` (24 px pitch); arcs softened (`0.18→0.13` / `0.1→0.07`).
+- **Responsive/overflow:** compact banner (`min-height 208px`, `184px` at ≤480) with a lighter mobile veil and the
+  hero body/supporting text/features hidden on phones; panel padding tightened; the card is `max-width 460px` on
+  stacked tablets and **`100%` (full width) at ≤480**; `overflow-x: hidden` retained on `.lg-page`; added `aria-busy`
+  to the submit button.
+
+**Unchanged / preserved.** `useAuth().login`, the `POST /api/auth/login` request shape, error handling, role-based
+redirects (`AuthContext`/`App.tsx`), show/hide password, the `PwaContext` install workflow, local JSON storage and
+every non-login screen. No credential is hardcoded and backend authentication is untouched.
+
+**Verification (actual results, live).**
+- Live dev server `http://localhost:3000/` → **200** (`text/html`); `/assets/ksrce-campus-login.png` → **200
+  `image/png`, 2 728 283 B** (byte-identical to the source); `/ksrce-logo.png` → **200 `image/png`**.
+- The running dev server serves the updated stylesheet — the new rules (card shadow, `min-height: 50px`, `btn-loading`
+  re-centring) are present in the served CSS module (219 032 B).
+- Real auth over the dev proxy: `POST /api/auth/login` `Ksrce@admin` → **200** (`success`, `data.user.role = ADMIN`,
+  `data.token` present); a wrong password → **401**. Authentication is neither weakened nor modified.
+- Frontend `tsc && vite build` → **exit 0** (1 684 modules; CSS 139.30 kB / gzip 24.72 kB). No backend suite needed
+  re-running (no backend file was touched), but the login path is exercised end-to-end above.
+
+**Honest limitation.** No browser-automation tool is available in this environment, so the desktop/tablet/mobile
+**visual** layouts were validated by the scoped CSS breakpoints (`>1180` two-column; `961–1180` two-column, tightened;
+`≤960` stacked banner + card; `≤480` compact banner + full-width card) plus the successful compile — not by rendered
+screenshots. (The prior pass's headless-Chrome screenshots cover the pre-polish layout.)
+
+**Files:** `frontend/src/pages/auth/LoginPage.tsx` (one `aria-busy` attribute), `frontend/src/styles/index.css`
+(the `.lg-*` block only). Branch `temp`, uncommitted.
+
+### Grammar engine — missing-verb fragment repair ("student not attending class regularly") — PASS (2026-10-13)
+
+**Reported.** The writing assistant returned only a cosmetic change for fragmentary clauses. Input
+`student not attending class regularly` produced `Student not attending class regularly.` — capitalised and
+punctuated but still missing the subject article and the auxiliary verb. Expected correction:
+`The student is not attending classes regularly.`
+
+**Root cause.** The deterministic pipeline only contained word/phrase substitution rules. No rule understood the
+shape *subject + `not` + participle* (`student not attending class regularly`, `he not attending classes regularly`,
+`she not submitting assignments`) or *subject + participle* (`student facing difficulty in mathematics`), so the
+clause fell through to the mechanical capitalisation + terminal-punctuation step — the only "correction" possible.
+The exact/approximate dataset paths did not cover it either: there is no curated entry for it, and no
+`allowApproximate` entry was close enough to accept.
+
+**Fix.** New ordered structural step `backend/src/modules/grammar/grammar.structure.ts`
+(`fixMissingAuxiliaryVerbs`), invoked from `grammar.service.ts` **after** word corrections and **before** the
+ordered phrase rules (so pluralisation/spacing still run over the rebuilt clause):
+- Matches only at a **sentence start** (string start or just after `.!?`), an optional `the`, a **curated subject**
+  (`student/students/mentee/mentees/he/she/it/they/we`), an optional `not`, a **curated participle**, and the rest of
+  the clause. The participle list is explicit (`MISSING_AUX_GERUNDS`) precisely so noun/adjective `-ing` words
+  (during, morning, building, ceiling, …) can never be mistaken for verbs.
+- Inserts the correct article and auxiliary (`The student is …`, `He is …`, `They are …`) and copies the remainder of
+  the clause through byte-for-byte, so names, codes, marks and dates survive verbatim.
+- A small **curated set of singular count objects** is pluralised only inside a clause that was actually rebuilt
+  (`attending class → attending classes`, `submitting assignment → submitting assignments`), so an already-correct
+  `attending class` is never reworded just for style.
+- **Safety guard:** if any curated finite verb / auxiliary / modal (`FINITE_VERB_MARKERS`) appears after the
+  participle, the clause is a reduced relative (`Students facing difficulty should approach the mentor.`) and is left
+  completely untouched. A subject already followed by an auxiliary (`student is attending …`) never matches.
+
+**Tests.** `backend/src/tests/dataset-grammar.test.ts` gained a "Missing auxiliary verb (fragment) repair" section:
+the four required patterns, plural-subject `are`, the fragment reported as a structural change, already-correct
+clauses unchanged, the reduced-relative guard, official values after the participle preserved, and dataset-integrity
+checks for the new curated lists. `grammar-api.test.ts` gained a full-stack case posting the exact screenshot input to
+`POST /api/mentor/grammar-check`.
+
+**Verification (actual results).** `test:grammar-dataset` **73/73 PASS**; `test:grammar-safety` **45/45 PASS**;
+`test:grammar-api` (real `src/index.ts` boot) **54/54 PASS**; `test:grammar` all engine cases PASS; backend
+`tsc --noEmit` exit 0; frontend `tsc --noEmit` and `vite build` exit 0. **Live verification:** the `test:grammar-api`
+run boots the real production entrypoint, logs in as a real mentor and issues the exact request the form makes
+(`POST /api/mentor/grammar-check { text: "student not attending class regularly" }`); it now returns
+`corrected = "The student is not attending classes regularly."`, `status = RULES_APPLIED`, `hasCorrections = true`,
+and nothing is persisted until the user clicks Apply Correction. The Inline Writing Assistant card shows **Original**
+and **Corrected Version** with **Apply Correction** / **Keep Original** before any change is written.
+
+**Limitations (not regressions).** Coverage is curated: the subject list, participle list and singular-object
+pluralisation list are explicit and extensible, not open-ended. An input that is close to a curated sentence but below
+the approximate threshold (e.g. `student not attending class regularly because of health issue`, close to the curated
+`she is not attending the class regularly because of health issue`) is still reported `AMBIGUOUS_INPUT` and returned
+unchanged — the conservative pre-existing behaviour. It must never be "completed" with synthetic data.
+
+### Dataset-based grammar engine — deterministic, conservative, extensible (no external AI required) — PASS (2026-10-13)
+
+**What it was.** The writing assistant's correction engine lived as one inline `runRuleBasedGrammarEngine`
+function plus duplicated protected-value code inside `ai-assistant.service.ts`. There was no explicit dataset, no
+similarity gating, and no machine-readable statement of *why* a suggestion was or was not produced, which made
+"is this text correct?" hard to answer honestly and the rule set hard to extend.
+
+**Design.** A new module folder `backend/src/modules/grammar/` was added; the feature is deliberately
+**dataset-based and not a language model**, and it does not claim completeness:
+- `grammar.dataset.ts` — `EXACT_CORRECTIONS` (curated whole sentences, each with a stored correct form), an
+  extensible `WORD_CORRECTIONS` misspelling/proper-noun dictionary, and ordered `PHRASE_RULES` for subject–verb
+  agreement, articles, prepositions, frequent sentence-structure errors and contraction punctuation. Thresholds
+  (`APPROX_MATCH_THRESHOLD = 0.9`, `AMBIGUOUS_THRESHOLD = 0.7`, `APPROX_TOPIC_FLOOR = 0.5`) and confidences live here.
+- `grammar.normalize.ts` — `normalizeForMatching` (case/whitespace/quote/dash/trailing-punctuation folding used for
+  **matching only**, never as output), `tokenize` / `contentTokens` (stop-word filtered), `tokenSetSimilarity`,
+  `levenshtein`, `similarityRatio`.
+- `protected-values.ts` — `extractProtectedValues` / `preservesProtectedValues` / `isOfficialToken`, the single guard
+  shared by the dataset engine and the optional external-LLM path.
+- `grammar.service.ts` — `correctText(text)` orchestrator returning
+  `{original, corrected, hasCorrections, status, confidence, notes}`.
+
+**Pipeline (order matters).** 1) exact curated match after safe normalisation; 2) approximate match — only for
+curated entries flagged `allowApproximate`, only at ≥ 0.9 token similarity and only when the curated pair itself keeps
+the same topic (≥ `APPROX_TOPIC_FLOOR`); 3) curated word dictionary (boundary-matched, official-code tokens skipped);
+4) ordered phrase rules (contraction spelling before subject–verb rules; the full structural rewrite before the
+sub-rules it subsumes; spacing last); 5) safe capitalisation + terminal punctuation. If nothing reliable changes the
+text it is returned **verbatim**.
+
+**Status contract** — `GrammarStatus` is now part of the API response: `EXACT_MATCH | APPROXIMATE_MATCH |
+RULES_APPLIED` (a reliable correction was produced), `NO_RELIABLE_CORRECTION` (nothing changed), `AMBIGUOUS_INPUT`
+(close to a curated correction but not safe to apply — the text is kept exactly as typed), and `EXTERNAL_AI` (only when
+an operator has configured `AI_API_KEY`; the external path and its protected-value guard are preserved).
+
+**Meaning preservation.** No similar sentence is ever substituted when meaning may differ; official values are checked
+before any whole-sentence suggestion is accepted; a corpus heuristic (short all-caps tokens treated as possible codes)
+keeps the dataset path conservative on shouted text while the case-insensitive rules still run.
+
+**Wiring.** `ai-assistant.service.ts` now delegates to `correctText` and re-exports the protected-value helpers, so its
+public surface is unchanged; `counselling.controller.ts` returns `status` in both the blank and normal responses; the
+frontend `checkGrammar` type and `GrammarAssistField.tsx` show a status-driven message ("No reliable correction found" /
+"Text is ambiguous — kept exactly as you typed it") instead of a false "no issues". The field still replaces the text
+**only after the user clicks Apply Correction**.
+
+**Tests.** New `backend/src/tests/dataset-grammar.test.ts` (`npm run test:grammar-dataset`) covers every curated exact
+pair, case/whitespace/punctuation tolerance, the approximate threshold, ambiguous input being returned unchanged, a
+clean sentence reporting `NO_RELIABLE_CORRECTION`, blank input, punctuation, capitalisation, spelling/SVA/articles/
+prepositions, meaning preservation (names/register numbers/subject codes/CGPA/dates survive; no number or fact
+invented; an attendance sentence is never rewritten into a communication sentence), determinism and dataset integrity
+(unique keys, same-topic approximate pairs, no identity word mappings).
+
+**Verification (actual results).** `test:grammar-dataset` **59/59 PASS**; `test:grammar-safety` **45/45 PASS**;
+`test:grammar-api` (real `src/index.ts` boot) **49/49 PASS**; `test:grammar` all engine cases PASS; backend
+`tsc --noEmit` exit 0; frontend `tsc --noEmit` exit 0 and `vite build` exit 0. Three genuine issues were found and
+fixed while running the new suite: the approximate topic floor wrongly excluded three legitimately same-topic curated
+pairs (resolved by keeping the floor at 0.5 and *not* opting those heavily-rewritten pairs into the whole-sentence
+approximate path — they remain available via exact match and rules); an over-strict dataset-integrity assertion
+flagged intentional proper-noun capitalisation (`english → English`); and a test expectation believed all-caps text
+must take the whole-sentence path when the case-insensitive structural rule correctly handles it.
+
+**Limitations (not regressions).** The dataset is curated, not exhaustive: unknown sentences return
+`NO_RELIABLE_CORRECTION` rather than a guess. Whole-sentence approximate matching is deliberately limited to a small
+opt-in set; heavily rewritten curated pairs correct only on an exact match. Fully-uppercase sentences skip the
+whole-sentence dataset path (short all-caps tokens may be official codes) but still receive rule-based fixes. No
+external AI is required; the optional LLM path is used only when `AI_API_KEY` is configured.
+
+### Premium login page redesign — campus-photo hero + navy-and-gold sign-in card — PASS (2026-10-13)
+
+**Objective.** Redesign the existing login page in place to a premium institutional layout matching the supplied
+reference, using the provided campus photograph, with **zero** change to authentication, authorization, routing, PWA
+behaviour or any other role's dashboard.
+
+**Project inspection.** Read `PROJECT_PROGRESS.md`; identified `frontend/src/pages/auth/LoginPage.tsx` as the component
+rendered for `/` and `/login` while unauthenticated (`App.tsx`); traced auth through `AuthContext`
+(`POST /api/auth/login`, token handled by `api/client`) and installation through `PwaContext`; inspected the design
+tokens in `frontend/src/styles/index.css`. Every pre-existing uncommitted change was preserved.
+
+**Campus image.** Verified `A:\movies\eb72e87c-e8c7-44b1-9a40-baa0134bc3ab.png` exists (1 672 × 941, 2 728 283 B) and
+copied it **verbatim** to `frontend/public/assets/ksrce-campus-login.png` (source left intact). It is referenced only as
+`/assets/ksrce-campus-login.png` — no absolute Windows path in code (confirmed: `A:\movies` / `eb72e87c` appear in
+neither `LoginPage.tsx`, `index.css` nor the built bundle). It renders as `<img … object-fit: cover>` under a navy veil
+plus a bottom gradient, so the campus building and entrance stay visible while the overlaid text remains readable.
+
+**Component (`frontend/src/pages/auth/LoginPage.tsx`).** Rebuilt as `.lg-page` → `.lg-brand` (campus panel) +
+`.lg-panel` (sign-in card):
+- Brand panel: verified crest + `K.S.R. COLLEGE OF ENGINEERING` / `AUTONOMOUS • TIRUCHENGODE`; hero
+  `Digital **Mentor–Mentee** Management System` (gold accent on `Mentor–Mentee`); the supporting sentence; four compact
+  icon feature highlights (Mentor & Mentee Management · Academic Records & Analytics · Placement Monitoring &
+  Achievements · Department & Institution Insights) using the existing `lucide-react` icons; `Empowering Future Engineers`
+  footer.
+- Sign-in card: college logo + name + system title, `Welcome Back` heading and a short supporting line; Username or
+  Register Number and Password fields (unchanged ids/labels/autocomplete), show/hide password control, validation/error
+  alert, `Sign In to Portal` submit button with the existing loading state, the retained
+  `Download / Install KSRCE Web App` button (shown only while `!isInstalled`, using the existing `promptInstall`), and the
+  `Permanent Academic Records System` / `Secured Institutional Access • K.S.R. College of Engineering` footer.
+
+**Styles (`frontend/src/styles/index.css`).** Added one scoped `.lg-*` block (palette `#061B36` / `#0A2342` / `#F5BD35`,
+premium rounded card, gold borders, soft shadows, dotted-grid + curved accents, hover/focus transitions and a
+`prefers-reduced-motion` guard with desktop / tablet (961–1180px) / stacked (≤960px) / mobile (≤480px) rules). The
+pre-existing `.login-*` rules are **kept untouched** because `ChangePasswordPage.tsx` reuses `.login-page`,
+`.login-panel`, `.login-card`, `.login-card-logo`, `.login-title`, `.login-sub`, `.login-alert`,
+`.login-password-toggle`, `.login-foot` and `.login-pwa-btn`; only the login page changed.
+
+**Changed files.** `frontend/src/pages/auth/LoginPage.tsx` (redesign), `frontend/src/styles/index.css` (scoped `.lg-*`
+block added), `frontend/public/assets/ksrce-campus-login.png` (new asset).
+
+**Verification.**
+- Campus image exists and is served: `HEAD http://localhost:3000/assets/ksrce-campus-login.png` → **200 image/png**,
+  2 728 283 B; present in `frontend/dist/assets/` after the build.
+- No absolute path leak: `A:\movies` / `eb72e87c` / `A:/movies` absent from the built bundle, `LoginPage.tsx` and
+  `index.css`; the bundle contains exactly one `/assets/ksrce-campus-login.png` reference.
+- Live page (real dev server 3000, headless Chrome, `--dump-dom`): the rendered DOM contains `lg-page`, the campus
+  `<img src="/assets/ksrce-campus-login.png">`, the crest, the gold `Mentor–Mentee` span, all four feature items, the
+  `lg-card`, `Welcome Back`, `Sign In to Portal`, the PWA button and `Empowering Future Engineers`.
+- Visual/pixel checks on headless screenshots: desktop 1440×900 → overall **69.4%** navy-family pixels, **0.45%** gold
+  accents, **18.4%** near-white card; panel right edge sampled `(4,22,44)` (deep navy), card mid `(251,251,251)` (white),
+  brand photo region non-flat (σ≈61) → the photo is loaded and blended. Tablet 1024×768 keeps two columns
+  (brand photo + navy, σ≈64). Mobile 390×844 → photo banner on top (σ≈111), white card below.
+- Authentication unchanged: real `POST /api/auth/login` (`Ksrce@admin`) → **200**, role `ADMIN`, token issued; wrong
+  password → **401**.
+- Builds/tests: frontend `npx tsc --noEmit` exit 0; `npm run build` exit 0 (only the pre-existing chunk-size warning);
+  backend `test:critical` **12/12**.
+- Scope: `git diff` for `frontend/src` shows no Admin / Principal / HOD / Faculty / Mentor / Student dashboard edit from
+  this pass; no route, endpoint or auth rule touched.
+
+Branch `temp`, uncommitted — no commit/push.
+
+### User-facing "Counselling" → "Mentoring" — remaining mentoring-workflow labels cleared — PASS (2026-10-12)
+
+**Objective.** The user-facing term had already been set to **Mentoring**, but the previous UI update left the word
+**Counselling** visible in several mentoring-workflow labels. Clear every remaining user-visible occurrence while
+preserving route behaviour, record ids, API endpoints, JSON/field names, stored data, business logic, internal
+identifiers and unrelated categories.
+
+**Root cause.** The rename had been applied to a few action buttons only (e.g. the mentor profile already said `Save
+Mentoring Record`) but not to the tab, headings, cards, tables, empty states, modal titles, field labels, navigation
+items, page titles or hints — so the same screen showed both words (e.g. `5-Domain Mentoring Records` as a card foot
+while its tab stayed `6. Counselling`).
+
+**Change (display text only).** Navigation/sidebar labels (`frontend/src/components/common/Sidebar.tsx`); the mentor
+mentee-profile view (`frontend/src/pages/mentor/MentorStudentProfileView.tsx` — tab `6. Counselling`, summary card,
+aria-label, dossier page title, record `Mentoring Date`, edit button, empty state, add/edit modal title + subtitle +
+`Mentoring Date` / `Mentoring Category` labels and their validation messages); the faculty dashboard
+(`frontend/src/pages/faculty/FacultyDashboard.tsx` — `Add/Pending/Recent Mentoring`, `5-Domain Mentoring`, mentoring
+table, `Open Mentoring Desk`, quick-add modal); the category selector
+(`frontend/src/components/mentor/CounsellingCategorySelect.tsx` — `Mentoring Category`, placeholder, validation); the
+Admin dashboard (`frontend/src/pages/admin/AdminDashboard.tsx` — `Mentoring Sessions`, `Institutional 5-Domain
+Mentoring Hub`, `Student Mentoring Directory`, `Mentoring Action`, `View Student Mentoring`, retention/deletion copy);
+the HOD faculty detail (`frontend/src/components/faculty/FacultyDetailView.tsx` — `Mentoring History`, `Mentoring
+records`, `Last Mentoring`, `Mentoring provided`, empty state); the Principal dashboard (`PrincipalDashboard.tsx` KPI
+hint + `Last mentoring` column + note; `PrincipalActivity.tsx`, `PrincipalCharts.tsx` empty copy); the HOD dashboard
+empty copy; the Student dashboard (`5-Domain Mentoring History`, `Mentoring Sessions Recorded`, PDF download copy);
+the AI-assistant prompts (`components/ai/AiAssistant.tsx`, `components/mentor/MentorAiBotModal.tsx`); and the login
+tagline.
+
+**Preserved on purpose.** The unrelated **admission category** `Counselling (Govt Quota)` (StudentDashboard.tsx,
+CompleteProfileWizard.tsx, and the mentor profile's admission-type display) — it is an admission type, not the
+mentoring workflow. Also unchanged: every internal identifier (tab keys such as `'counselling'` / `'mentoring-history'`,
+`/counselling/*` API paths, `counselling*` / `counselling_count` / `counsellingRecords` fields, `CounsellingRecord`,
+component/type names like `CounsellingCategorySelect`, CSS ids, code comments) and all backend / generated-PDF text.
+
+**Verification.** Frontend `tsc` + `vite build` exit 0. The compiled bundle (`frontend/dist/assets/index-*.js`)
+contains **exactly two** `Counselling` strings, both the intentional `Counselling (Govt Quota)` admission option, and
+none of the mentoring-workflow labels; all renamed labels (`5-Domain Mentoring`, `Mentoring Records`, `Mentoring
+History`, `Mentoring Sessions`, `Mentee Mentoring Records & Dossier`, `Add Mentoring`, `Open Mentoring Desk`,
+`Mentoring Action`, `Student Mentoring Directory`, `5-Domain Mentoring History`) are present. The **running Vite dev
+server** (`http://localhost:3000`) already serves the updated sidebar module (verified by fetching
+`/src/components/common/Sidebar.tsx`), so a refresh shows the new labels via HMR. No backend or data change, so the
+backend suites are unaffected. Branch `temp`, uncommitted — no commit/push. A headless-browser click pass was not run
+for this pass (build + bundle + live dev-server module inspection used instead).
+
+### Bulk Upload & Assign Mentees to Faculty Mentors — ADMIN college-wide / HOD own-department — PASS (2026-10-12)
+
+**Objective.** Add a complete bulk-upload-and-assign workflow on top of the existing mentorship module, preserving
+local JSON storage, reusing the existing assignment business rules, validation and audit/notification mechanisms, and
+leaving every unrelated page untouched.
+
+**Entry points.** A gold **Bulk Assign Mentees** button on the Admin **Mentor Assignment Desk** header
+(`frontend/src/pages/admin/AdminDashboard.tsx`, `currentTab === 'assignment'`) and on the HOD **Departmental Mentor
+Assignment** header (`frontend/src/pages/hod/HodDashboard.tsx`, `currentTab === 'reassignment'`). Both render the same
+self-contained modal `frontend/src/components/mentorship/BulkAssignMentees.tsx` (existing `Modal` + `bu-*` primitives +
+a new scoped `ba-*` CSS block). The single-student **Assign Mentees** / **View Roster** actions are untouched.
+
+**Flow.** `Upload → Preview & Validate → Confirm → Results`. Download **Excel (.xlsx)** or **CSV** templates; upload
+`.xlsx`/`.csv` (drag-drop or browse); see a fully validated preview; explicitly confirm (with a separate confirmation
+dialog that lists the summary and, when needed, a reassignment-authorisation checkbox + required reason); then a
+per-row results table with downloadable CSV/Excel reports.
+
+**Template columns:** `Student Register Number | Mentor Employee ID`. The shipped templates contain **illustrative
+example rows** (`261T001/EMP1001`, `261T002/EMP1002`) clearly marked in italic on a tinted fill (XLSX has an
+`Instructions` sheet + an `Assignments` sheet; CSV has `#` comment instructions). These pairs — and any `SAMPLE…`
+identifier — are detected server-side and reported **INVALID**; they can never create an assignment, even if a real
+student/faculty happens to match those IDs.
+
+**Server-side row validation (no client trust).** Required columns (header scanned within the first 10 rows with
+alias support); register numbers must match an existing student; employee IDs must match an existing faculty mentor;
+inactive mentors are refused; **HOD** rows must have both the student **and** the mentor in the caller's department
+(enforced again at execution); duplicate `registerNumber` rows are flagged `DUPLICATE`; existing active assignments
+become `ALREADY_ASSIGNED` (same mentor) or `REASSIGNMENT_REQUIRED` (different mentor); missing/malformed values are
+`INVALID`. File guards: `.xlsx`/`.csv` only, 5 MB (`BULK_ASSIGN_MAX_FILE_BYTES`) and 1000 rows
+(`BULK_ASSIGN_MAX_ROWS`), corrupted Excel → clear 400.
+
+**Statuses:** `VALID`, `WARNING` (assignable with caveat — ADMIN cross-department, or mentor at capacity), `INVALID`,
+`DUPLICATE`, `ALREADY_ASSIGNED`, `REASSIGNMENT_REQUIRED`. `maxMentees` is **not** enforced anywhere in the existing
+application, so capacity is a **warning only and never blocks** (an explicit product decision).
+
+**Preview columns:** row number, register number + student name, employee ID + mentor name, current mentor, proposed
+mentor, validation status, and error/warning message, with status filter chips + a search box. A validation report is
+downloadable as CSV.
+
+**Execution (deterministic, per-row, never trusts the client).** The assign endpoint re-validates from the raw
+`{registerNumber, employeeId}` pairs. `INVALID`/`DUPLICATE`/`ALREADY_ASSIGNED` rows are `SKIPPED` with a reason;
+reassignments require `authorizeReassignments: true` **and** a non-empty reason or they are `SKIPPED`; new assignments
+are `ASSIGNED`; authorised reassignments complete the old row (`status: 'COMPLETED'`, `assignedUntil`) and create a new
+`ACTIVE` row (`REASSIGNED`), preserving history; write errors are reported `FAILED` (with a compensating revert if the
+new row cannot be created after the old is completed). Duplicate submissions are no-ops (`SKIPPED`), no duplicate
+active rows can be created, notifications are wrapped so a notification failure can never fail an assignment, and a
+single `BULK_ASSIGN_MENTORS` summary audit row is written alongside the per-row `ASSIGN_MENTOR`/`REASSIGN_MENTOR`
+audit entries (`details.source === 'BULK_ASSIGNMENT'`).
+
+**Reports.** `POST /api/mentorship/bulk/report` builds a read-only **validation** or **results** report as CSV
+(hand-rolled) or Excel (ExcelJS); the results report reflects the actual per-row outcomes, so a partial failure is
+never reported as a full success.
+
+**Architecture / boundaries.** New `backend/src/modules/mentorship/bulk-assignment.service.ts` (template generation,
+CSV/XLSX parsing via a shared string matrix, validation, execution, report generation),
+`bulk-assignment.controller.ts` (multer memory 5 MB + `.xlsx`/`.csv` filter, template/validate/assign/report handlers)
+and `bulk-assignment.routes.ts` (`GET /template`, `POST /validate`, `POST /assign`, `POST /report`; each
+`authorize(ADMIN, HOD)`), mounted at `router.use('/bulk', bulkAssignmentRoutes)` **before** the single-student routes.
+Parsing is separate from execution. No CSV/xlsx dependency was added (`exceljs` already present; the CSV reader is
+hand-rolled). Admin may operate college-wide; a HOD is scoped server-side to its own department for **both** the
+student and the mentor; Faculty/Mentors and Students have no assignment privileges.
+
+**Verification.** New `backend/src/tests/bulk-assignment.test.ts` (`npm --prefix backend run test:bulk-assignment`)
+boots the **real** `src/index.ts` on a temporary local store (port 5120) and drives the real routes over HTTP with
+seeded temporary data — **29/29 PASS**, covering: both template downloads; .xlsx and .csv parsing; preview columns +
+every status + summary counts; illustrative example rows never assigned; required-column/row-limit/file-type/corrupted/
+size guards; confirmed execution with per-row results and preserved reassignment history; duplicate-submission
+prevention; forged client statuses ignored; reassignment authorisation + reason enforcement; capacity warning-only;
+ADMIN cross-department warning; HOD student+mentor scoping; RBAC (faculty/student/anonymous refused); notifications +
+audit; CSV + Excel reports; single-student assign/reassign regression; no leaked secrets. Regressions:
+`test:critical` 12/12, `test:bulk-upload` 23/23, `test:bulk-actions` 15/15, `test:hod` 33/33, `test:admin` 23/23,
+`test:security-hardening` 8/8. Backend `tsc --noEmit` clean; frontend `tsc` + `vite build` clean. Branch `temp`,
+uncommitted — no commit/push.
+
+### Principal dashboard — oversized banner removed, compact premium heading + mentor analytics series — PASS (2026-10-12)
+
+**Scope (strict):** the Principal role only. The redundant introductory hero was removed from the **actual Principal
+dashboard component** — not hidden — so no empty card or dead vertical space remains (`.pd-header` no longer renders at
+all). No Admin / HOD / Faculty / Mentor / Student page and no shared component was modified; the shared `Navbar` keeps
+the college crest + institution name, so institutional identity is preserved.
+
+**Removed:** the large rounded navy-gradient header card (`.pd-header`), the oversized in-banner `Principal Dashboard`
+heading, the tagline, the `Principal · Institutional Leadership` badge, the `Read-only executive access` badge, the
+repeated college crest/name, the welcome message and the in-banner date. The old `PrincipalHeader` hero markup and the
+`.pd-header*` / `.pd-chip*` CSS rules were **deleted** (not merely hidden).
+
+**Replaced with:** a compact page heading (`.pd-pagehead`) rendered outside any banner — `Principal Dashboard` with the
+short supporting line `Institutional performance at a glance` and a small gold-accented current-date chip — plus a
+Principal-scoped `.page-body:has(> .pd-root)` rule that trims the page's top padding so the overview starts higher.
+`:has()` only matches a page that renders the Principal-only `.pd-root`, so every other role keeps the shared padding.
+
+**Analytics:** the students/faculty distribution chart now also plots the real per-department **mentor** count from
+`AdminDepartmentRow.mentors` (card retitled "Students, faculty & mentors by department", 3-item legend), covering the
+"faculty versus mentor distribution by department" requirement from real data only. No series is invented and no
+historical trend is shown (no comparison series exists server-side).
+
+**Verification (real browser):** `backend/.runtime-verify/principal-dashboard-browser.mts` (gitignored scratch) — **50/50
+PASS**: compact heading present (title + subtitle + date chip); the old `.pd-header` banner absent; the role/read-only
+badges gone; no crest repeated inside the heading; 8 KPI cards with real values (students 4, faculty 3, mentored 3,
+coverage 75%, sessions 4, pending 1); analytics incl. the new mentor series; department cards; activity + alerts;
+desktop/tablet/mobile columns and no overflow; all 5 tabs; department → mentor → mentees drill-down; **Admin and HOD
+portals render with no Principal-only markup (`.pd-pagehead` / `.pd-root`)**; zero page-level JS errors. Suites:
+`test:principal` 53/53, `test:admin` 23/23, `test:hod` 33/33, `test:critical` 12/12, `test:bulk-actions` 15/15.
+`frontend tsc --noEmit` + `vite build` clean; `dist` rebuilt clean (no baked API URL). The predecessor HOD
+faculty-cards browser harness also re-ran green (**34/34**). Branch `temp`, uncommitted — no commit/push.
+
+### Principal executive dashboard — premium Principal-only redesign — PASS (2026-10-12)
+
+**Scope (strict):** the Principal role only. `frontend/src/pages/principal/PrincipalDashboard.tsx` was rewritten from
+a one-line re-export of the shared `AdminMentoringDashboard` into a self-contained executive dashboard. The shared
+`AdminMentoringDashboard`, the global `Navbar`, the sidebar and every other role's components were **not modified** —
+all new style lives in a scoped `pd-*` CSS block and all new markup lives in Principal-only components.
+
+**Design:** deep navy/midnight foundation with gold accents (existing K.S.R. design tokens), clean white/neutral
+surfaces, refined typography/spacing, premium cards (subtle borders, soft shadows, restrained radii), subtle hovers,
+Lucide icons and sparing gradients.
+
+**New components (`frontend/src/components/principal/`, Principal role only):**
+- `PrincipalHeader.tsx` — college crest (`/ksrce-logo.png`), institution name, "Principal Dashboard", tagline, role
+  badge, read-only chip, and a live long date + time-of-day greeting with the signed-in Principal's name.
+- `PrincipalKpi.tsx` — `PrincipalKpiCard` (label / prominent value / icon tile / hint) plus `PD_TONE_PAINT`.
+- `PrincipalCharts.tsx` — dependency-free `PrincipalCoverageRing` (inline SVG), `PrincipalRankedBars`,
+  `PrincipalWeeklyColumns`, `PrincipalDistributionBars`, and `coverageColor` / `formatShortDay`.
+- `PrincipalDepartmentCard.tsx` — premium department summary card with a read-only "View" drill-down trigger.
+- `PrincipalActivity.tsx` — `PrincipalActivityFeed` (real per-department last-mentoring activity) and
+  `PrincipalAlerts` (real, derived pending-attention items).
+- `PrincipalDashboardSkeleton.tsx` — layout-matched loading skeleton.
+
+**Data (real, unchanged):** everything comes from the existing Principal-allowed `GET /api/admin/overview/*` routes
+(`dashboard`, `hods`, `departments`, `department-comparison`, `report-30-day`, `departments/:id`,
+`departments/:id/mentors`, `mentors/:id`) via `api.adminMentoring.*`. No new endpoints, no backend/API/permission
+changes. KPI values, coverage, the weekly series, department figures, activity and alerts are all server-computed; the
+dashboard performs **no client arithmetic** and shows **no trend delta** (there is no historical comparison series, so
+none is fabricated). Metrics the Principal has no endpoint for (attendance, academic performance, announcements) are
+honestly **omitted**. "Mentoring sessions" is labelled as counselling records + Saturday meetings, matching the
+backend's `totalMentoringSessions`.
+
+**Tabs preserved (sidebar keys unchanged):** `mentoring-dashboard` (default), `mentoring-hods`,
+`mentoring-departments`, `mentoring-comparison`, `mentoring-reports`, with an in-page `pd-tabs` bar that also calls
+`onSelectTab`. The existing month selector, search and the department → mentor → mentee drill-down are retained as
+premium read-only views. The dashboard is **view-only**: the backend still refuses every PRINCIPAL request outside
+`/api/admin/overview/*` (403), so no edit/delete/approve/export control can leak in.
+
+**Responsive:** the KPI grid auto-fits multi-column on desktop and collapses to one column on mobile; analytics is
+two-column on desktop and stacks on ≤1024px; tables use the shared `.table-responsive`; the weekly chart is wrapped;
+no horizontal overflow at 1440 / 900 / 390. Skeleton loading, error states (network / 503 / server) and informative
+empty states throughout.
+
+**Verification (real browser):** `backend/.runtime-verify/principal-dashboard-browser.mts` (gitignored scratch) boots
+the real backend on an isolated local store plus the built SPA and drives headless Chrome over the DevTools Protocol —
+**47/47 PASS**: overview allowed / non-overview refused (403); header identity/title/greeting/badge/read-only/crest;
+8 KPI cards with real values (students 4, faculty 3, mentored 3, coverage 75%, sessions 4, pending 1); all four
+analytics; department cards; activity + alerts; desktop/tablet/mobile columns and no overflow; HOD/Department/
+Comparison/Reports tabs; the department → mentor → mentees drill-down (current mentees only, the reassigned student
+excluded); return to the dashboard; **Admin and HOD portals render without any Principal-only markup**; and zero
+page-level JS errors throughout. Suites: `test:principal` 53/53, `test:admin` 23/23, `test:hod` 33/33,
+`test:critical` 12/12, `test:bulk-actions` 15/15; frontend `tsc --noEmit` + `vite build` clean; `dist` rebuilt clean
+(no baked API URL). Branch `temp`, uncommitted — no commit/push.
+
+### HOD "Department Faculty Mentors" — responsive mentor cards + click-through full-process detail — PASS (2026-10-12)
+
+**Scope:** the HOD portal only (`frontend/src/pages/hod/HodDashboard.tsx`). The faculty **table** became a responsive
+**card grid**, and a card (or its **View Details** action) opens a single **detail dialog** whose tabs are backed by
+real, HOD-department-scoped data. No hardcoded faculty data; Add Faculty / Edit and every other faculty action are
+unchanged.
+
+**Cards (`frontend/src/components/faculty/FacultyMentorCard.tsx`, new):** name, employee ID, email, designation,
+department, cabin, contact number (when present), assigned-mentee count, coverage % and an active/inactive badge; the
+existing **View Details** and **Edit** actions. The card root is `role="button"` + `tabIndex=0` with Enter/Space
+activation, and every inner action calls `stopPropagation()` on click/keydown so **Edit never also opens the detail**.
+Grid is 3 / 2 / 1 columns (breakpoints ≤1180px / ≤700px), with loading skeleton, empty and error states.
+
+**Detail (`frontend/src/components/faculty/FacultyDetailView.tsx`, new):** a single wide `Modal`
+(`maxWidth="1100px"`) with tabs **Overview / Mentees / Counselling History / Meetings / Documents / Assignment
+History** (only sections the app supports). Mentees lists name, register number, class/section/year, assignment
+status, counselling session count, last counselling date and progress, with an **Open** action that closes the dialog
+and opens the mentee's existing student-details page. Each section has a clear empty state; nothing is fabricated;
+timestamps/statuses render when present. Reuses `Modal`, `EmptyState`, the shared `.tabs`/`.timeline`/
+`.overview-summary-grid`/`.badge-*`/`progress-*` styles plus one appended scoped `faculty-*` CSS block.
+
+**Backend (extended, no new routes):** `getMentorDetail` (`GET /api/hod/mentor/:mentorId`,
+`backend/src/modules/hod/hod.controller.ts`) already resolved the mentor inside `loadScope` and refused
+foreign-department ids; it now also returns, everything intersected with the HOD scope:
+- `assignments` — every `MentorAssignment` for this mentor in the department (**ACTIVE and historical**), with
+  `isCurrent`, status, change reason and dates;
+- `counselling` — records authored by this mentor (`mentor === mentorId`) for in-scope students (keeps
+  pre-reassignment history);
+- `meetings` — this mentor's meeting records;
+- `documents` — `StudentDocument` **metadata** for the mentor's **current** mentees (bytes are served by the existing
+  authenticated document view/download endpoints).
+
+**Data relationships:** keyed by stable faculty / student ids, never by names; current vs historical distinguished by
+assignment status; a reassigned student is current for the new mentor and history for the old one, never duplicated.
+Every section is scoped to the calling HOD's department, and a foreign-department mentor id returns **404**. Content
+stays within the module's existing permission rules; no raw geo-tagged evidence photos are emitted.
+
+**Verification (real browser):** `backend/.runtime-verify/faculty-cards-browser.mts` (gitignored scratch) boots the
+real backend on an isolated local store plus the built SPA and drives headless Chrome over the DevTools Protocol —
+**34/34 PASS**: cards replace the table (3 department faculty → 3 cards, old "Emp ID" header gone), a card shows the
+real facts + coverage, desktop/tablet/mobile = 3/2/1 columns, clicking the correct card opens the correct faculty, all
+six tabs present, Mentees lists the **current** mentees and excludes the reassigned one, Counselling shows the mentor's
+own real records (including a **pre-reassignment** record) and not another mentor's, Meetings/Documents show real
+records, Assignment History shows current + historical with reason, the document preview fetches the real bytes (200),
+a no-mentee faculty shows the empty state, **Edit opens the form without also opening the detail**, keyboard Enter
+opens the detail, a mentee **Open** loads the student page, `/api/hod/faculty` excludes foreign-department faculty and
+`/api/hod/mentor/<foreign>` → 404, and zero page-level JS errors throughout. Builds/tests: backend `tsc --noEmit` +
+`npm run build` clean; frontend `tsc --noEmit` + `npm run build` clean; `test:hod` **33/33**, `test:critical`
+**12/12**, `test:bulk-actions` **15/15**. Branch `temp`, uncommitted; no commit/push.
+
+### Bulk selection · bulk delete · bulk document (ZIP) download — Student Master + Faculty / Mentors — PASS (2026-10-12)
+
+**Scope:** the two ADMIN management screens (`Students Master` and `Faculty / Mentors`, both in
+`AdminDashboard.tsx`). Faculty records ARE the mentor records in this data model, so one bulk action
+covers both. HOD receives no bulk UI (HOD uses `HodDashboard.tsx`) but the backend authorizes HOD for
+bulk delete/download scoped to its own department.
+
+**Backend (reused / extended existing routes; storage unchanged):**
+- `backend/src/services/bulk-documents.service.ts` — `createArchive` (jszip), `buildManifestCsv`,
+  `safeSegment` / `safeFileName` / `uniqueName` (collision-safe, traversal-proof), `bulkArchiveFileName`
+  (`Bulk_Documents_YYYY-MM-DD.zip`), and `BULK_DOCUMENT_LIMITS` (maxRecords 200 / maxTotalBytes 250 MB /
+  maxNameLength 100).
+- `backend/src/modules/students/student-bulk.controller.ts` — `GET /api/students/selection/ids`,
+  `POST /api/students/bulk-delete`, `POST /api/students/bulk-documents`.
+- `backend/src/modules/admin/faculty-bulk.controller.ts` — `GET /api/admin/faculty/selection/ids`,
+  `POST /api/admin/faculty/bulk-delete`, `POST /api/admin/faculty/bulk-documents` (download returns an
+  explicit "no documents available" JSON result — there is no faculty document store).
+- Routes wired in `student.routes.ts` / `admin.routes.ts`, each `authorize(ADMIN, HOD)` **and**
+  re-checked in the handler; HOD scope is `req.user.departmentId`, ADMIN unrestricted.
+- Extracted `cascadeDeleteStudent` (`student.controller.ts`) and `cascadeDeleteFaculty`
+  (`admin.controller.ts`) and refactored the single-record deletes to call them, so bulk and single paths
+  cannot drift. Exported `resolveServedDocumentPath` from `document.controller.ts` so bulk downloads
+  honour the same watermarked-copy policy.
+- **Latent bug fixed:** the original `deleteStudent` cascade deleted `StudentDocument` rows with
+  `{ student: studentId }`, but `StudentDocument` keys its owner as `studentId` — so document metadata was
+  silently orphaned on every single delete. Corrected to `{ studentId: studentId }` for both paths.
+  Uploaded files on disk are still left untouched (pre-existing policy).
+
+**Frontend:**
+- `frontend/src/api/client.ts` — typed `BulkDeleteOutcome` / `BulkDownloadResult` plus a
+  `bulkDownloadDocuments()` helper that normalises a streamed ZIP **or** the JSON no-documents result;
+  `api.students.{selectionIds,bulkDelete,bulkDownloadDocuments}` and
+  `api.admin.{facultySelectionIds,bulkDeleteFaculty,bulkDownloadFacultyDocuments}`.
+- `frontend/src/hooks/useRowSelection.ts` — selection keyed by record id (survives pagination/refresh;
+  explicit `clear`/`addMany`/`removeMany`/`replaceWith`).
+- `frontend/src/components/bulk/{BulkActionBar,BulkDeleteModal,SelectionCheckbox}.tsx` — sticky action
+  bar (buttons disabled while an action is in flight), an irreversible-action confirmation listing every
+  affected record, and a real indeterminate select-all checkbox.
+- `AdminDashboard.tsx` — header + per-row checkboxes on both desktop tables, checkboxes on both mobile
+  card lists, selected-row/card styling, the bulk bar on both tabs, selection cleared on filter/tab
+  change, and success / partial / no-documents toasts. Scoped `bulk-*` CSS block appended to
+  `index.css` (responsive at ≤640px).
+
+**Verification (real running app, live backend on 5050):** `GET /api/students/selection/ids` → 128 ids;
+`GET /api/admin/faculty/selection/ids` → 1 id; `?search=Vishnuvarthan` → exactly the one match; a real
+ZIP (135 743 B, `application/zip`) unpacked to `Students/Vishnuvarthan P_73152421125/Student Details
+Form.pdf` plus a root `manifest.csv` with the matching row; a non-existent id returned
+`hasDocuments:false` JSON; faculty download returned the "no documents available" JSON; empty ids → 400;
+bulk-delete with two non-existent ids reported `deleted=0 failed=2` with per-record reasons. New suite
+`test:bulk-actions` **15/15** (port 5099, temp store: RBAC 403s, HOD department scope, search filter,
+partial failures, cascade, ZIP folder + collision-safe names + `manifest.csv`, no-empty-ZIP, oversized
+payload, single-delete regression, no secret leak). `tsc --noEmit` + `npm run build` (backend) and
+`tsc` + `vite build` (frontend) all exit 0.
+
+**Limitations:** the bulk **UI** is build-verified and the **APIs** were verified on the running app, but
+the new selection / action bar / modal interactions were not yet driven in a headless browser session
+(see Pending). Faculty/Mentor bulk **download** intentionally returns "no documents available" because
+the system has no faculty document store. Bulk download is bounded (≤200 records, ≤250 MB); larger
+selections are refused server-side rather than partially served.
+
+### Clean server restart — one fresh backend (5050) + one fresh frontend (3000) on localhost — PASS (2026-10-11)
+
+**Goal.** Stop every stale project dev server and bring up exactly one fresh frontend and one fresh backend on
+localhost, without deleting or resetting anything (a restart, not a reset).
+
+**Inspection (done before any change).** Read `PROJECT_PROGRESS.md`, both `package.json` files,
+`frontend/vite.config.ts` (`server.port 3000`, proxy `/api` → `http://localhost:5050`) and the env files
+(`backend/.env` `PORT=5050`; `frontend/.env` `VITE_API_URL=http://localhost:5050`). Listed Node processes with
+full command lines and mapped listening ports to PIDs.
+
+- **Project processes found:** the backend tree — launcher `powershell` 13568 (`npm run dev`) → `node` npm-cli
+  29692 → `cmd` 28004 (`tsx watch src/index.ts`) → `tsx watch` 25280 → server child **21204** listening on **5050**.
+  Every command line referenced `A:\mini projects\New folder\backend`.
+- **Not project processes (left untouched):** four `chrome-devtools-mcp` Node processes (OpenCode harness MCP) and
+  the `opencode.exe serve --service` parent (28436).
+- **Frontend:** none running — ports 3000 / 5173 / 4173 had no listener.
+
+**Stop.** `taskkill /PID 13568 /T /F` terminated 21204, 25280, 28004, 29692 and 13568 (descendants only, never the
+OpenCode service parent). Verified afterwards: no Node process referencing this project remained and port 5050 was
+not listening.
+
+**Start (the project's existing commands, no config changed).** Backend first — `npm run dev` from `backend/`
+(`tsx watch src/index.ts`) → new server **PID 19744** on 5050, `/api/health` →
+`{"status":"ok","database":"connected"}`, banner `Running on: http://localhost:5050`. Then frontend — `npm run dev`
+from `frontend/` → **Vite v6.4.3**, **PID 7688**, `http://localhost:3000/`. The existing proxy already targets 5050.
+
+**Verification.**
+- Backend health direct `http://127.0.0.1:5050/api/health` → `{"status":"ok","database":"connected"}`.
+- Frontend `http://localhost:3000/` → HTTP 200, `<title>KSRCE Mentoring | K.S.R. College of Engineering</title>`,
+  entry `/src/main.tsx`. (Vite binds `::1` only, so `127.0.0.1:3000` is refused by design; `localhost`/`[::1]` work.)
+- **Proxy reaches the fresh backend:** `http://localhost:3000/api/health` → `{"status":"ok","database":"connected"}`
+  (only one backend exists — PID 19744); `POST /api/auth/login` (`Ksrce@admin`) via the proxy → 200 with a token;
+  `GET /api/pdf/student/73152421125?mode=full` and `.../73152421002` via the proxy → **200, `application/pdf`,
+  `%PDF-` magic, ~137 KB / ~136 KB** — so the SPA and the PDF endpoint both use the freshly started process.
+- Both server logs clean (no startup errors): backend printed the store verification (1317 records) + health URL;
+  frontend printed `VITE v6.4.3 ready in 486 ms` + `Local: http://localhost:3000/`.
+- **Nothing deleted/reset:** no source, `.env`, `backend/data/`, `backend/storage/uploads/`, `node_modules`, Git
+  history or uncommitted changes were touched. The 129 students / 1032 academic records / 5 documents / 148 users
+  were re-verified by the backend's own boot check.
+
+**Startup commands for next time:** backend → `cd backend && npm run dev` (port 5050); frontend →
+`cd frontend && npm run dev` (port 3000). No commit/push made.
+
+### Student record book — vertical layout/readability fix ("content compressed at the top") — PASS (2026-10-11)
+
+**Symptom (from the user's screenshot of the real generated PDF).** The college header, tables and student
+details appeared squashed into the upper portion of the page with a large unnecessary blank area below the
+signature section, while the header + diagonal `K S R C E` watermark were correct.
+
+**Reproduced on the real path.** Logged in exactly like the browser (`POST /api/auth/login` as `Ksrce@admin`) and
+pulled `GET /api/pdf/student/73152421125?mode=full` from the running app; rendered every page to PNG and measured
+per-band ink occupancy + MuPDF line geometry.
+
+- Actually, **page 1 was already well-filled** (content to y≈737 pt of the ~796 pt content box) — the complaint
+  is the **last page**. For the real short records page 2 used only ~44% of its height: section 5 (mentor
+  lineage), 6 (meetings — empty), 7 (counselling — empty), 10 (documents), the note, then a tiny signature block
+  with the heading at **y≈297 pt** and the four captions at **y≈340–353 pt**, leaving **~440 pt (56%) blank**
+  below the signatures. So the page read as "everything crammed at the top, huge void under the signature".
+
+**Root cause.** Two compounding, non-obvious things — neither a stray `zoom`/`scale`, a fixed height, nor a print
+flag (all checked and ruled out):
+1. **Small, tight print type.** `body { font-size: 9pt; line-height: 1.32 }`, table cells `8pt` with only
+   `1.1mm` padding, banner rows `8.6pt`, the signature drawn as a bare `____________` followed by a caption.
+   Everything was legible but dense, so a sparse page looked "compressed".
+2. **A genuinely short record leaves a sparse final page.** Pagination fills page 1 first; the leftover
+   sections + signature land at the top of page 2 with the rest empty. This cannot be "filled" without faking —
+   the user explicitly asked not to stretch rows or add filler — so the fix was to make the type/spacing
+   professional and pull the signature block down to a natural resting place.
+
+**Changes** — `backend/src/modules/pdf/record-book-html.service.ts` (PRINT_CSS + the signature-block markup):
+- Body `9pt/1.32` → **`10pt/1.42`**; section tables: cells `8pt` @ `1.1mm 1.4mm` → **`9pt` @ `1.5mm 1.8mm`**,
+  column headers `7.6pt` → `8.8pt`, section-title rows `8.2pt` → `9.5pt`, `td.sub` `7.4pt` → `8.2pt`, table
+  margin `2.4mm` → `3.2mm`.
+- Banner: padding `2.2mm 3mm` → `2.6mm 3.2mm`, row padding `0.6mm` → `0.9mm`, text `8.6pt` → `9.5pt`, name
+  `10pt` → `11pt`; added `break-inside: avoid`.
+- Photo montage frame `42mm` → `44mm`, captions `7pt` → `7.8pt`, cell padding `1.2mm` → `1.4mm`.
+- Annexure heading `9.5pt` → `10.5pt`, meta `7.6pt` → `8.3pt`; note `7.6pt` → `8.3pt`, `.small` `7pt` → `7.8pt`.
+- **Signature block redesigned:** top margin `14mm` → `16mm`, heading `8.6pt` → `10pt` with a `12mm` gap, and the
+  crammed `____________`/caption replaced by a uniform **`7.5mm` `.sigline` + `8.3pt` caption** per column so each
+  signatory has real space; `break-inside: avoid` on `.signatures` so the block never splits across pages.
+- Unchanged on purpose: the `@page { margin: 35mm 12mm 16mm }` header band, the pdf-lib `stampPageFurniture`
+  per-page header/footer, the `position: fixed` z-index-0 `K S R C E` watermark (`translateY(-9.5mm)
+  rotate(45deg)`), and `table.grid thead { display: table-header-group }`.
+
+**Verification (real renders, geometry + pixel, not build-only).**
+- **Two real live students (73152421125, 73152421002):** still exactly **2 pages**; page 1 fills to ~776 pt; page 2
+  now carries sections 5–10 spread with the signature heading at **y≈508 pt** and captions at **y≈582–593 pt**
+  (was 297 / 340–353) → the blank tail is cut from ~440 pt to ~200 pt and no third (nearly-empty) page is created.
+  Bounding boxes show nothing in the header band (body starts ≥ y≈104 pt < 30.6 mm rule) and nothing past the
+  16 mm bottom margin; footer `Page X of 2` at y≈811 pt on both pages.
+- **Long record (synthetic 120-row book, `test:record-book-header`):** grew 7 → **9 pages** with the larger type;
+  the long IA table still repeats its column headers on **all 8 subject-row continuation pages**, the header stays
+  in its band on all 9, the watermark is centred on the physical page on all 9, and no body text is clipped
+  (max body bottom 788 pt < 797 pt limit).
+- **Rendered page screenshots** before (`pages-21125/`) and after (`pages-21125-after2/`) plus the live PDFs are
+  saved under `.runtime-verify/layout-before/` for human inspection. (Honest note: this agent cannot display raster
+  images, so the "before/after" comparison was done with MuPDF per-line geometry, per-band ink occupancy and
+  watermark pixel-diff — not by eye.)
+- **One renderer assertion corrected (measurement fix, not a weakened guarantee):** the old "watermark is centred"
+  check derived the mark's centre from a *pixel-diff bounding box*, which is biased on sparse pages because opaque
+  table cells/banner are painted **above** the background layer and hide whatever part of the mark sits under them
+  (it reported y≈452 pt on the last page). The check now measures the watermark's **own PDF text geometry**, which
+  overpainting cannot hide (reports the true centre, y≈419 vs page centre 421 pt, on every page). It still fails
+  hard if the mark is missing or off-centre by > 20 pt; the "true background layer" and `\` diagonal pixel checks
+  are unchanged.
+- **Regression matrix re-run:** `test:record-book-header` **68/68**, `test:runtime` **38/38**,
+  `test:document-watermark` **44/44**, `test:document-watermark-runtime` **46/46**, `test:internal-marks`
+  **97/97**, `test:critical` **12/12**; backend `tsc --noEmit` **exit 0**; backend `npm run build` **exit 0**.
+  Frontend untouched.
+
+**Files changed:** `backend/src/modules/pdf/record-book-html.service.ts` (CSS + signature markup),
+`backend/src/tests/record-book-header.test.ts` (centring measurement). Temp inspection scripts were deleted
+afterwards.
+
+**Honest limitations (unchanged behaviour, not defects):** a genuinely short record's last page will always have
+some blank space at the bottom — the fix reduces it and makes it deliberate, it does not (and should not) fabricate
+content to fill it; uploaded originals are still never modified. The legacy jsPDF fallback (only used when no
+headless Chromium is installed) does not repeat table headers on `autoTable` page breaks.
+
 ### Full security, bug-fix & regression audit — PASS (2026-10-11)
 
 **Scope.** A single end-to-end security + correctness pass over every role (STUDENT / FACULTY / HOD
@@ -465,6 +2445,235 @@ negative tests plus the benign notifications 403 during the Principal's forced-p
   **exit 0** (pre-existing chunk-size warning only).
 - Static scans re-confirmed: no hardcoded secrets outside test fixtures; `.env`, `dist/`, `.test-data/`
   and uploads all gitignored. Changes remain **uncommitted** on branch `temp` (no commit/push made).
+
+### Student documents — repeating KSRCE institutional header on every page — PASS (2026-10-11)
+
+**Requirement.** Every page of the student-generated documents (the record book and the two other
+`?mode=` downloads) must carry the same KSRCE institutional header — college name, autonomous/AICTE/
+Anna University affiliation line, Tiruchengode address and the verified college logo — on page 1 **and
+every subsequent page**, in the existing navy-and-gold style, with a subtle divider, without ever
+overlapping the body and without disturbing the existing `K S R C E` watermark.
+
+**Why a CSS `position: fixed` header could not be used (measured, not assumed).** Chrome's print engine
+supports neither `@page` margin boxes nor a fixed header that reserves its own space: a probe with
+`@page { margin: 34mm 12mm 16mm }` and a `position: fixed` band placed the header text at **y≈107pt**
+while body text started at **y≈96pt** — the fixed layer is painted at the CONTENT-box top on every
+page, so it overlapped the body. That is precisely why the pre-existing code emitted the header **once**
+in normal flow and it therefore appeared on page 1 only.
+
+**Fix (the renderer's own per-page mechanism).** `backend/src/modules/pdf/record-book-html.service.ts`:
+- `@page { size: A4; margin: 12mm }` → `margin: 35mm 12mm 16mm`, reserving a real top band for the
+  header on **every** page (and clean space for the footer at the bottom).
+- The one-off in-flow `headerHtml()` is **removed**, together with its now-unused `.topbar` / `.insthead`
+  / `.collegename` / `.autoline` / `.addrline` / `.doctitle` / `.instrule` CSS.
+- `stampPageFooters()` → **`stampPageFurniture()`**, which on every Chrome-rendered page (limit =
+  `basePageCount`) now draws BOTH the repeating header — navy top rule, the verified
+  `assets/ksrce-logo.png` (embedded once, aspect-fitted into a 15mm box), centred college name,
+  affiliation line and address, the gold document title, and a subtle divider at 30.6mm — **and** the
+  existing footer ("… | Reg No: … | Generated on: …" + "Page X of Y"). `pdf-lib` was already a
+  dependency; no new dependency was added.
+
+**Scope / non-changes.** Applies to all three modes (`full`, `internal`, `mentor-documents`) because they
+all render through `renderRecordBookHtmlToPdf`. Appended verbatim PDF annexure pages and their jsPDF
+sheets keep their own native layout (stamped pages = `basePageCount` only), matching the footer rule.
+The legacy jsPDF fallback (`pdf.service.ts`) is untouched — it already draws a header on each page it
+creates and is only used when no browser is installed. Unrelated reports, login/dashboard pages and the
+`K S R C E` watermark are unchanged.
+
+**Files changed (all this task):** `backend/src/modules/pdf/record-book-html.service.ts` (header CSS
+removed, margin reserved, `stampPageFurniture` added), `backend/src/tests/helpers/pdf-text.ts` (new
+`pdfPageLines()` line-bounding-box helper), `backend/src/tests/runtime-verification.test.ts` (asserts the
+header on every footered page of the image-bearing book), `backend/src/tests/record-book-header.test.ts`
+(new suite), `backend/package.json` (`test:record-book-header` script), `PROJECT_PROGRESS.md`.
+
+**Verification (real multi-page PDF inspected, programmatically — page 1 + later pages).**
+- `backend/src/tests/record-book-header.test.ts` (new; `npm run test:record-book-header`) renders a
+  realistic full record book with a **120-row** internal-assessment table → **7 pages**, and asserts per
+  page from the actual PDF via MuPDF text + line bounding boxes + image XObjects: the header is present;
+  it sits inside the reserved top band (header top **y=35.0pt**); **no non-header text line starts above
+  the divider** (30.6mm) → zero body/header overlap; the footer reads the correct "Page X of Y"; the
+  `K S R C E` watermark is present; and the 205×190 college logo image object is embedded. The long table
+  flows across **6 distinct pages**. The `internal` and `mentor-documents` modes are rendered and checked
+  the same way (header + footer on every page). **50/50 PASS.**
+- Pixel inspection of the first/middle/last pages (`sharp` raw scan): navy top bar at ~10–14mm, gold
+  title present, header ink ends ~28mm, a blank gap follows, and body ink begins at exactly **35mm** —
+  identical on pages 1, 4 and 7.
+- Real HTTP pipeline: `runtime-verification.test.ts` now asserts the header on **every footered page** of
+  the image-bearing record book, including the NSS photo annexure page. `test:runtime` **38/38**.
+- Full backend matrix re-run sequentially from `backend`: **30/30 EXIT 0**. Backend `tsc --noEmit` +
+  `npm run build` exit 0; frontend `tsc --noEmit` exit 0 (frontend was not modified).
+
+**Remaining limitation (documented, not fixed).** The legacy jsPDF fallback renders its header in normal
+flow after each `addPage()`; pages produced by an `autoTable` internal page break on a machine with **no
+browser** would not carry the header. The default/primary HTML renderer (used whenever a browser is
+present, as in this environment) repeats the header on every page. Changes remain **uncommitted** on
+branch `temp`.
+
+### Student PDF — watermark, header and content overlap — final layout pass — PASS (2026-10-11)
+
+**Requirement.** Make the generated student PDF correct: the `K S R C E` watermark is a light, semi-transparent
+background layer on **every** page; the KSRCE institutional header repeats on every page; and no content is
+hidden, clipped or overlapped. Preserve all existing record-book content, the persistence architecture, upload
+permissions and the separate-watermarked-copy workflow for uploaded documents.
+
+**Root cause (confirmed by rendering the real service output, not assumed).**
+1. **Header overlap / missing on pages 2+.** Chrome's print engine supports neither `@page` margin boxes nor a
+   `position: fixed` header that reserves its own space — a fixed band is painted at the CONTENT-box top on
+   every page and overlaps the body (measured: header text y≈107pt vs body y≈96pt at a 34mm top margin). The
+   pre-existing code therefore emitted the header **once in normal flow**, so it appeared on page 1 only and
+   pages produced by a long-table page break started body text at the very top of the page.
+2. **Watermark off-centre.** In the HTML renderer the `position: fixed` watermark was centred in the @page
+   **content box** (top 35mm / bottom 16mm margins), so the diagonal sat ≈9.5mm below the physical page centre
+   (inked bbox centre y≈451pt vs page centre 421pt). It was already a genuine background layer (z-index 0 under
+   `.content`), but the earlier "watermark covers text" symptom came from the now-removed foreground-overlay
+   heuristic in `document-watermark.service.ts` (fixed 2026-10-10 for uploaded documents); this pass proves the
+   same background guarantee holds for the HTML record book, pixel by pixel.
+3. **Content / tables.** Long tables split across pages without repeating their column headers, so continuation
+   pages showed unlabelled columns; with no reserved top band, pages after the first had body ink flush to the
+   page top.
+
+**Files changed (final state of this task; the repeating-header mechanism was already in the working tree and was
+completed, hardened and independently verified in this pass).**
+- `backend/src/modules/pdf/record-book-html.service.ts`:
+  - `@page { size: A4; margin: 35mm 12mm 16mm }` — reserves a real top band (per-page header) and bottom band
+    (per-page footer) on EVERY page.
+  - No in-flow header is emitted. `stampPageFurniture` (pdf-lib, the mechanism the footer already used) stamps
+    the repeating college header — navy top rule, verified `assets/ksrce-logo.png` (embedded once, aspect-fitted
+    in a 15mm box), centred college name, autonomous/AICTE/Anna University affiliation line, Tiruchengode address,
+    gold document title, subtle divider at 30.6mm — and the footer ("… | Reg No: … | Generated on: …" + "Page X
+    of Y") onto every Chrome-rendered page.
+  - Watermark: `.wm` stays a `position: fixed` background layer (`z-index: 0`, `pointer-events: none`,
+    `user-select: none`, light grey at 8% opacity) with `transform: translateY(-9.5mm) rotate(45deg)` — the
+    `-9.5mm` shift accounts for the top/bottom margin asymmetry so the diagonal is centred on the physical A4
+    page, and CSS-positive rotation gives the required bottom-right → top-left `\` diagonal. It is drawn strictly
+    beneath `.content`, so text, tables, the student banner, signatures and the stamped header always paint on
+    top. Uploaded photos are content: the mark sits behind them (and can only ever appear in white space), i.e.
+    the watermark is never added to the photographs themselves.
+  - Tables: `gridTable` (every grid table, including the long internal-assessment table) and the photo montage
+    now wrap their section title + column headers in a real `<thead>`, and the stylesheet adds
+    `table.grid thead { display: table-header-group }`, so Chrome repeats the headers at the top of every
+    continuation page. Rows keep `break-inside: avoid` (short rows are not split across pages) and content flows
+    naturally onto later pages; no fixed-height containers remain.
+- `backend/src/tests/record-book-header.test.ts` — extended from 50 → **56 checks** with three new sections:
+  G. every page a long table continues onto repeats its column headers; H. no body line is clipped below the
+  page content box (bottom margin 16mm); I. pixel-diff of the watermarked render against an identical
+  un-watermarked control — the document ink is unchanged (a foreground watermark would shift every text pixel),
+  the watermark ink runs the `\` diagonal (slope ≈ +0.95 in screen coordinates), and its inked bbox is centred
+  on the physical page (y≈424pt vs 421pt; ≈3pt glyph-ink asymmetry).
+- `backend/src/tests/helpers/pdf-text.ts`, `backend/src/tests/runtime-verification.test.ts`,
+  `backend/package.json` (`test:record-book-header`) — the header/geometry helpers and the HTTP-level "header on
+  every footered page incl. the image annexure" assertion (already in the working tree, preserved and re-run).
+
+**Verification — real multi-page PDFs inspected programmatically (pixel + geometry, not build-only).**
+- `test:record-book-header`: **56/56 PASS** — synthetic full record book = **7 pages**; the 120-row
+  internal-assessment table spans **7 pages**; per page 1→7: institutional header present inside the reserved
+  band (header top y=35.0pt), zero body/header overlap (every body line starts below the 30.6mm divider),
+  correct footer "Page X of 7", `K S R C E` present, college logo (205×190) XObject embedded, column headers
+  repeated, and no body text below the content box (min margin 5.5pt). `internal` mode = 6 pages and
+  `mentor-documents` mode = 1 page, both carrying header + footer on every page.
+- `test:runtime` **38/38** — real HTTP pipeline; header asserted on every footered page of the image-bearing
+  record book including the NSS-photo annexure page.
+- `test:document-watermark` **44/44** and `test:document-watermark-runtime` **46/46** — uploaded-document
+  watermark service unchanged: background layer on every page, originals byte-for-byte preserved.
+- Regressions `test:internal-marks` **97/97** and `test:critical` **12/12**.
+- Backend `tsc --noEmit` **exit 0**; backend `npm run build` **exit 0**. Frontend untouched.
+
+**Remaining layout notes (documented, not defects).**
+- Appended verbatim PDF annexure pages and their jsPDF cover sheets keep their own native layout (never stamped
+  with the record-book header/footer/watermark), which matches the existing footer rule and "preserve original
+  uploaded documents".
+- A page whose content is one opaque object (a full-page scan) hides the underlaid watermark behind that paint —
+  deliberate, since the watermark must never sit in front of content.
+- The legacy jsPDF fallback (only used when no browser is installed) draws the header on the pages it creates but
+  not on `autoTable` internal page breaks — pre-existing limitation.
+- Changes remain **uncommitted** on branch `temp` (no commit/push made).
+
+### Gemini Integration into AI Assistant (Chatbot) — PASS (2026-10-15)
+
+**Scope & Requirements:** Integrate Google Gemini API into the existing role-aware AI Assistant (`/api/ai/*`). Preserve React+TypeScript+Vite + Node+Express+TS backend and the local JSON storage architecture. Reuse and improve the existing chatbot (do not duplicate). Backend-only secret; never expose API key to browser, API responses, or logs. Support loading/empty/API failure/quota/timeout/retry states in the UI. Run typechecks, builds, and tests.
+
+**Implementation:**
+- Added `backend/src/services/gemini.service.ts` using the official `@google/genai` SDK 2.30.0: config read at call time, `models.get` probe for availability, `models.generateContent` for chat, maps 401/403→INVALID_KEY, 429→QUOTA, 5xx→HTTP, timeouts→TIMEOUT, malformed/parse→MALFORMED, disables SDK auto-retry (attempts=1) to prevent duplicate billable requests.
+- Added `backend/src/services/ai-provider.service.ts`: deterministic provider selection (Gemini if `GEMINI_API_KEY` set and non-empty, else Ollama), shared error kinds/status mapping, safe user-facing messages; exposes `getAiProviderStatus()` and `generateAiReply()`.
+- Controller (`backend/src/modules/ai/ai-assistant.controller.ts`): `getAiStatus()` reports provider/model/available/configured; `sendChatMessage()` uses provider abstraction; maps `AiProviderError` to HTTP statuses (429 for QUOTA, 504 for TIMEOUT, 502 for HTTP, 503 for others). Routes header updated.
+- Env: `backend/.env` has `GEMINI_API_KEY=` (empty); `backend/.env.example` documents Gemini config. `.env` remains gitignored.
+- Frontend: `AiAssistant.tsx` adds retry, richer error classification (quota/offline/timeout/busy/generic), restores text on failure, Retry button in banner, quota-specific placeholder; `api/client.ts` `ai.status` accepts optional `provider`.
+- Tests: `backend/src/tests/gemini-integration.test.ts` (38 checks) boots real app against mock Gemini (GET models, POST generateContent), verifies key sent only as `x-goog-api-key`, never leaked in bodies/logs, exactly one request per message, correct mappings (429/502/503/504), role scoping preserves own data, missing key → NOT_CONFIGURED (unit). Added `test:gemini` script. `ai-assistant.test.ts` explicitly clears `GEMINI_API_KEY` for determinism; still passes (47/47).
+
+**Verification:**
+- Backend typecheck: `tsc --noEmit` → exit 0.
+- Frontend typecheck: `tsc --noEmit` → exit 0.
+- Root build: `npm run build` (backend + frontend) → exit 0 (frontend bundles produced, e.g., index 342.90 kB).
+- Tests: `test:ai-assistant` 47/47 PASS; `test:gemini` 38/38 PASS.
+- Manual probe: SDK calls `POST /v1beta/models/{model}:generateContent`, sends `x-goog-api-key`, correct body shape; timeout/malformed/429/401/500 all mapped correctly with exactly 1 upstream request.
+
+**How to configure locally:**
+1. Backend `.env` (`backend/.env`) — set `GEMINI_API_KEY=<your_google_genai_key>`. Leave empty to use local Ollama. Optionally set `GEMINI_MODEL` (default `gemini-2.5-flash`), `GEMINI_TIMEOUT_MS` (default 45000), `GEMINI_BASE_URL` (for offline tests).
+2. The key must never be committed; `.env` is gitignored. Never put it in frontend `.env` or any source file.
+3. To test with a valid key: run backend `npm run dev` (tsx watch), frontend `npm run dev`; open the AI Assistant. With an empty key, it falls back to Ollama (requires `OLLAMA_BASE_URL` etc.).
+4. Run tests: `cd backend && npx tsx src/tests/gemini-integration.test.ts` and `npx tsx src/tests/ai-assistant.test.ts`.
+
+**Remaining issues:** None specific to this integration. The chatbot remains advisory/read-only and preserves all existing behavior when Ollama is used. No commit/push made.
+
+**Symptom.** Despite the final-layout pass above (56/56 renderer checks, HTTP-level runtime 38/38) the user
+reported the record book was STILL wrong in the actual running application. The previous pass had verified the
+working tree and the test pipeline, but **never the live 5050 process the browser actually talks to**.
+
+**Root cause (investigated, then eliminated by restart — honestly reported).**
+1. **The live backend was executing a frozen snapshot.** The running process on 5050 was the `tsx watch`
+   **child** (PID 17128) of watcher PID 32920. Its start time (21:36:53) was the *same second* as the last
+   write to `backend/src/modules/pdf/record-book-html.service.ts` — the child had restarted at the moment of
+   the final save, so it was running code from just before/at that instant. Whether it loaded the final bytes
+   cannot be proven after the fact (mtime ≡ start time); what is certain is that the fix had never been proven
+   on the running server and the browser had been consuming that process's output. Restarting 5050 with the
+   current code — explicitly authorized — removed the ambiguity, and the real endpoint then returned fixed PDFs.
+2. **No stale stored-form artifacts** — `uploads/` contained no previous Student Details Form copies, so the
+   cached-`syncStudentDetailsPdf` path could not be serving old layout either.
+3. **Live data is short.** `backend/data` has no internal-marks rows, so online record books are 1–2 pages;
+   multi-page/continuation behaviour can only be exercised with representative seeded data (done on an isolated
+   scratch instance).
+
+**What was done.**
+- Killed the stale watcher + child (32920 / 17128) and restarted `npm run dev` (`tsx watch src/index.ts`) on
+  5050; `/api/health` 200. The browser's Vite proxy (`/api` → `localhost:5050`) now hits the fresh server.
+- **Live end-to-end, exactly the browser path:** `POST /api/auth/login` (real `Ksrce@admin`) →
+  `GET /api/pdf/student/:id?mode=full` for three real live students incl. 73152421125. Inspected the returned
+  PDFs page by page (MuPDF text + geometry): every page carries the college header, `Page X of Y` and the
+  `K S R C E` watermark; body text starts at y0 102–107 pt (below the 30.6 mm header rule); nothing broken past
+  the 16 mm bottom margin. Copies: `.runtime-verify/live-app/*-full.pdf`.
+- **Multi-page over the same endpoint** on an isolated scratch instance (port 5098, temp `DATA_DIR`/`UPLOADS_DIR`
+  — the developer's live store and `storage/uploads` untouched) seeded with 120 internal-marks rows
+  (8 semesters × 15), 8 academic records, 40 meetings, 5 counselling records, 8 monthly progress entries,
+  3 evidence photos, 2 JPEG certificate scans and a real 3-page PDF annexure:
+  - `full` = **19 pages**: all **15 Chrome-rendered pages** show the header inside the reserved band, the correct
+    `Page X of 19` footnote and the `K S R C E` watermark, with **zero body lines inside the header band** and no
+    content past the content box; the long IA table flows across **5 pages** and its column headings
+    (`Subject Code / Subject Name / IA1 … End Sem / Total`) **repeat on every continuation page**; the uploaded
+    photos, scans and the 3-page PDF are reproduced untouched (photos + scans verified **byte-identical** on disk
+    after generation — never watermarked or modified); the PDF annexure appears verbatim behind its jsPDF cover
+    sheet (native layout preserved — documented limitation).
+  - **Watermark proof (pixel-diff vs an un-watermarked control rendered from the same store):** document ink
+    unchanged (ink+ ≈0.12–0.81%, far under the 5% threshold) → genuine background layer behind all text/tables/
+    signatures; slope ≈ +0.95 → the required bottom-right → top-left `\` diagonal; ink bbox centre ≈424 pt vs
+    page centre 421 pt → centred on the physical A4 page.
+  - `internal` = 8 pages (4 Chrome pages furnished + annexure tail preserved); `mentor-documents` = 14 pages
+    (10 Chrome pages furnished + annexure tail preserved).
+- **Regression matrix re-run:** `test:record-book-header` **56/56**, `test:runtime` **38/38**,
+  `test:document-watermark` **44/44**, `test:document-watermark-runtime` **46/46**, `test:internal-marks`
+  **97/97**, `test:critical` **12/12**; backend `tsc --noEmit` **exit 0**; backend `npm run build` **exit 0**.
+  Frontend untouched.
+
+**Files changed in this follow-up:** none (product code was already correct in the working tree). This pass
+restarted the dev process and verified real HTTP output. Temp verification scripts were removed afterwards.
+
+**Honest limitations (unchanged behaviour, documented, not defects):** appended verbatim PDF annexure pages and
+their cover sheets keep the uploaded document's own native layout (never stamped with the record-book
+header/watermark — that matches "preserve original uploaded documents"); a page filled by one opaque object (a
+full-page scan) hides the underlaid watermark behind that paint (deliberate — the mark must never sit in front
+of content); the legacy jsPDF fallback (only used when no headless Chromium is installed) does not repeat table
+headers on `autoTable` internal page breaks. The live store's record books are short (no internal marks stored),
+so on-5050 multi-page output cannot be exercised with real data; multi-page correctness was therefore proven on
+the isolated scratch instance through the identical HTTP route.
 
 ### HOD Class Management — Filter Removal & Year-Wise Section Cards — PASS (2026-10-11)
 
@@ -1860,6 +4069,26 @@ made.
 
 ## Current Issue
 
+**FIXED and verified — two Record Book headings removed; leftover blank space reclaimed (2026-10-12).**
+
+- **The request:** remove `INSTITUTIONAL VERIFICATION & DIGITAL ENDORSEMENT` and `OFFICIAL DIGITAL MENTOR–MENTEE RECORD BOOK` completely from the generated Student Record Book PDF (not just hide them), reclaim the blank space they left, and leave the logo / college name / details / tables / watermark / signatures / footer / page numbers and the other document types untouched.
+- **Where each heading was emitted:** (1) **signature heading** — the `.sigheading` div inside `signatureBlockHtml()` (the invisible reserve copy), the pdf-lib `drawText` in `stampPageFurniture` (visible, y≈49 mm), and the jsPDF fallback `pdf.service.ts`; (2) **full-mode document title** — `docTitleFor('full')` (drawn as the header's gold line by `stampPageFurniture`) and the jsPDF fallback's `docTitle`.
+- **Fix:** the signature heading is deleted from all three sites and the full title from `docTitleFor('full')` (now `''`) + the fallback. `stampPageFurniture` skips the title when it is empty. **Both headings are gone from the actual PDF bytes.**
+- **Blank reclamation:** the signature reserve `margin-top` drops 16 → 9 mm (and the heading + its 12 mm margin are gone), so a full final page can hold more content; the full book's header band shrinks (top margin **35 → 31.5 mm**, divider **30.6 → 28.4 mm**) so the removed title line leaves no gap. The other two modes keep 35 mm / 30.6 mm and their own titles. The watermark shift is derived from the band so the mark stays centred on the physical page.
+- **Other modes deliberately unchanged:** `internal` still prints `OFFICIAL INTERNAL ASSESSMENT REPORT` and `mentor-documents` still prints `MENTORING RECORDS & DOCUMENT ARCHIVE` — both asserted present on every page.
+- **Stored-form regeneration:** the `StudentDocument.renderVersion` stamp was bumped to `2026-10-12-removed-headings`; the stale stored Student Details Form is regenerated in place on list access (verified: re-written and now free of both headings).
+- **Verified on the real HTTP path:** `GET /api/pdf/student/73152421125?mode=full|internal|mentor-documents` → neither removed heading present on any page; college name/logo header, `K S R C E` watermark on every page, `Page X of Y`, and all four signing captions intact; page counts unchanged (full 2 pp, internal 1 p, mentor-documents 1 p; long synthetic still 9 pp). Suites: `test:record-book-header` 74/74, `test:runtime` 38/38, `test:critical` 12/12, `test:document-watermark` 44/44, `test:document-watermark-runtime` 46/46; `tsc` + build clean.
+- **Honest limitation:** the signing block remains bottom-anchored (per the earlier fix), so on a genuinely sparse final page the empty area still sits *between* the content and the bottom-anchored signatures — that space is inherent to short data, not to the removed headings. The removed headings no longer reserve any space.
+
+**FIXED and verified — Student record book signature block floated up, leaving a large void below it (2026-10-11).**
+
+- **The bug report (user, repeated):** "the student document PDF is still broken after multiple fixes, backend restarts, localhost restarts, and successful automated tests" — the visible symptom was page content compressed into the top of the last page with a big empty area beneath the signatures.
+- **Reproduced on the real app:** logged in as the student-facing admin and downloaded `GET /api/pdf/student/73152421125?mode=full|internal|mentor-documents` (the exact route the `Download My Record Book (PDF)` / `DOWNLOAD OFFICIAL PDF` buttons call; `frontend/src/api/client.ts::downloadStudentPdf`). The `full` book was 2 pages whose page 2 ended at y≈593/797 (**204 pt blank below the signature**); the single-page `internal` report ended at y≈394/797 (**403 pt blank**).
+- **Root cause:** the signature block was emitted **in normal flow** immediately after the content (`signatureBlockHtml()`, `.signatures { margin-top: 16 mm; break-inside: avoid }`). On a short final page it therefore rested wherever the content stopped, leaving the page's unused height *below* it. The previous "fix" had only increased `margin-top` 14→16 mm, which nudged it from y≈353 to y≈593 but never actually moved it to the bottom.
+- **Fix (`backend/src/modules/pdf/record-book-html.service.ts`):** the HTML block is now an invisible, geometry-identical `.signatures.sig-reserve` placeholder (`visibility: hidden`) that still reserves its exact height so pagination/page count are unchanged and the content can never reach the signature band; `stampPageFurniture` then draws the **visible** block once, with pdf-lib, at the bottom of the last Chrome-rendered page — heading y≈692, signing lines y≈757, captions y≈764–775, columns at x≈34/169/304/439.
+- **Two "old PDF served" vectors also closed:** (a) `backend/src/modules/pdf/pdf.controller.ts` now sends `Cache-Control: no-store, no-cache, must-revalidate` + `Pragma`/`Expires` on the live download so a browser cannot replay a stale copy; (b) the **stored Student Details Form** (written once by `syncStudentDetailsPdf`, then served from disk by the document endpoints) was stale — original 201 893 B (08 Oct) and watermarked copy 200 479 B (09 Oct), both showing the old layout. Added a `renderVersion` field to `StudentDocument`; `getStudentDocuments` now regenerates the derived form in place when the stamp is out of date (idempotent).
+- **Verified after the fix (real HTTP path):** `full` 2 pages, last page body ends y≈775 with signatures at the bottom; `internal` 1 page y≈775; `mentor-documents` 1 page y≈775; page counts unchanged; long 120-row synthetic still 9 pages with the signature on the last. The stored Details Form refreshed from 201 893 B → 136 463 B (original) / 137 350 B (watermarked), signature captions y≈764.
+
 **FIXED and verified — Global Styling Failure Across Entire Website (2026-10-10).**
 
 - **The bug report:** the entire website — not just the login page — was rendering without its expected styling. Pages that previously had dark navy navigation bars, sidebars, cards, spacing, buttons, typography, and responsive layouts now appeared like plain HTML. The frontend production build reportedly succeeded, but the browser still showed the problem.
@@ -1939,6 +4168,469 @@ made.
 ---
 
 ## Last Change
+
+### Kavitha 3D robot launcher added to the AI assistant (2026-10-16)
+
+**Report:** Replace the previous flat lucide `<Bot>` launcher with the approved 3D Kavitha robot design as the final visual reference.
+
+**Changes**
+- **Image asset:** `frontend/public/assets/kavitha-3d-robot.png` (385×405 RGBA, 238,757 bytes) — verbatim approved 3D Kavitha robot (white robot, glowing blue face, cyan accents, deep-navy circular badge, soft electric-blue glow).
+- **Component (`frontend/src/components/ai/AiAssistant.tsx`):**
+  - Added `ROBOT_IMAGE`, `ROBOT_IMAGE_WIDTH=385`, `ROBOT_IMAGE_HEIGHT=405`.
+  - Launcher: circular button fixed bottom-right; renders `<img>` inside `.ai-assistant-robot-mask` → `.ai-assistant-robot-float` → `.ai-assistant-robot` (decorative `alt=""`, `draggable=false`, `decoding="async"`); tooltip `.ai-assistant-button-tooltip` = `Kavitha — AI Assistant`; `aria-label` toggles Open/Close; `aria-expanded`, `aria-haspopup="dialog"`, `type="button"`, focus-visible outline.
+  - Header: uses header robot image and title `Kavitha — AI Assistant`; panel has `role="dialog"`, `aria-label="Kavitha — AI Assistant"`.
+  - Empty state: uses robot image + greeting `Hi! I'm Kavitha, your AI assistant. How can I help you today?`.
+  - Removed `Bot` and `RefreshCw` lucide icons; improved error handling (retryText, errorKind, `fail()`, `classifyError()`, `handleRetry()`).
+- **Styles (`frontend/src/styles/index.css`):**
+  - CSS vars: `--ai-launcher-size` 72px mobile / 88px ≥768px, `--ai-launcher-gap` 16/24px.
+  - `.ai-assistant-button`: fixed bottom-right, circular navy gradient border + layered blue glow (`box-shadow`), `kavitha-glow` pulse; hover lift + scale.
+  - `.ai-assistant-robot-mask`: circular clip (inset 3px) over deep navy background.
+  - `.ai-assistant-robot-float`: `animation: kavitha-float 3.8s ease-in-out infinite`; hover `.ai-assistant-robot` scale/brightness.
+  - `.ai-assistant-button-tooltip`: shows on hover/focus.
+  - `@media (prefers-reduced-motion: reduce)`: disables float/glow/transitions.
+  - `.ai-assistant-panel`: positioned above launcher (bottom = gap+size+12px), responsive width/height with `dvh` units.
+- **Verification (`.runtime-verify/kavitha/robot-verify.mjs`, fixed for ESM + proper checks):** live headless Chrome CDP against scratch backend (5057) + Vite frontend (3010) with real Gemini; **25/25 PASS** — launcher visible, robot image loaded (naturalWidth>0), src `http://localhost:3010/assets/kavitha-3d-robot.png`, mask/float, tooltip, a11y labels, sizes 88px (desktop) / 72px (mobile), `launcherTop` true, panel open/close (single), header "Kavitha — AI Assistant" + header robot loaded, chat request issued (`/api/ai/chat`) + real assistant reply, typing indicator, retry on blocked request works, panel fits mobile, prefers-reduced-motion honoured (`animationName: "none"`), 0 console errors/exceptions, asset HTTP 200; image `GET /assets/kavitha-3d-robot.png` → 200 image/png 238,757 bytes. Also fixed 4 latent harness bugs (implicit globals, uninvoked arrow IIFE, missing `assistantHasContent`, 3 incorrect assertions).
+
+**Build/Typecheck:** frontend `tsc --noEmit` exit 0; `npm run build` exit 0.
+
+**Scope:** preserves conversation history, existing chatbot, and other pages/functionality. Robot image is the actual approved asset (analyzed: deep-navy corners, glowing blue centre, 9.7% white, 6.4% cyan, 0% red). Branch `temp`, uncommitted (no commit/push).
+
+### College PDF header consolidated + diagonal watermark corrected (2026-10-15)
+
+**Report:** the college heading was reported as missing/incorrectly positioned and the `K S R C E` watermark was reported as too pale and running the wrong way; it must run bottom-left → top-right, be clearly visible but translucent, and stay behind the content.
+
+**Header root cause / defect:** the header was drawn **three times** with drifting geometry — the Chrome-rendered record book's per-page pdf-lib stamp, the record-book annexure cover sheet (jsPDF), and the legacy jsPDF fallback. They disagreed on the logo box (15 vs 17mm), the college-name size (13 vs 14pt), the divider y (28.4 / 28.5 / 33mm) and the side margin (12 vs 14mm), and the **annexure cover omitted the affiliation subtitle and the address entirely** — so the institutional header was not the "shared template" it needed to be.
+
+**Fix:** new single source of truth `backend/src/modules/pdf/institutional-header.ts` — header texts, colours, geometry (all mm from the page top) and the reserved band/divider, plus two drawers: `drawInstitutionalHeaderPdfLib` (y-up) and `drawInstitutionalHeaderJsPdf` (y-down). Wired into `record-book-html.service.ts` (`stampPageFurniture` + `appendPdfAnnexures`; `headerBandMm`/`headerRuleMm` now delegate to the shared spec) and `pdf.service.ts` (`renderHeader` + its annexure sheet). The cover sheet now prints the **same full header** as every other page, with the `Annexure N` label as the header's title line (below the college name) and the record-book cover margin aligned to the base pages (12mm).
+
+**Watermark fix:** the record-book CSS background layer changed from `rgba(128,128,128,0.08)` @ `rotate(45deg)` (a `\` diagonal compositing to ≈245 on white — effectively invisible) to `rgba(102,102,102,0.26)` @ `rotate(-45deg)`. CSS `rotate` is positive-clockwise with the y-axis down, so `-45deg` is the `/` bottom-left → top-right diagonal. Still painted strictly beneath `.content` (z-index 0 < 1). The switchable "background layer" contract and centring are unchanged.
+
+**Scope note:** the upload-time document watermark service (`backend/src/services/document-watermark.service.ts`, used by the Student Details Form + My Documents watermarking) was **deliberately left unchanged** — it is a different subsystem (stored copies generated at upload) with its own deliberate, test-covered `.12`-alpha subtlety; changing it would leave already-stored watermarked copies inconsistent. This task is the PDF **generation** path, whose watermark typography (88pt bold, `K S R C E`) is preserved.
+
+**Verified on the REAL generated PDF** (live backend `:5050`, harness `.runtime-verify/pdf/live-header-watermark.mjs`, files `.runtime-verify/pdf/live-full.pdf` / `live-mentor-documents.pdf`):
+- Record book `mode=full`: header centred on every page — `K.S.R. COLLEGE OF ENGINEERING` y 12.3mm `midOff=+0pt`, subtitle 18.3mm, address 21.2mm; navy bar + logo (205×190 image) top-left; divider at 28.4mm.
+- Annexure cover: `Annexure 1` at 24.7mm **below the college name** (subtitle 18.3mm + address 21.2mm now present), divider at 30.6mm, content heading at 33.5mm; the verbatim certificate is the next page (landscape 841.9×595, **no** header — correct).
+- `mode=mentor-documents`: its own title at 24.7mm on every page + the same header.
+- Watermark: measured direction `upper-half meanX=108mm → lower-half meanX=88mm` = `/` (bottom-left → top-right); `minGray=216` (was 221) = clearly visible; pixel-diff slope ≈ −0.95; document ink unchanged (true background layer); centred on the physical page.
+
+**Tests / build:** `test:record-book-header` **75/75** (added a "clearly visible but translucent" assertion), `test:record-book-certificates` **27/27**, `test:runtime` **38/38** (incl. header on the image-annexure page), `test:certificate-visibility` **22/22**, `test:document-watermark` **44/44**, `test:document-watermark-runtime` **46/46**, `test:leaderboard` **35/35**, `test:state-machine` **137/137**, `test:security-hardening` **8/8**; backend + frontend `tsc --noEmit` clean; backend + frontend `npm run build` exit 0.
+
+**Files changed:** `backend/src/modules/pdf/institutional-header.ts` (new), `backend/src/modules/pdf/record-book-html.service.ts`, `backend/src/modules/pdf/pdf.service.ts`, `backend/src/tests/record-book-header.test.ts`, `PROJECT_PROGRESS.md`, `DEBUG_NOTES.md`.
+
+### Official Record Book (PDF) — uploaded achievement certificates now listed and reproduced (2026-10-15)
+
+**Report:** certificates a student uploaded through **My Progress & Achievements** did not appear in the downloaded **Official Record Book (PDF)**; the achievement points system is working and must not change.
+
+**Root cause:** the record-book collector read only `StudentDocument`, where every row on a real record is the auto-generated `student_details_form` (listed but never self-embedded) — the actual certificate lives in `StudentProgress`, so it was neither listed nor attached. The legacy jsPDF fallback had the same defect.
+
+**Fix:** new shared collector `collectStudentDocumentArchive` in `backend/src/modules/pdf/record-book-html.data.ts` reads both `StudentDocument` and `StudentProgress` and de-duplicates by one shared stored-file identity rule (`backend/src/utils/uploaded-file-key.util.ts`); `collectRecordBookData` and `pdf.service.ts` both use it. Records with no file attached get a clear "no certificate file attached" message; the annexure cover sheet names the real upload channel; `internal` mode no longer appends document annexures (matching the legacy renderer). No duplicate records, no re-upload; original files untouched.
+
+**Points system untouched.** No point value, eligibility, ranking, verification or scoring code changed; leaderboard verified identical (rank 1, totalPoints 5, achievementCount 1) before and after.
+
+**Verified on the real generated PDF:** `mode=full` 3 → **5 pages** with the certificate listed and its original text **reproduced verbatim**; `mode=mentor-documents` 2 → **4 pages**; live upload→regenerate→delete round trip **17/17** (PDF restored byte-identical, file removed, rows restored, points unchanged); new `test:record-book-certificates` **27/27**; `test:record-book-header` 74/74, `test:certificate-visibility` 22/22, `test:runtime` 38/38, `test:document-watermark-runtime` 46/46, `test:leaderboard` 35/35, `test:state-machine` 137/137, `test:security-hardening` 8/8; backend + frontend `tsc` clean; backend + frontend `npm run build` exit 0.
+
+**Known pre-existing issues (reported, not touched):** one orphaned `StudentProgress` row (KAVIN S, `731523205099`) references a non-existent student and a missing file; `backend/data/achievements.json` contains a `PROBE Workshop Attendance` (5 pts) test artifact — removing it would change the leaderboard, so it was left as-is.
+
+### Achievement certificates missing from "My Documents" — connected to the participation ledger (2026-10-15)
+
+**Report:** uploaded achievement certificates did not show in the student's **My Documents**; the achievement points system is working and must not change.
+
+**Root cause:** the certificate is stored in `StudentProgress` (the achievement/participation ledger that **My Progress** writes to), a different collection from the `StudentDocument` rows that `getStudentDocuments` returned; the file endpoints also resolved only `StudentDocument` ids, so the file could not be served.
+
+**Fix:** `backend/src/modules/documents/document.controller.ts` — `getStudentDocuments` merges the student's achievement certificates onto the document list by reusing the canonical de-duplicating routine already used by the mentor review screen (`buildUnifiedProgressRecords`) and normalising them to the document shape (`source:'progress'`, real `verificationStatus`, `fileAvailable`, read-only capabilities); `streamDocumentFile` resolves `StudentProgress` ids under the same `checkStudentAccess` ownership rule and serves the original bytes. `frontend/src/components/documents/StudentDocumentsManager.tsx` tags them "From My Progress" and disables View/Download with a clear note when the file is genuinely missing. No duplicate record is ever created; a file already in the document store is listed once.
+
+**Points system untouched.** No point value, eligibility, ranking, verification or scoring code changed; leaderboard totals verified identical before and after.
+
+**Verified:** headless-Chrome CDP check **14/14 PASS** (certificate displayed, tagged, exactly one, previews the certificate via a secure blob iframe, no console errors/exceptions); live API probes (owner 200, anonymous 401, other student 403, no duplicate, upload→appears→cleanup); new `test:certificate-visibility` 22/22, `test:runtime` 38/38, `test:document-watermark-runtime` 46/46, `test:leaderboard` 35/35, `test:state-machine` 137/137, `test:security-hardening` 8/8; backend `tsc` and frontend `tsc`/`vite build` clean.
+
+**Known pre-existing issues (reported, not touched):** one orphaned `StudentProgress` row (KAVIN S, `731523205099`) references a non-existent student and a missing file; `backend/data/achievements.json` contains a `PROBE Workshop Attendance` (5 pts) test artifact from an earlier verification probe — removing it would change the leaderboard, so it was left as-is.
+
+### Achievement Leaderboard "Something Went Wrong" — Rules-of-Hooks violation fixed (2026-10-15)
+
+- **File:** `frontend/src/components/leaderboard/LeaderboardView.tsx` (only product file).
+- **Problem:** the `useMemo` that memoises the derived presentation was declared **after** the `if (error) return …` and
+  `if (!data) return <LeaderboardSkeleton />` early returns, so the hook count changed from the loading render (5 hooks)
+  to the loaded render (6) → `Rendered more hooks than during the previous render` → KSRCE `ErrorBoundary` → the
+  "Something Went Wrong" page, despite `/api/leaderboard` returning 200.
+- **Fix:** `entries` + `derived = useMemo(…)` hoisted above both early returns and made null-safe (`data?.entries ?? []`,
+  `(data?.verifiedAchievements ?? 0) > 0`, `data?.me ? … : null`); duplicate block removed; explanatory comment added.
+- **Verified:** pre-fix defect reproduced in a real browser and post-fix **8/8 PASS** (`.lb-root` rendered, 157 students in
+  scope, 0 error-boundary, 0 exceptions, 0 console errors); `test:leaderboard` 35/35; frontend `tsc --noEmit` exit 0;
+  `vite build` exit 0. Harness: `.runtime-verify/achv/verify.mjs`.
+
+### Subject Management — multi-select scope (departments · semesters · academic years · regulations) (2026-10-15)
+
+- **Added:** `frontend/src/components/common/MultiSelect.tsx` (reusable accessible chip multi-select with search,
+  select-all/clear-all, creatable mode, drop-up placement).
+- **Changed:** `backend/src/models/Subject.model.ts` (array scope + scalar mirrors + `subject*`/`normaliseSubjectScopes`/
+  `subjectAppliesTo`/`backfillSubjectScopes`), `database/migrate.ts` (run the idempotent backfill at boot),
+  `modules/subjects/subject.controller.ts` (array + legacy input parsing, overlap uniqueness 409, JS-side array
+  filtering, usage across combos, `loadDepartmentSubjects`), `modules/hod/hod.controller.ts` (`getSubjectsForClass`
+  expands a subject across its semesters), `modules/hod/marks-bulk-upload.service.ts` (`resolveUploadSubject` matches
+  code + `semesters` + `academicYears`; `academicYear` threaded through validate/import),
+  `frontend/src/api/client.ts` (`SubjectRow`/`SubjectInput` multi-select shape),
+  `frontend/src/pages/admin/AdminSubjectManagement.tsx` (four `MultiSelect`s + chips in the table),
+  `frontend/src/styles/index.css` (`.ms-*`, `.subj-tag`), `backend/src/tests/subject-management.test.ts`,
+  `.runtime-verify/subjects/verify.mjs`.
+- **Key rule:** a subject's canonical scope is the arrays; the original scalars are kept as the **first element** of
+  each array (preserves the unique index, API shape and readers). Two subjects may share a code only with **disjoint**
+  (department, semester, academic-year) scopes; any overlap is a 409.
+- **Verification:** `test:subject-management` **26/26** (17 original + 9 multi-select); UI harness **16/16** (headless
+  Chrome, scratch store, 0 runtime exceptions); regressions `security-hardening` 8/8, `bulk-upload` 23/23,
+  `hod-class-management` 8/8, `hod-scope` 33/33, `internal-marks` 97/97, `admin-routes` 8/8, `admin-auth` 13/13;
+  backend + frontend `tsc --noEmit` exit 0; `vite build` exit 0. Branch `temp`, uncommitted, no commit/push.
+- **Not enforced:** regulation is stored/displayed/filterable but is not compared during uploads (no
+  `Student.regulation`); scope filtering is JavaScript-side against the full-scan local store.
+
+### Admin Subject Management + subject-aware marks upload (2026-10-15)
+
+- **Added:** `backend/src/models/Subject.model.ts`; `backend/src/modules/subjects/subject.{controller,routes}.ts`;
+  `frontend/src/pages/admin/AdminSubjectManagement.tsx`; `backend/src/tests/subject-management.test.ts`;
+  `.runtime-verify/subjects/verify.mjs`.
+- **Changed:** `models/index.ts`, `database/migrate.ts` (Subject → `ALL_MODELS` + `PERMANENT_MODELS`), `index.ts`
+  (`/api/admin/subjects` mounted before `/api/admin`), `hod/hod.controller.ts` (`getSubjectsForClass` union),
+  `hod/marks-bulk-upload.service.ts` (additive per-department catalogue enforcement in validate + import),
+  `frontend/src/api/client.ts`, `pages/admin/AdminDashboard.tsx`, `components/common/Sidebar.tsx`,
+  `pages/hod/HodMarksManagement.tsx`, `pages/hod/HodClassManagement.tsx`, `pages/hod/ClassManagementClassCard.tsx`,
+  `backend/package.json` (`test:subject-management`).
+- **Key rule:** the catalogue is **additive** — enforcement only once a department has ≥1 catalogue subject; departments
+  with none keep the legacy free-form behaviour (so the `SEC201` security test still imports).
+- **Verification:** `test:subject-management` 17/17; UI harness 12/12 (headless Chrome, scratch store, 0 runtime
+  exceptions); regressions `security-hardening` 8/8, `hod-class-management` 8/8, `internal-marks` 97/97, `bulk-upload`
+  23/23, `hod-scope` 33/33, `admin-routes` 8/8, `admin-auth` 13/13; backend + frontend `tsc --noEmit` exit 0;
+  `vite build` exit 0. Branch `temp`, uncommitted, no commit/push.
+
+### Login page — reference-match pass (64/36 · 420 px card · `OR` separator) (2026-10-15)
+
+- **Changed:** `frontend/src/styles/index.css` (`.lg-*` only) — `.lg-page` grid `62fr/38fr` → `64fr/36fr`; `.lg-card`
+  `max-width` `440` → `420 px`; new `.lg-or-sep`/`.lg-or-line`/`.lg-or-text`; tightened card rhythm (head margin
+  1.6→1.4, college 0.9→0.8, divider 1/0.8→0.85/0.7, form-group 1.15→1.05, pwa-row 1.15→0.9, foot 1.25/1→1.05/0.9 rem).
+  `frontend/src/pages/auth/LoginPage.tsx` — added the `OR` separator above the (conditional) PWA button.
+- **Reference image:** `A:\movies\K.S.R.C.E. Campus at Twilight.png` verified byte-identical (SHA-256) to the existing
+  `frontend/public/assets/ksrce-campus-twilight.png`; already referenced via `/assets/ksrce-campus-twilight.png`.
+- **Preserved:** login API/payload/fields/errors, `useAuth`/session/role redirects, password toggle, PWA install, campus
+  asset, other pages; `.login-*` (`ChangePasswordPage`) untouched; no dependency; no hardcoded credentials; remember-me /
+  forgot-password intentionally not added (no real functionality).
+- **Verification:** running app in headless Chrome (CDP) at the reference **1490×810** → split **64/36** (954/536), card
+  **420×682** centred (Δ0), hero left x=48, gaps 88/28/29/88, heading 31.2 px, lead 3 lines, four 36×36 icons; 1440×900
+  → 922/518 card 420×681; 1024×768 → 655/369 card 313×695; 390/320 stacked, no horizontal overflow; campus `200`
+  (2,580,028 B) + logo `200`; toggle / wrong-password alert / successful login / PWA all work; **0 console
+  errors/exceptions**; `tsc --noEmit` + `vite build` exit 0 (CSS 138.91 kB). **No image input → the attached reference
+  screenshot could not be visually compared**; matched to the spec's stated text/dimensions via computed styles +
+  geometry + sharp pixel stats. Branch `temp`, uncommitted, no commit/push.
+
+### Login page — hero refinement (smaller headline · balanced lead · feature contrast) (2026-10-15)
+
+- **Changed:** `frontend/src/styles/index.css` (scoped `.lg-*` block only) — `.lg-hero-title` desktop font-size
+  `clamp(1.5rem,2.5vw,2.1rem)` → `clamp(1.42rem,2.3vw,1.95rem)` (33.6 → 31.2 px) and tablet
+  `clamp(1.35rem,2.15vw,1.85rem)` → `clamp(1.28rem,2vw,1.72rem)` (22.02 → 20.48 px); `.lg-hero-text` `margin-top`
+  `clamp(1.4rem,2.8vh,1.9rem)` → `clamp(1.75rem,3.4vh,2.4rem)` and `max-width` `min(52ch,100%)` → `min(40ch,100%)`
+  (tablet `44ch` → `40ch`) so the lead wraps into three balanced lines (317/294/362 px); `.lg-brand-body::before` scrim
+  widened to `radial-gradient(150% 125% at 0% 52%, rgba(6,27,54,.66) 0%, …0 74%)` for feature-list contrast.
+  `LoginPage.tsx` untouched this pass.
+- **Preserved:** login API/payload/fields/errors, `useAuth`/session/role redirects, password toggle, PWA install, the
+  campus asset, the right-hand card (440×670, centred) and the other pages. `.lg-*` is the only selector family touched.
+- **Verification:** running app in headless Chrome (CDP) — 1440: headline 31.2 px / 4 lines / lh 37.44 px, lead 3 lines
+  at 383.6 px, gaps 130/31/32/129 px, icons 36×36 @x46, titles @x96, card 440×670 Δ≤1; 1024: headline 20.48 px, lead 3
+  lines at 353.3 px, gaps 106/28/26/106 px, icons @x32, card Δ0; 390/320 stacked, no horizontal overflow, vertical
+  scroll (docH 944/992); campus photo + logo both `200`; gold line fits 280→1440 px; toggle / wrong-password alert /
+  successful login / PWA all work with **0 console errors/exceptions**; `tsc --noEmit` + `vite build` exit 0
+  (CSS 138.62 kB). Screenshots were captured but **not** visually reviewed (no image input in this environment).
+
+### Login page — final UI polish (hero alignment · spacing · panel cleanup) (2026-10-15)
+
+- **Changed:** `frontend/src/pages/auth/LoginPage.tsx` — crest + hero copy + feature list + tagline wrapped in one
+  shared `<div className="lg-brand-inner">`; the `<span className="lg-panel-decor">` removed.
+  `frontend/src/styles/index.css` (scoped `.lg-*` block) — new `.lg-brand-inner`; `.lg-brand` background-position
+  `46% 42%`; lighter `.lg-brand-veil`; heading `line-height` 1.2, heading→paragraph gap 25 px, paragraph→features
+  33 px, feature-row gap 17.1 px; `.lg-panel-decor` rules deleted.
+- **Preserved:** login API/payload/fields/errors, `useAuth`/session/role redirects, password toggle, PWA install, the
+  campus asset and the other pages. `.lg-*` is the only selector family touched, so the shared `.login-*`
+  (`ChangePasswordPage`) rules are untouched; no new dependency; no credential hardcoded.
+- **Verification:** the running app driven in headless Chrome (CDP) — hero blocks share one left edge (x=46 / 32 / 18 at
+  1440 / 1024 / stacked); heading→paragraph 25 px and paragraph→features 33 px; four headline lines identical size /
+  line-height with `MENTOR–MENTEE` gold + nowrap; four icons 36×36 at the same x with one text column (x 96 / 82);
+  `.lg-panel-decor` gone; card 440×670 centred (delta ≤1 px); 62/38 split at 1440 & 1024; no horizontal overflow at
+  1440/1024/768/390/320; vertical scroll on short screens; hero-region mean R 65 → 71 with text background luminance
+  38–53 and the sunset band ~132; toggle password→text→password; wrong password → `Invalid username or password.`;
+  correct → token + app shell + sidebar; **0 console errors/exceptions**; `tsc --noEmit` + `vite build` exit 0
+  (CSS 138.62 kB); campus asset `200 image/png` 2,580,028 B. Screenshots were captured but **not** visually reviewed
+  (no image input in this environment).
+
+### Login page — right-panel premium navy + left-hero alignment fix (2026-10-15)
+
+- **Changed:** `frontend/src/pages/auth/LoginPage.tsx` — the entire `MENTOR–MENTEE` headline line is gold
+  (`.lg-hero-accent`) instead of only `MENTEE`. `frontend/src/styles/index.css` (scoped `.lg-*` block) — the
+  transparent `.lg-panel` now paints its own full deep-navy → midnight gradient edge-to-edge; the oversized decorative
+  circles were replaced by a soft gold radial bloom + faint masked dot grid; the card got a thin gold border
+  (`rgba(245,189,53,.42)`), 20 px radius and a layered navy shadow; the hero gained four explicit `.lg-hero-line`
+  blocks on one left edge/line-height, a `min(52ch,100%)` paragraph, 36×36 feature icon boxes with a fixed gap, a
+  bottom-left tagline, plus `min-height:100dvh`, safe-area padding, `overflow-x: clip` and a ≤960px stack.
+- **Preserved:** login API/payload, auth/session/role redirects, validation/errors, password show/hide, loading/disabled
+  states, PWA install workflow, storage, the campus asset and the other dashboards. `.lg-*` is the only selector family
+  touched, so no shared style changed and the `.login-*` (`ChangePasswordPage`) rules are untouched; no new dependency;
+  no credential hardcoded.
+- **Verification:** the running app driven in headless Chrome (CDP) — 62/38 split at 1440 & 1024; panel
+  `rgb(6,27,54)` + gradient with navy corners (13,42,77)/(32,62,90)/(4,16,31); card 440×670 centred on the panel centre
+  (x 946–1386, y 115–785) with white samples; `MENTOR–MENTEE` `rgb(245,189,53)`; all hero lines share one left x and one
+  line-height (38.98 px @ 33.6 px); feature icons 36×36 with a consistent text x; no horizontal overflow at
+  1440/1024/768/390/320; toggle password→text; wrong password → `Invalid username or password.`; correct
+  (`Ksrce@admin` / `Ksrce@1234`) → token + app shell; real API 401/200 (ADMIN + token); **0 console errors**;
+  `tsc --noEmit` + `vite build` exit 0 (CSS 139.08 kB). Screenshots were captured but **not** visually reviewed (no
+  image input in this environment).
+
+### Login page — premium redesign aligned to the latest navy/gold reference (2026-10-14)
+
+- **Changed:** `frontend/src/pages/auth/LoginPage.tsx` — feature items gained a short description (icon + title +
+  description) and a `.lg-panel-decor` element; `frontend/src/styles/index.css` (scoped `.lg-*` block) — 62 / 38 split,
+  uppercase hero title + `WELCOME BACK`, feature description styles, and clipped gold decorative arcs on the sign-in
+  panel with `.lg-card { z-index: 1 }`.
+- **Preserved:** login API/payload, auth/session/role redirects, validation/errors, password show/hide, loading/disabled
+  states, PWA install workflow, storage and the other dashboards. `.lg-*` is the only selector family touched, so no
+  shared style changed and the `.login-*` (`ChangePasswordPage`) rules are untouched; no new dependency; no credential
+  hardcoded.
+- **Verification:** the running app driven in headless Chrome (CDP) — 62 / 38 split; uppercase title and `WELCOME BACK`;
+  4 feature rows with descriptions; gold 1 px card border, 20 px radius; navy-gradient primary with gold border +
+  arrow; campus image loaded (1 672 × 941) and clearly visible (left-panel mean luminance ≈ 66–77); no horizontal
+  overflow at 1440 / 1024 / 390; password toggle works; invalid → error alert; valid → token + dashboard;
+  **0 console errors**; `tsc && vite build` exit 0. Screenshots were captured but **not** visually reviewed (no image
+  input in this environment).
+
+### Grammar engine — broad vocabulary, modular rules, optional local model (2026-10-13)
+
+- **Changed:** the grammar engine became a modular package. New `vocabulary/morphology.ts`, `domain-vocabulary.ts`,
+  `lexicon.ts` (licensed, cached 370,103-word dictionary + 50,000-word frequency ranking), `grammar.rules.ts`
+  (ordered broad rules), `grammar.spelling.ts` (conservative dictionary-backed typo correction) and
+  `grammar.context.ts` (optional Ollama adapter, OFF by default). `grammar.service.ts` and
+  `ai-assistant.service.ts` wired to the new pipeline; `index.ts` warms the lexicon at boot;
+  `scripts/copy-grammar-data.cjs` + `postbuild` copy the data into `dist/`.
+- **Vocabulary / licences:** `dwyl/english-words` `words_alpha.txt` (**The Unlicense**) and
+  `hermitdave/FrequencyWords` `en_50k.txt` (**MIT**), recorded in `vocabulary/data/SOURCES.md`;
+  `first20hours/google-10000-english` was rejected for an unclear licence. Nothing is fabricated.
+- **New rules:** plural-subject agreement (+ `of`-guard), be/have/do closed forms, missing `did`, missing-verb
+  fragments, `there is/are`, quantifier & partitive plurals, a/an, adjective+preposition collocations, doubled words.
+- **Optional local model:** enable with `GRAMMAR_LOCAL_MODEL=true` + `OLLAMA_BASE_URL`/`OLLAMA_MODEL`; any failure
+  (off / unreachable / timeout / junk / value-dropping) silently falls back. No model is installed here, so it is
+  verified against a mock server only.
+- **Verification:** `test:grammar-coverage` **1084/1084**, `test:grammar-context` **35/35**, `test:grammar-api`
+  **63/63**, `test:grammar-dataset` **85/85**, `test:grammar-safety` **45/45**, `test:grammar` green, `tsc` +
+  `npm run build` exit 0. Benchmark: lexicon load **~614 ms / ~49.5 MB**, **~3,544 corrections/s**, 2,498-char
+  paragraph **~3 ms** p95 ~4.6 ms. UI, RBAC, API contract and storage unchanged. Branch `temp`, uncommitted.
+
+### Grammar engine — missing-auxiliary repair covers "coming" (`he not coming tomorrow`) (2026-10-13)
+
+- **Root cause:** `coming` was absent from the curated `MISSING_AUX_GERUNDS` list, so `subject + not + coming` never
+  matched `fixMissingAuxiliaryVerbs` and only the mechanical capitalisation/punctuation step ran. The rule order in
+  `grammar.service.ts` was already correct.
+- **Changed:** added `coming` (and a curated group of other unambiguous action participles) to
+  `backend/src/modules/grammar/grammar.dataset.ts`; in `backend/src/modules/grammar/grammar.structure.ts` the
+  object-plural normalisation now applies only when the clause continues past the bare object, so
+  `she not attending class` → `She is not attending class.` while `…attending class regularly` →
+  `…attending classes regularly.` is preserved.
+- **Result:** `he not coming tomorrow` → `He is not coming tomorrow.`; `student not coming tomorrow` →
+  `The student is not coming tomorrow.`; `they not submitting assignments` → `They are not submitting assignments.`;
+  an existing auxiliary (`He is not coming tomorrow.`) is never rewritten.
+- **Verification:** `test:grammar-dataset` **85/85**, `test:grammar-safety` **45/45**, `test:grammar-api` **63/63**,
+  `test:grammar` green, backend `tsc` + frontend `vite build` exit 0, and the **live** server (via the frontend
+  proxy) returns the corrected output for the exact reported input. Branch `temp`, uncommitted.
+
+### Login page — premium polish pass (2026-10-13)
+
+- **Changed:** `frontend/src/pages/auth/LoginPage.tsx` (the submit button gains `aria-busy={loading}`) and the scoped
+  `.lg-*` block in `frontend/src/styles/index.css` — a lighter, localised campus scrim (image far more visible, text
+  still readable via stronger shadows), crest/typography refinement, a premium card (padding/border/layered shadow),
+  50 px inputs with a gold `:focus`/`:focus-visible` ring, a 38×38 password toggle, a prominent 52 px Sign-In button
+  with polished hover/focus/disabled/loading states, a quieter-but-accessible PWA button, softer grid/arc accents, and
+  a compact mobile banner with a full-width (100%) form at ≤480 px. The shared `.login-*` rules
+  (`ChangePasswordPage`) are untouched.
+- **Unchanged:** auth (`useAuth`, the `POST /api/auth/login` shape, errors, role redirects), PWA install, show/hide
+  password, storage, every other role's dashboard; no new dependency; no hardcoded credentials.
+- **Verification:** live `3000` → 200; campus PNG served **200 image/png 2 728 283 B** (byte-identical);
+  `POST /api/auth/login` via the dev proxy → **200 (ADMIN + token)** and wrong password → **401**; `tsc && vite build`
+  **exit 0**. Branch `temp`, uncommitted.
+
+### Grammar engine — missing-verb fragment repair (2026-10-13)
+
+- **Root cause:** only word/phrase substitution rules existed, so *subject + `not` + participle*
+  (`student not attending class regularly`, `he not attending classes regularly`, `she not submitting assignments`)
+  and *subject + participle* (`student facing difficulty in mathematics`) fell through to capitalisation + terminal
+  punctuation. No curated exact/approximate entry covered them.
+- **New `backend/src/modules/grammar/grammar.structure.ts`:** `fixMissingAuxiliaryVerbs` — sentence-anchored, curated
+  subject + curated participle, inserts the article/auxiliary (`The student is …`, `They are …`), pluralises a small
+  curated set of singular objects only inside a clause it actually rebuilt, and bails out entirely when a curated
+  finite verb/modal follows the participle (reduced relative) so correct clauses are untouched.
+- **`backend/src/modules/grammar/grammar.dataset.ts`:** added `MISSING_AUX_GERUNDS`, `MISSING_AUX_SUBJECTS`,
+  `MISSING_AUX_NOUN_SUBJECTS`, `FINITE_VERB_MARKERS`, `MISSING_AUX_OBJECT_PLURALS`.
+- **`backend/src/modules/grammar/grammar.service.ts`:** runs the repair after word corrections and before
+  `PHRASE_RULES`; records a `sentence-structure` note.
+- **Tests:** new section in `dataset-grammar.test.ts` (four target patterns, plural subject, already-correct +
+  reduced-relative guards, protected values, dataset integrity) and a full-stack case in `grammar-api.test.ts` for the
+  exact screenshot input.
+- **Verification:** `test:grammar-dataset` **73/73**, `test:grammar-safety` **45/45**, `test:grammar-api` **54/54**
+  (real `src/index.ts` boot; exact input returns `The student is not attending classes regularly.`,
+  `RULES_APPLIED`), `test:grammar` green; backend + frontend `tsc` and frontend `vite build` exit 0. No
+  route/RBAC/storage/API-shape change. Branch `temp`, uncommitted — no commit/push.
+
+### Dataset-based grammar engine — deterministic, conservative, extensible (2026-10-13)
+
+- **New `backend/src/modules/grammar/grammar.dataset.ts`:** `EXACT_CORRECTIONS` (16 curated whole sentences with
+  stored correct forms; only the same-topic ones — `wrong`/`right` content-token overlap ≥ 0.5 — carry
+  `allowApproximate`), extensible `WORD_CORRECTIONS`
+  (mentoring misspellings + proper nouns/weekdays), ordered `PHRASE_RULES` (contraction spelling, subject–verb
+  agreement, bare infinitive, pluralisation, articles, fixed prepositions, structural errors, spacing) and the
+  thresholds/confidences (`APPROX_MATCH_THRESHOLD` 0.9, `AMBIGUOUS_THRESHOLD` 0.7, `APPROX_TOPIC_FLOOR` 0.5).
+- **New `backend/src/modules/grammar/grammar.normalize.ts`:** matching-only normalisation (`normalizeForMatching`),
+  `tokenize`, `contentTokens`, `tokenSetSimilarity`, `levenshtein`, `similarityRatio`.
+- **New `backend/src/modules/grammar/protected-values.ts`:** official-value guard moved here
+  (`extractProtectedValues`, `preservesProtectedValues`, `isOfficialToken`), shared by both engines.
+- **New `backend/src/modules/grammar/grammar.service.ts`:** `correctText` orchestrator and the `GrammarStatus`
+  contract; returns the input unchanged with an explicit status when no reliable correction exists.
+- **`backend/src/modules/counselling/ai-assistant.service.ts`:** removed the inline rule engine and duplicated guard;
+  delegates to `correctText`, re-exports the protected-value helpers; optional external-LLM path preserved.
+- **`backend/src/modules/counselling/counselling.controller.ts`:** `grammarCheckController` (blank + normal) now
+  returns `status`.
+- **New `backend/src/tests/dataset-grammar.test.ts`** + `test:grammar-dataset` script; existing
+  `grammar-safety.test.ts` field-set assertion widened to include `status`.
+- **`frontend/src/api/client.ts`:** `checkGrammar` return type gains `status`.
+- **`frontend/src/components/mentor/GrammarAssistField.tsx`:** status-driven message instead of a false
+  "no grammar issues"; still applies only after **Apply Correction**.
+- **Verification:** `test:grammar-dataset` 59/59, `test:grammar-safety` 45/45, `test:grammar-api` 49/49,
+  `test:grammar` green; backend + frontend `tsc` and frontend `vite build` exit 0. No route/RBAC/storage change.
+  Branch `temp`, uncommitted — no commit/push.
+
+### User-facing "Counselling" → "Mentoring" — remaining mentoring-workflow labels cleared (2026-10-12)
+
+- **`frontend/src/components/common/Sidebar.tsx`:** `Counselling Records` → `Mentoring Records`; `5-Domain Counselling`
+  → `5-Domain Mentoring`; student `Mentoring & Counselling` → `Mentoring History`.
+- **`frontend/src/pages/mentor/MentorStudentProfileView.tsx`:** tab `6. Counselling` → `6. Mentoring`; summary card
+  `Counselling Sessions` → `Mentoring Sessions` (+ aria-label); `Mentee Counselling Records & Dossier` → `Mentee
+  Mentoring Records & Dossier`; record `Counselling Date` → `Mentoring Date`; `Edit Counselling Record` → `Edit
+  Mentoring Record`; empty state + copy; add/edit modal title/subtitle and `Mentoring Date` / `Mentoring Category`
+  labels + validation messages.
+- **`frontend/src/pages/faculty/FacultyDashboard.tsx`:** `Add/Pending/Recent Counselling` → `… Mentoring`;
+  `5-Domain Counselling` → `5-Domain Mentoring`; mentoring-record table + `Open Counselling Desk` → `Open Mentoring
+  Desk`; quick-add modal.
+- **`frontend/src/components/mentor/CounsellingCategorySelect.tsx`:** `Counselling Category` → `Mentoring Category`,
+  placeholder + validation.
+- **`frontend/src/pages/admin/AdminDashboard.tsx`:** `Counselling Sessions` → `Mentoring Sessions`; `Institutional
+  5-Domain Counselling Hub` → `… Mentoring Hub`; `Student Counselling Directory` → `Student Mentoring Directory`;
+  `Counselling Action` → `Mentoring Action`; `View Student Counselling` → `View Student Mentoring`; retention/delete
+  copy.
+- **`frontend/src/components/faculty/FacultyDetailView.tsx`:** `Counselling History` → `Mentoring History`;
+  `Counselling records` → `Mentoring records`; `Last Counselling` → `Last Mentoring`; `Counselling provided` →
+  `Mentoring provided`; empty state.
+- **`frontend/src/pages/principal/PrincipalDashboard.tsx`**, **`…/principal/PrincipalActivity.tsx`**,
+  **`…/principal/PrincipalCharts.tsx`**, **`frontend/src/pages/hod/HodDashboard.tsx`:** KPI hint, `Last mentoring`
+  column, note and empty-state copy.
+- **`frontend/src/pages/student/StudentDashboard.tsx`:** `5-Domain Counselling & Mentoring History` → `5-Domain
+  Mentoring History`; card + PDF-download copy. **Kept:** the `Counselling (Govt Quota)` admission option (also in
+  `frontend/src/pages/student/CompleteProfileWizard.tsx`).
+- **`frontend/src/components/ai/AiAssistant.tsx`**, **`…/mentor/MentorAiBotModal.tsx`**,
+  **`frontend/src/pages/auth/LoginPage.tsx`:** prompt / tagline copy.
+- **Not changed:** all internal identifiers (tab keys, `/counselling/*`, `counselling*` fields, `CounsellingRecord`,
+  component/type names, comments) and backend / PDF text. **Verification:** frontend `tsc` + `vite build` clean;
+  bundle + running dev server contain only the two `Counselling (Govt Quota)` strings; no backend/data change. Branch
+  `temp`, uncommitted.
+
+### Bulk Upload & Assign Mentees to Faculty Mentors — ADMIN college-wide / HOD own-department (2026-10-12)
+
+- **New `backend/src/modules/mentorship/bulk-assignment.service.ts`:** template generation (`generateAssignmentTemplateXlsx`
+  / `generateAssignmentTemplateCsv`), CSV + XLSX parsing into a shared string matrix (`parseAssignmentFile` /
+  `matrixToRawRows`, header aliases, `#` comments, blank rows skipped), server-side `validateAssignmentRows`
+  (`VALID` / `WARNING` / `INVALID` / `DUPLICATE` / `ALREADY_ASSIGNED` / `REASSIGNMENT_REQUIRED` + summary),
+  `executeBulkAssignment` (per-row writes mirroring `assignMentor`/`reassignMentor`, compensating revert,
+  notifications via `safeNotify`, audit), and `generateAssignmentReport` (CSV/XLSX). `BULK_ASSIGN_MAX_FILE_BYTES`
+  5 MB, `BULK_ASSIGN_MAX_ROWS` 1000.
+- **New `backend/src/modules/mentorship/bulk-assignment.controller.ts`:** multer memory storage (5 MB, `.xlsx`/`.csv`
+  filter), `ensureAssignerRole`, handlers for template/validate/assign/report with clear 400s.
+- **New `backend/src/modules/mentorship/bulk-assignment.routes.ts`:** `GET /template`, `POST /validate`,
+  `POST /assign`, `POST /report`, each `authorize(ADMIN, HOD)`; `authenticate` at the router level.
+- **`backend/src/modules/mentorship/mentorship.routes.ts`:** imports and mounts `router.use('/bulk', bulkAssignmentRoutes)`
+  **before** the single-student routes. No `index.ts` change needed.
+- **`backend/package.json`:** added `test:bulk-assignment`.
+- **New `backend/src/tests/bulk-assignment.test.ts`:** real-server HTTP suite, **29/29 PASS**.
+- **`frontend/src/api/client.ts`:** added the `BulkAssign*` types and the `bulkAssignment` API block
+  (`downloadTemplate`, `validate`, `assign`, `downloadReport`).
+- **New `frontend/src/components/mentorship/BulkAssignMentees.tsx`:** the 4-step modal flow (template downloads,
+  dropzone, preview table + filters/search, validation-report download, confirmation dialog with reassignment
+  authorisation + required reason, results table, CSV/XLSX results download).
+- **`frontend/src/pages/admin/AdminDashboard.tsx`** and **`frontend/src/pages/hod/HodDashboard.tsx`:** added the
+  **Bulk Assign Mentees** trigger button and modal render (Admin assignment tab; HOD reassignment tab). The existing
+  single-student actions are unchanged.
+- **`frontend/src/styles/index.css`:** appended a scoped `ba-*` block only; the shared `bu-*` primitives are reused.
+- **No change** to the existing single-student assign/reassign controllers, the models, the role permissions, or any
+  unrelated page. All new styling is scoped to the new component.
+- **Verification:** `npm --prefix backend run test:bulk-assignment` 29/29; `test:critical` 12/12, `test:bulk-upload`
+  23/23, `test:bulk-actions` 15/15, `test:hod` 33/33, `test:admin` 23/23, `test:security-hardening` 8/8; backend and
+  frontend TypeScript clean; frontend `vite build` clean. Branch `temp`, uncommitted — no commit/push.
+
+### Principal dashboard — oversized banner removed, compact heading + mentor analytics series (2026-10-12)
+
+- **`frontend/src/components/principal/PrincipalHeader.tsx` (rewritten):** the hero banner became a compact
+  `.pd-pagehead` — `Principal Dashboard` + `Institutional performance at a glance` + a small current-date chip. Removed
+  the gradient card, the in-banner heading/tagline, both badges, repeated college branding, the welcome message and the
+  in-banner date.
+- **`frontend/src/pages/principal/PrincipalDashboard.tsx`:** KPI section retitled "Key institutional metrics"; the
+  distribution chart now passes the real `mentors` field and is titled "Students, faculty & mentors by department".
+- **`frontend/src/components/principal/PrincipalCharts.tsx`:** `DistributionRow` gained `mentors`; a third series +
+  legend entry is rendered from real data. **`PrincipalDashboardSkeleton.tsx`:** hero skeleton replaced by a compact
+  heading skeleton; analytics skeleton height aligned.
+- **`frontend/src/styles/index.css`:** deleted the `.pd-header*` / `.pd-chip*` rules; added scoped `.pd-pagehead*` rules
+  and the `.page-body:has(> .pd-root)` top-padding trim; gave `.pd-dist-fill` a width transition. No shared selector is
+  changed in a way that affects any other role.
+- **No backend / API / permission change.** Data remains the existing Principal-allowed `/api/admin/overview/*` surface,
+  rendered as-is (no client arithmetic, no fabricated trends).
+- **Verification:** real headless-Chromium run over the built SPA + real backend **50/50 PASS**; `test:principal` 53/53,
+  `test:admin` 23/23, `test:hod` 33/33, `test:critical` 12/12, `test:bulk-actions` 15/15; frontend `tsc --noEmit` +
+  `npm run build` clean. Branch `temp`, uncommitted — no commit/push.
+
+### Principal executive dashboard — premium Principal-only redesign (2026-10-12)
+
+- **Page (`frontend/src/pages/principal/PrincipalDashboard.tsx`, rewritten):** no longer re-exports
+  `AdminMentoringDashboard`; it is a self-contained executive dashboard with an in-page header + `pd-tabs`, 8 KPI cards,
+  SVG/CSS analytics, department cards with the existing read-only drill-down, and a real activity + attention panel.
+  Sidebar tab keys (`mentoring-dashboard` default, `mentoring-hods`, `mentoring-departments`, `mentoring-comparison`,
+  `mentoring-reports`) are unchanged.
+- **New components (`frontend/src/components/principal/`):** `PrincipalHeader.tsx`, `PrincipalKpi.tsx`,
+  `PrincipalCharts.tsx`, `PrincipalDepartmentCard.tsx`, `PrincipalActivity.tsx`, `PrincipalDashboardSkeleton.tsx`.
+- **Styling (`frontend/src/styles/index.css`):** one appended scoped `pd-*` block (header, chips, tabs, sections,
+  KPI grid + tone tiles, cards, analytics grid, bars / weeks / ring / distribution, department cards, activity, alerts,
+  toolbar / search / input, crumbs, badges, responsive + reduced-motion). No shared selector changed.
+- **No backend / API / permission change.** Data is the existing Principal-allowed `/api/admin/overview/*` surface;
+  values are server-computed and rendered as-is (no client arithmetic, no fabricated trends). Attendance / academic /
+  announcements are omitted (no endpoint). View-only is enforced by the server allow-list, not the UI.
+- **Verification:** real headless-Chromium run over the built SPA + real backend
+  (`backend/.runtime-verify/principal-dashboard-browser.mts`, scratch) **47/47 PASS**; frontend `tsc --noEmit` +
+  `npm run build` clean; `test:principal` 53/53, `test:admin` 23/23, `test:hod` 33/33, `test:critical` 12/12,
+  `test:bulk-actions` 15/15. Admin and HOD portals confirmed free of any Principal-only markup. Branch `temp`,
+  uncommitted — no commit/push.
+
+### Faculty Mentor Cards + click-through full-process detail — HOD "Department Faculty Mentors" (2026-10-12)
+
+- **Cards replace the table (`frontend/src/components/faculty/FacultyMentorCard.tsx`, new; wired into
+  `frontend/src/pages/hod/HodDashboard.tsx`):** name, employee ID, email, designation, department, cabin, contact
+  number (when present), current mentee count, coverage % and active/inactive status, with **View Details** / **Edit**
+  actions and the existing **Add Faculty** button. 3 / 2 / 1 columns (≤1180px / ≤700px) via an appended scoped
+  `faculty-*` CSS block; loading, empty and error states; no hardcoded faculty data. The card root is
+  `role="button"` + `tabIndex=0` with Enter/Space activation; inner actions call `stopPropagation()` so Edit never
+  also opens the detail.
+- **Detail dialog (`frontend/src/components/faculty/FacultyDetailView.tsx`, new):** one wide `Modal`
+  (`maxWidth="1100px"`) with tabs **Overview / Mentees / Counselling History / Meetings / Documents / Assignment
+  History** — only sections the app supports — each backed by real data with a clear empty state. Mentees shows
+  name, register number, class/section/year, assignment status, counselling session count, last counselling date and
+  progress, and can open the mentee's existing student page.
+- **Backend (`backend/src/modules/hod/hod.controller.ts` — extend, no new route):** `getMentorDetail`
+  (`GET /api/hod/mentor/:mentorId`) keeps resolving the mentor inside `loadScope` (foreign-department id → 404) and
+  now also returns dept-scoped `assignments` (ACTIVE **and** historical `MentorAssignment` rows for that mentor),
+  `counselling` (records authored by `mentor === mentorId`), `meetings` (that mentor's meetings) and `documents`
+  (`StudentDocument` metadata for the current mentees). Relationships are keyed by stable ids, current vs historical
+  is explicit by status, reassigned students are not duplicated, and no raw geo-tagged evidence photos are emitted.
+- **Types (`frontend/src/api/client.ts`):** new `HodMentorAssignmentRow` / `HodMentorCounsellingRow` /
+  `HodMentorMeetingRow` / `HodMentorDocumentRow` and an extended `HodMentorDetail`.
+- **Verification:** real headless-Chromium run over the built SPA + real backend
+  (`backend/.runtime-verify/faculty-cards-browser.mts`, scratch) **34/34 PASS**; backend `tsc --noEmit` + `npm run
+  build` clean; frontend `tsc --noEmit` + `npm run build` clean; `test:hod` 33/33, `test:critical` 12/12,
+  `test:bulk-actions` 15/15. Branch `temp`, uncommitted — no commit/push.
 
 ### Principal role end-to-end — read-only college-wide dashboard + forced first-login password change (2026-10-10)
 
@@ -2662,6 +5354,19 @@ made.
 
 ## Pending
 
+- PENDING — Bulk Upload & Assign Mentees is verified end-to-end over the **real HTTP stack** (29/29) and the frontend
+  compiles + builds, but the new modal's mouse/keyboard interactions (template download, drag-drop, preview filters,
+  confirmation dialog, report download) have **not** yet been driven in a headless-Chromium session. Run the browser
+  pass on the built SPA (Admin + HOD) before considering the UI fully verified.
+- PENDING — Bulk actions UI (Student Master + Faculty / Mentors) is build-verified and the bulk **APIs**
+  were verified on the running app, but the new multi-select / action-bar / confirmation-modal
+  interactions have not yet been driven in a headless-Chromium browser session. Run the browser pass
+  (select single / multiple / all, deselect + clear, pagination + filters, bulk delete valid + invalid
+  ids, unauthorized denial, ZIP for students/mentors, missing-doc + partial failures, mobile layout)
+  before considering the feature fully verified.
+- PENDING — Faculty / Mentor bulk download returns an explicit "no documents available" result because
+  the system has no faculty document store. If faculty uploads are added later, extend
+  `faculty-bulk.controller.ts` to feed real documents into the same ZIP/manifest pipeline.
 - RESOLVED (2026-10-11) — `test:ai-assistant` does not need a live Ollama host: the suite ships an
   in-process mock Ollama server (env `OLLAMA_BASE_URL` set before the app boots; config read per
   call). Its failure to complete was a test-teardown defect — after 47/47 checks it never exited
@@ -2716,6 +5421,26 @@ made.
   fields cannot use it without adding `ROLES.STUDENT` to the `grammar-check` route, which would be an
   RBAC change and was deliberately not made. The pre-existing 900 ms debounce auto-check in
   `GrammarAssistField.tsx` was also left as-is.
+- PENDING — The grammar engine is now **broad but still rule-gated, not exhaustive** (2026-10-13 update). Sentences the
+  ordered rules can prove are corrected; anything else returns `NO_RELIABLE_CORRECTION` (or `AMBIGUOUS_INPUT` when it is
+  merely similar to a curated sentence) **by design**. Grow coverage by extending the ordered rules and the curated
+  sets in `backend/src/modules/grammar/` (`grammar.rules.ts`, `vocabulary/domain-vocabulary.ts`) and re-running
+  `test:grammar-coverage` + `test:grammar-dataset`; it must never be "completed" by generating a synthetic corpus or by
+  silently substituting a similar sentence. The large `vocabulary/data/*.txt` lists only gate *spelling/vocabulary*, not
+  grammar.
+- PENDING — Missing-verb / missing-auxiliary repair recognises **curated** subject, participle and past-form sets
+  (`grammar.structure.ts`, `grammar.dataset.ts`, `vocabulary/morphology.ts`); extend those and re-run the grammar suites
+  to widen coverage, never with an open-ended "any -ing word" rule (that would misfire on during/morning/building/…). A
+  fragment that is only similar to a curated sentence (below the approximate threshold) still returns
+  `AMBIGUOUS_INPUT` unchanged by design. Known residual gaps (documented as limitations): missing copula
+  (`he able to solve`, `the student good in maths`) and generic `want/need + noun`.
+- PENDING — Whole-sentence approximate matching is intentionally narrow: only curated entries flagged
+  `allowApproximate` whose `wrong`/`right` content-token overlap is ≥ `APPROX_TOPIC_FLOOR` (0.5) participate, so
+  heavily rewritten pairs (`student is not good in communication…`, `he is having arrear…`, `she dont attended…`)
+  correct on an exact match and via rules but not from a merely similar input.
+- PENDING — A sentence typed entirely in capitals skips the whole-sentence dataset path (a short all-caps token may be
+  an official code such as `CSE`/`CGPA`), so it is corrected by the case-insensitive rules only. This is a deliberate
+  conservatism; revisit only with a reliable way to separate emphasis capitals from codes.
 - PENDING — `Editing` remains an unreachable state: there is no begin-edit endpoint that moves an
   APPROVED record into EDITING. Deliberately left; the state exists in the machine for the documented
   workflow but nothing enters it yet.
@@ -2737,6 +5462,45 @@ made.
   CSV) or exports of the official IA sheet, add that as a new task.
 
 ## Verification
+
+> **2026-10-15:** the Record Book PDF now includes uploaded achievement certificates. New suite
+> `test:record-book-certificates` **27/27** (real HTML/CSS → headless-Chromium → pdf-lib renderer, read back with MuPDF):
+> the certificate row is listed, the uploaded PDF's text is reproduced **verbatim** on its own page, an uploaded image is
+> inline at its real dimensions (240×160), the system Student Details Form is listed but never self-embedded, another
+> student's certificate never appears, a file referenced by both stores is listed and reproduced **exactly once**, missing /
+> unsupported / no-file records produce clear distinct reasons (and a lost in-tree file is never mislabelled "administrator
+> repair"), `internal` mode is document-free, and generation is read-only (original file hashes + record fingerprints
+> unchanged). Regressions: `test:record-book-header` **74/74**, `test:certificate-visibility` **22/22**, `test:runtime`
+> **38/38**, `test:document-watermark-runtime` **46/46**, `test:leaderboard` **35/35**, `test:state-machine` **137/137**,
+> `test:security-hardening` **8/8**. Real HTTP path: `GET /api/pdf/student/73152421125?mode=full` 3 → **5 pages** with the
+> certificate listed and its original text reproduced; `mode=mentor-documents` 2 → **4 pages**; live upload→regenerate→delete
+> round trip `.runtime-verify/pdf/probe-live-e2e.mjs` **17/17** (PDF restored byte-identical, file removed, rows restored,
+> leaderboard unchanged). Backend + frontend `tsc --noEmit` exit 0; backend + frontend `npm run build` exit 0.
+
+> **2026-10-13 (later):** the grammar engine was scaled to a modular broad-coverage engine with a licensed vocabulary
+> (`backend/src/modules/grammar/vocabulary/*`) and an optional, OFF-by-default local-model adapter. New suites:
+> `test:grammar-coverage` **1084/1084** (hundreds of varied cases across every supported construction, official-value
+> preservation, already-correct text and unknown/ambiguous text) and `test:grammar-context` **35/35** (real in-process
+> mock Ollama server: off-by-default sends nothing; valid output used; unchanged / value-dropping / commentary /
+> HTTP 500 / malformed / empty / timeout / unreachable all fall back to the deterministic engine; no internals leak).
+> Regressions: `test:grammar-api` **63/63** (real `src/index.ts` boot + real HTTP), `test:grammar-dataset` **85/85**,
+> `test:grammar-safety` **45/45**, `test:grammar` green. `npx tsc --noEmit` and `npm run build` (tsc + `postbuild`
+> vocabulary copy) exit 0. Benchmark `bench:grammar`: lexicon load **~614 ms / ~49.5 MB**, **~3,544 corrections/s**,
+> 2,498-char paragraph **~3 ms** (p95 ~4.6 ms). No local model is installed on this machine, so it is never claimed to
+> be running. No route, RBAC, API-contract or storage change (see Completed).
+
+> **2026-10-13:** the dataset-based grammar engine replaced the inline rule function. A same-day follow-up added the
+> sentence-anchored missing-verb fragment repair. New suite `test:grammar-dataset` (**73/73**; script in
+> `backend/package.json`) plus `test:grammar-safety` **45/45**, `test:grammar-api` **54/54** (real `src/index.ts` boot;
+> exact screenshot input `student not attending class regularly` → `The student is not attending classes regularly.`)
+> and `test:grammar` green; backend `tsc --noEmit`, frontend `tsc --noEmit` and `vite build` all exit 0. No route, RBAC
+> or storage change (see Completed).
+
+> **2026-10-12:** the bulk selection / delete / document-download pass added `test:bulk-actions`
+> (**15/15**, port 5099, temp store) — see Completed. Backend `tsc --noEmit` + `npm run build` and
+> frontend `tsc --noEmit` + `vite build` all exit 0 on that change. The bulk **APIs** were also
+> exercised against the live running backend (5050); the bulk **UI** still needs a headless-browser
+> click pass (see Pending).
 
 Backend and frontend both build clean (`tsc` / `vite build`). All 20 suites, run against the local
 file store (re-run in full on 2026-10-08 after the Placement / Achievement / Leaderboard pass; the
@@ -2767,8 +5531,9 @@ confirmed UI defects fixed — a silent failed login and the toast-driven HOD ma
 | `test:hod-admin` | PASS — 22 passed, 0 failed (Admin HOD Management) |
 | `test:admin-routes` | PASS — 8 passed, 0 failed (Admin dashboard route contract vs the reported 404s) |
 | `test:grammar` | PASS — all grammar engine cases passed |
-| `test:grammar-safety` | PASS — 44 passed, 0 failed |
-| `test:grammar-api` | PASS — 49 passed, 0 failed |
+| `test:grammar-safety` | PASS — 45 passed, 0 failed |
+| `test:grammar-dataset` | PASS — 85 passed, 0 failed (curated exact matches, approximate threshold, ambiguous refusal, no-reliable-correction, punctuation/capitalisation, spelling/SVA/articles/prepositions, missing-verb fragment repair incl. the reported `he not coming tomorrow` → `He is not coming tomorrow.`, singular/plural subjects, existing-auxiliary and reduced-relative guards, meaning preservation, dataset integrity) |
+| `test:grammar-api` | PASS — 63 passed, 0 failed (incl. the exact screenshot fragment `student not attending class regularly` and the reported `he not coming tomorrow` over the real HTTP endpoint) |
 | `test:export` | PASS — overall mentee export 100% green |
 | `test:directory` | PASS — 16 passed, 0 failed |
 | `test:critical` | PASS — all 12 steps, zero data loss across reassignment |
@@ -2783,6 +5548,7 @@ confirmed UI defects fixed — a silent failed login and the toast-driven HOD ma
 | `test:hod-delete` | PASS — 17 passed, 0 failed (Admin-only permanent HOD deletion; port 5117) |
 | `test:document-watermark` | PASS — 44 passed, 0 failed (rendered appearance + genuine background layering; scanned and full-page-background pages both behind) |
 | `test:document-watermark-runtime` | PASS — 46 passed, 0 failed (real upload/preview/download/delete + pre-fix regeneration; served bytes proven behind-layered on every page) |
+| `test:record-book-header` | PASS — 50 passed, 0 failed (repeating KSRCE header on **every** page: a real 7-page / 120-row record book with the header inside the reserved top band and **zero body/header overlap**, correct "Page X of Y", `K S R C E` watermark preserved, the 205×190 logo embedded per page, and all three `?mode=` document types) |
 | `test:principal` | PASS — 53/53 (Principal provisioning/idempotency, forced first-login password change incl. token refresh + stale-token inertness, read-only college-wide dashboard RBAC, explicit student-PDF deny for PRINCIPAL, restart ×3 preservation; ADMIN/HOD unaffected) |
 | `test:security-hardening` | PASS — 8/8 (login throttle 429 + Retry-After, reset on success, per-identity isolation; marks template dept isolation; bulk import persists student + refuses cross-dept rows; **bulk import audit trail**, no secrets in audit rows; JWT source contract; middleware wiring; port 5119) |
 | `test:ai-assistant` | PASS — 47/47 EXIT 0 (Ollama-backed role-aware chat via an in-process mock Ollama — no live host needed: base URL/roles/ownership/context scoping, multi-turn history, provider-failure 500/502/503/504 handling, rate-limit 429, read-only counts unchanged; mock-server port + teardown verified clean) |
@@ -2947,6 +5713,64 @@ drives `setHodStatus` with no `deleteHod` route; `AdminStudentDocuments` viewer 
 
 ---
 
+### Faculty / Mentor directory search — PASS (2026-10-12)
+
+- **Task:** add a client-side search bar to the Faculty Management / Faculty Mentors page and the
+  Mentor Management section, filtering existing records by name, employee ID, email, designation and
+  department, with a match count, a friendly no-results message and a clear (×) reset.
+- **Where:** a Faculty record IS the mentor record in this data model, so one matcher and one
+  interaction pattern cover every surface:
+  - Admin → **Faculty / Mentors** (`frontend/src/pages/admin/AdminDashboard.tsx`, tab `faculty`,
+    "Faculty & Mentor Master") — desktop table + mobile cards.
+  - Admin → **Mentor Assignment Desk** (`AdminDashboard.tsx`, tab `assignment`) — the Admin's
+    mentor-management roster.
+  - HOD → **Department Faculty Mentors** (`frontend/src/pages/hod/HodDashboard.tsx`, tab `faculty`)
+    — the responsive mentor card grid.
+- **Shared matcher:** new `frontend/src/utils/facultySearch.ts` (`facultyMatchesQuery`).
+  Case-insensitive; trims the query; blank/whitespace-only matches everything; partial substrings
+  match (`vish` → `Vishnu`); every whitespace-separated token must appear somewhere in the record's
+  name / employee ID / email / designation / department fields. Callers pass only the list the API
+  already returned, which is role- and department-scoped.
+- **UI:** reused the existing design system (`.card`, `.form-control`, the `Search` icon, navy/gold
+  tokens), `flex-wrap` + `min-width` so it stays usable on desktop/tablet/mobile, `aria-label` on the
+  input and an `aria-live="polite"` "Showing X of Y" count; the × clear button appears only when the
+  field is non-empty. No layout redesign.
+- **Bulk actions stay correct:** on the Admin Faculty / Mentors screen the filtered list drives the
+  header select-all, the sticky `BulkActionBar` (`totalEligible` / `allSelected` / `Select all`) and
+  both the desktop rows and mobile cards; changing the query clears the selection so a bulk delete or
+  download can never act on a hidden row. The backend bulk endpoints are unchanged.
+- **RBAC / department scope:** no server change. Admin searches the college-wide `/admin/faculty`
+  payload; an HOD searches only the server-scoped `/hod/faculty` list, so a client-side filter can
+  never surface a record the backend withheld.
+- **Pagination:** none of these three screens paginates — each loads the whole eligible set in one
+  request — so there is no page state to reset when the query changes; search covers the full set.
+  (The Student Master directory keeps its existing server-side search + pagination and was not
+  touched.)
+- **Verification (actual results):**
+  - Frontend `tsc && vite build` — exit 0 (1684 modules).
+  - Matcher unit checks (exact / partial / email / employee ID / designation / empty / whitespace /
+    multi-token / no-result) — **16/16 PASS**.
+  - Live API (`POST /api/auth/login` as admin → `GET /api/admin/faculty`): **221 real records**.
+    Empty and whitespace queries return every record; a partial name (case-insensitive), an email, an
+    employee ID and a designation each match their owner; every result of the partial query genuinely
+    contains the term in a searched field; a nonsense query returns 0; an Admin token is refused
+    (**403**) by the HOD `/api/hod/faculty` endpoint. All HTTP checks PASS.
+  - Running Vite dev server (3000) already serves the updated modules — `AdminDashboard.tsx`,
+    `HodDashboard.tsx` and `utils/facultySearch.ts` all fetched with the placeholder, the matcher
+    import, `filteredFaculty` / `filteredMentors` and both no-result strings present.
+  - Regressions, isolated temp stores/ports (live 5050/3000 untouched): `test:critical` 12/12,
+    `test:hod` 33/33 (includes the HOD department-scope matrix), `test:bulk-actions` 15/15,
+    `test:admin` 23/23, `test:bulk-upload` 23/23.
+- **Not changed:** Student Master directory, reassignment forms, Student / Faculty / Principal pages,
+    routes, record ids, API endpoints, JSON/DB fields, stored data and business logic. No new
+    dependency, no mock data, no commit/push.
+- **Honest limitation:** the filter is client-side over the already-loaded list (there is no
+  pagination control on these screens to reset), and an interactive browser click-through was not
+  available in this environment; verification is the production build, the matcher unit checks, the
+  live-API filter check, and the running dev server serving the updated modules.
+
+---
+
 ## Important Decisions
 
 1. Fix the actual Render-specific root cause — do **not** paper over it.
@@ -2972,6 +5796,49 @@ drives `setHodStatus` with no `deleteHod` route; `AdminStudentDocuments` viewer 
     is the only thing that should have to change when a real database arrives.
 14. Test suites may never write to `backend/data/` or `backend/storage/uploads/`. Both directories are
     sandboxed, and application modules are imported dynamically so the sandbox is set first.
+15. The grammar engine is **dataset-based, not generative**. It may only apply a stored correction or a
+    deterministic rule; when it cannot prove a correction it returns the original with an explicit status.
+    It must never substitute a similar sentence or invent facts, and it never claims exhaustive coverage.
+16. Official record values are protected by one shared guard (`protected-values.ts`) for both the local engine
+    and any optional external LLM; a suggestion that drops or alters one is discarded, not shown.
+17. Approximate matching requires an explicit per-entry opt-in **and** a similarity threshold; the dataset is
+    grown by adding verified entries, never by generating a synthetic corpus.
+18. The missing-verb repair is **sentence-anchored and list-gated**: only a curated subject at a sentence start, only a
+    curated participle, and it is abandoned when any finite verb/modal follows the participle. It inserts only an
+    article/auxiliary (it never rewrites the clause), so protected values cannot be dropped, and it never pluralises an
+    object outside a clause it actually rebuilt.
+19. The public login page is refined **in place** and kept entirely inside the scoped `.lg-*` block (plus one
+    `aria-busy` attribute) so the shared `.login-*` rules (`ChangePasswordPage`) and every authenticated dashboard are
+    never affected; the auth flow, request format and PWA behaviour must not change, and the campus image must be
+    verified served byte-identical.
+20. The grammar engine stays **deterministic and rule-gated** but is now **modular and broad**: the general
+    vocabulary/spelling layer (`vocabulary/lexicon.ts`) may only *validate* words and offer a single unambiguous,
+    dictionary-and-frequency-backed typo fix — it never drives grammar. The rules live in ordered reusable functions
+    (`grammar.rules.ts`) and may only touch words that are in a curated set.
+21. The large vocabulary is **licensed and verbatim**, never generated or inflated: `dwyl/english-words`
+    `words_alpha.txt` (**The Unlicense**) for the dictionary and `hermitdave/FrequencyWords` `en_50k.txt` (**MIT**) for
+    suggestion ranking, with provenance and SHA-256 in `vocabulary/data/SOURCES.md`. A list with an unclear licence
+    (`first20hours/google-10000-english`) is rejected. A tiny `NON_WORD_ENTRIES` override removes specific archaic
+    entries in memory so the modern spelling can be offered (the file on disk is never edited).
+22. The optional local model is **OFF unless explicitly enabled** (`GRAMMAR_LOCAL_MODEL=true`) and is never required.
+    Its output passes the same `sanitizeLlmOutput` + `preservesProtectedValues` guard as the external provider, and any
+    failure (disabled, unreachable, timeout, HTTP error, malformed, empty, unchanged, or protected-value-dropping)
+    falls back silently to the deterministic engine. The system must never pretend a model is running.
+23. The engine preserves the exact public contract: the five grammar-response keys, the documented status enum and the
+    existing UI/flows (`Improve Grammar`, suggestion card, `Apply Correction` / `Keep Original`), RBAC and the local JSON
+    storage are unchanged. The one-time dictionary load is cached per process and off the request path (warmed at boot).
+24. The login page is aligned to the reference **purely with CSS/JSX inside the `.lg-*` scope** (decision 19 extended):
+    62 / 38 split, uppercase hero title + `WELCOME BACK`, feature descriptions, and clipped gold `.lg-panel-decor` arcs.
+    The decorative layer is *clipped separately* rather than by putting `overflow: hidden` on the panel, so the card's
+    drop shadow is never cut. No auth/PWA/storage/other-dashboard change; the campus image stays byte-identical and is
+    always referenced by its app asset path, never an absolute drive path.
+25. A student's certificates live in **two** existing collections (`StudentDocument` and `StudentProgress`), so any surface
+    that lists or reproduces them reads **both** through one shared collector, and any de-duplication uses the **one** shared
+    stored-file identity rule (`uploaded-file-key.util.ts`). The Record Book PDF uses `collectStudentDocumentArchive` in both
+    renderers; a file referenced by both collections is listed and reproduced **exactly once**. A record with no file attached
+    is still listed and says so plainly — it is never described as a lost file or as needing "administrator repair". The
+    documents archive and its annexures are rendered together or not at all (`internal` mode is marks-only), and the record
+    book never decides or changes a verification status, never re-uploads, and never modifies an original certificate file.
 
 ---
 
@@ -3012,6 +5879,29 @@ drives `setHodStatus` with no `deleteHod` route; `AdminStudentDocuments` viewer 
 
 | Date | Status | Summary |
 |------|--------|---------|
+| 2026-10-15 | PASS | **BUG FIX — uploaded achievement certificates missing from the Official Record Book (PDF).** `GET /api/pdf/student/:id?mode=full\|mentor-documents` printed "0 student-uploaded document(s) on record" and appended no certificate pages. **Root cause:** the record-book collector (`collectRecordBookData`) read only `StudentDocument` — the same collection split as the My Documents bug — and on a real record every `StudentDocument` row is the auto-generated `student_details_form` (listed, never self-embedded), so the actual certificate (a `StudentProgress` row) was neither listed nor attached. The legacy jsPDF fallback had the identical defect. **Fix:** new shared collector `collectStudentDocumentArchive` (`backend/src/modules/pdf/record-book-html.data.ts`) reads **both** collections, adds `source: 'DOCUMENT' \| 'PROGRESS'`, and de-duplicates by one shared stored-file identity rule (`backend/src/utils/uploaded-file-key.util.ts`, now also used by `student-progress.controller.ts`); **both** renderers use it; a record with no file attached gets a clear "no certificate file attached" message instead of the misleading "administrator repair" wording; the annexure cover sheet names the real upload channel; `internal` mode (marks-only) no longer appends document annexures, matching the legacy renderer. No duplicate records, no re-upload, originals untouched. **Points untouched** (leaderboard identical: rank 1 / 5 pts / 1 achievement). **Verified on the real generated PDF:** `mode=full` 3 → **5 pages**, certificate listed + original `adobe.pdf` text **reproduced verbatim** on p5; `mode=mentor-documents` 2 → **4 pages**; live upload→regenerate→delete round trip **17/17** (PDF restored **byte-identical**, file removed, rows restored, points unchanged); new `test:record-book-certificates` **27/27**; `test:record-book-header` 74/74, `test:certificate-visibility` 22/22, `test:runtime` 38/38, `test:document-watermark-runtime` 46/46, `test:leaderboard` 35/35, `test:state-machine` 137/137, `test:security-hardening` 8/8; backend + frontend `tsc` clean; backend + frontend `npm run build` exit 0. Harnesses `.runtime-verify/pdf/{repro,dump,probe-live-e2e}.mjs`. Branch `temp`, uncommitted. |
+| 2026-10-15 | PASS | **BUG FIX — Achievement Leaderboard "Something Went Wrong" (Rules-of-Hooks violation).** The shared `LeaderboardView` rendered the KSRCE error boundary while `/api/leaderboard` returned 200, because the perf-optimisation pass added a `useMemo` **after** the `if (error)` / `if (!data) return <LeaderboardSkeleton/>` early returns, so the hook count changed between the loading render (5 hooks) and the loaded render (6) → `Rendered more hooks than during the previous render. at LeaderboardView (…:244)`. **Fix (`frontend/src/components/leaderboard/LeaderboardView.tsx` only):** hoisted `entries` + the `derived = useMemo(…)` block above both early returns, made it null-safe (`data?.entries ?? []`, `(data?.verifiedAchievements ?? 0) > 0`, `data?.me ? … : null`), removed the duplicate, added an explanatory comment. Audited all 9 other `useMemo` sites — all already before their early returns (`HodDashboard` documents it), so no other page affected. **Verified:** pre-fix reproduced in a real browser (headless Chrome/CDP, dev 3000 → backend 5050, student `73152421125`); post-fix **8/8 PASS** (`.lb-root`, hero "Achievement Leaderboard", 157 students in scope, 0 error-boundary, 0 exceptions, 0 console errors); `test:leaderboard` 35/35; frontend `tsc --noEmit` exit 0; `vite build` exit 0. Harness `.runtime-verify/achv/verify.mjs`. Branch `temp`, uncommitted. |
+| 2026-10-15 | PASS | **Login page — reference-match pass (64/36 · 420 px card · `OR` separator).** Matched the written reference spec. Reference photo `A:\movies\K.S.R.C.E. Campus at Twilight.png` verified **byte-identical** (SHA-256) to the existing `frontend/public/assets/ksrce-campus-twilight.png` (already referenced by CSS; no duplicate created). `index.css` (`.lg-*` only): `.lg-page` grid `62/38 → 64/36`; `.lg-card` `max-width` `440 → 420 px`; new `.lg-or-sep`/`.lg-or-line`/`.lg-or-text` (`OR` rule); tightened card rhythm (head 1.6→1.4, college 0.9→0.8, divider 1/0.8→0.85/0.7, form-group 1.15→1.05, pwa-row 1.15→0.9, foot 1.25/1→1.05/0.9 rem). `LoginPage.tsx`: added the `OR` separator above the conditional PWA button. Copy already matched the spec verbatim; no remember-me/forgot-password added (no real functionality). **Unchanged:** API/payload/fields/errors, `useAuth`/session/role redirects, password toggle, PWA install, campus asset, other pages; `.login-*` untouched; no dependency. **Verified on the running app** (3000 + real 5050) in headless Chrome at **1490×810**: split **64/36** (954/536), card **420×682** centred Δ0, hero left x=48, gaps 88/28/29/88 px, heading 31.2 px, lead 3 balanced lines (317/294/362), four 36×36 icons; 1440×900 → 922/518 card 420×681; 1024×768 → 655/369 card 313×695; 390/320 stacked with no horizontal overflow; campus `200` (2,580,028 B) + logo `200`; toggle / wrong-password alert / successful login / PWA all work; **0 console errors/exceptions** (only the expected 401); `tsc --noEmit` + `vite build` exit 0 (CSS 138.91 kB). **No image input in this environment → the attached screenshot could not be viewed/pixel-diffed**; matched to the spec's stated text + dimensions and validated via computed styles, element geometry and sharp pixel stats. Branch `temp`, uncommitted, no commit/push. |
+| 2026-10-15 | PASS | **Login page — hero refinement (smaller headline · balanced lead · feature contrast).** Focused second pass on the left hero only; right card untouched. `index.css` (`.lg-*` only): `.lg-hero-title` desktop `clamp(1.42rem,2.3vw,1.95rem)` (33.6→31.2 px) / tablet `clamp(1.28rem,2vw,1.72rem)` (22.02→20.48 px); `.lg-hero-text` `margin-top` `clamp(1.75rem,3.4vh,2.4rem)` (gap 25→31 px) and `max-width` `min(40ch,100%)` (52→40ch) giving **three balanced lines** (317/294/362 px); `.lg-brand-body::before` scrim widened `radial-gradient(150% 125% at 0% 52%, rgba(6,27,54,.66) …)` for feature contrast. `LoginPage.tsx` untouched. **Unchanged:** login API/payload/fields/errors, `useAuth`/session/role redirects, password toggle, PWA install, campus asset, card 440×670 centred, other pages; `.login-*` untouched; no dependency; no hardcoded credentials. **Verified on the running app** (3000 + real auth 5050) in headless Chrome via CDP: 1440 headline 31.2 px/4 lines/lh 37.44, lead 3 lines @383.6, gaps 130/31/32/129 px, icons 36×36 @x46 titles @x96, card Δ≤1; 1024 headline 20.48 px, lead 3 lines @353.3, gaps 106/28/26/106, icons @x32, card Δ0; 390/320 stacked no horizontal overflow + vertical scroll (docH 944/992); campus photo + logo `200`; gold line fits 280→1440 px; toggle / wrong-password alert / successful login / PWA all work; **0 console errors/exceptions** (only the expected 401); `tsc --noEmit` + `vite build` exit 0 (CSS 138.62 kB). Screenshots can't be visually inspected here (no image input) → validated via computed styles + geometry + sharp pixel stats. Branch `temp`, uncommitted, no commit/push. |
+| 2026-10-15 | PASS | **Login page — final UI polish (hero alignment · spacing · panel cleanup).** In-place refinement of the split-screen login. `LoginPage.tsx`: crest + hero copy + feature list + bottom tagline wrapped in one shared `<div className="lg-brand-inner">`; the `.lg-panel-decor` span removed. `index.css` (`.lg-*` only): new `.lg-brand-inner` (single left edge + one space-between rhythm); `.lg-brand` background-position `46% 42%` (tablet `46% 44%`, mobile `46% 56%`) chosen from a sharp pixel profile of the 1672×941 campus photo (building structure left/mid, sunset centre-right); lighter `.lg-brand-veil` (left 0.84→0.72) so the image is less darkened; heading `line-height` 1.16→1.2, heading→paragraph gap 17→25 px, paragraph→features 27→33 px, feature-row gap 15.3→17.1 px; `.lg-panel-decor` + `::before`/`::after` deleted so the panel is only the smooth deep-navy → midnight gradient. **Unchanged:** login API/payload/fields/errors, `useAuth`/session/role redirects, password toggle, PWA install, campus asset, every other page; `.login-*` (`ChangePasswordPage`) untouched; no dependency; no hardcoded credentials. **Verified on the running app** (3000 + real auth 5050) in headless Chrome via CDP: hero left edge x=46/32/18 (1440/1024/stacked); gaps 25 px / 33 px; 4 headline lines identical size+line-height, `MENTOR–MENTEE` gold + nowrap; 4 icons 36×36 same x, text column x 96/82; `.lg-panel-decor` gone; card 440×670 centred (delta ≤1 px); 62/38 at 1440 & 1024; no horizontal overflow at 1440/1024/768/390/320; short screens scroll vertically; hero-region mean R 65→71, text background luminance 38–53, sunset band ~132; toggle password→text→password; wrong → `Invalid username or password.`; correct (`Ksrce@admin` / `Ksrce@1234`) → token + app shell + sidebar; **0 console errors/exceptions** (only the expected 401); `tsc --noEmit` + `vite build` exit 0 (CSS 138.62 kB); asset `200 image/png` 2,580,028 B. Screenshots can't be visually inspected here (no image input) → validated via computed styles + sharp pixel stats. Branch `temp`, uncommitted, no commit/push. |
+| 2026-10-15 | PASS | **Login page — right-panel premium navy + left-hero alignment fix.** Follow-up to the split-screen redesign, fixing (a) the faint/translucent right panel — the page gradient showed through the transparent `.lg-panel` and two oversized decorative circles/borders crowded the card — and (b) the left hero's inconsistent alignment/spacing. `frontend/src/styles/index.css` (`.lg-*` block only): `.lg-panel` now paints a full deep-navy → midnight gradient edge-to-edge (`162deg #0d2a4d → #0a2342 → #061b36 → #04101f`, radial top-right blue lift + faint bottom-left gold bloom); `.lg-panel-decor` reduced to one soft gold radial bloom + a mask-faded dot grid (oversized circles gone); `.lg-card` border `rgba(245,189,53,.42)`, radius 20 px, layered navy shadow; `.lg-hero-title-v2` four `.lg-hero-line` blocks on one left edge/line-height; `.lg-hero-accent` gold + `nowrap`; paragraph `max-width: min(52ch,100%)`; `.lg-feature-icon` 36×36 with a fixed gap; `EMPOWERING FUTURE ENGINEERS` bottom-left; `min-height: 100dvh` + safe-area padding + `overflow-x: clip`; one-column stack ≤960px. `LoginPage.tsx`: the whole `MENTOR–MENTEE` line is gold. **Unchanged:** login API/payload/fields/errors, `useAuth`/session/role redirects, password toggle, PWA install, campus asset, every other dashboard; no dependency; no hardcoded credentials. **Verified on the running app** (3000 + real auth 5050) in headless Chrome via CDP: 62/38 at 1440 & 1024; panel `rgb(6,27,54)` + gradient with navy corners (13,42,77)/(32,62,90)/(4,16,31); card 440×670 centred on the panel centre (x 946–1386, y 115–785) with white samples; `MENTOR–MENTEE` `rgb(245,189,53)`; all hero lines share one left x + line-height (38.98 px @ 33.6 px); feature icons 36×36 with a consistent text x; no horizontal overflow at 1440/1024/768/390/320; toggle password→text; wrong → `Invalid username or password.`; correct (`Ksrce@admin` / `Ksrce@1234`) → token + app shell; real API 401 / 200 (ADMIN + token); **0 console errors**; `tsc --noEmit` + `vite build` exit 0 (CSS 139.08 kB). Screenshots can't be visually inspected here (no image input) → validated via computed styles + pixel stats. Branch `temp`, uncommitted, no commit/push. |
+| 2026-10-14 | PASS | **Login page — premium redesign aligned to the latest navy/gold reference.** Refined the existing premium login page in place to match the specified reference. `frontend/src/pages/auth/LoginPage.tsx`: each `FEATURE_HIGHLIGHTS` entry gained a short `description` (icon + title + description rendered per row) and the sign-in panel gained a `<span className="lg-panel-decor">`. `frontend/src/styles/index.css` (scoped `.lg-*` block only): split moved to `flex: 1 1 62%` (brand) / `38%` (panel); `.lg-hero-title` now `text-transform: uppercase` (letter-spacing + adjusted clamp/`max-width`) with the `Mentor–Mentee` span still gold; `.lg-title` (`Welcome Back`) uppercase; new `.lg-feature-text`/`.lg-feature-desc` styles + a larger `.lg-feature-icon`; new clipped `.lg-panel-decor::before/::after` gold arcs (`rgba(245,189,53,.11)`/`.07`); `.lg-card { z-index: 1 }`. Campus image kept (`/assets/ksrce-campus-login.png`, unchanged, 2 728 283 B, byte-identical to the supplied `A:\movies\eb72e87c-…png`), referenced via the app asset path. **Unchanged:** login API (`POST /api/auth/login` shape/errors), `useAuth`/session/role redirects, validation/errors, password show/hide, loading/disabled states, PWA install (`!isInstalled` + `promptInstall`, never simulated), storage, every other dashboard; `.lg-*` is the only selector family touched (`.login-*` reused by `ChangePasswordPage` untouched); no dependency; no hardcoded credentials. **Verified on the running app** (dev server 3000 + real auth 5050) in headless Chrome via CDP: brand **62 %**/panel **38 %** at 1440 & 1024; `.lg-hero-title` computed `text-transform: uppercase` (35.2/23.55/20.48 px desktop/tablet/mobile) with gold `rgb(245,189,53)` span; 4 feature rows each with icon + title + description; card border `1px rgba(245,189,53,.32)`, radius 20 px; primary navy gradient `#13315c→#071526` + gold border + arrow; campus image loaded natural **1 672 × 941** with left-panel pixels mean luminance ≈ **66–77** (building band ≈ 3.7 % near-black → clearly visible); **no horizontal overflow** at 1440/1024/390; password toggle `password→text→password`; invalid login → `Invalid username or password.`; valid login → `ksrce_token` + dashboard; **0 console errors**; `tsc && vite build` **exit 0**. Screenshots captured but **not** visually reviewed (no image input in this environment). Branch `temp`, uncommitted. |
+| 2026-10-13 | PASS | **Grammar engine — missing-auxiliary repair covers `coming` (`he not coming tomorrow`).** Reported from the running Mentoring form: `he not coming tomorrow` produced `He not coming tomorrow.` (only capitalised/punctuated, auxiliary missing). **Root cause:** the repair is curated/list-gated — `fixMissingAuxiliaryVerbs` matches only a curated subject, optional `not`, a curated participle (`MISSING_AUX_GERUNDS`) and the clause tail, only at a sentence start — and `coming` was absent from `MISSING_AUX_GERUNDS`, so the clause never matched and fell through to the mechanical capitalisation + terminal-punctuation step. The rule order in `grammar.service.ts` (word corrections → `fixMissingAuxiliaryVerbs` → `PHRASE_RULES` → capitalisation/punctuation) was already correct. **Fix:** added `coming` plus a curated group of other unambiguous action participles (`going`, `talking`, `asking`, `telling`, `bringing`, `waiting`, `looking`, `watching`, `visiting`, `leaving`, `arriving`, `sending`, `eating`, `drinking`, `walking`, `sitting`, `standing`, `wearing`, `paying`; noun/adjective `-ing` words such as morning/evening/meeting/building stay excluded) in `grammar.dataset.ts`, and in `grammar.structure.ts` restricted the object-plural normalisation (`MISSING_AUX_OBJECT_PLURALS`) to a clause that continues past the bare object, so a bare `she not attending class` → `She is not attending class.` while `student not attending class regularly` → `The student is not attending classes regularly.` is preserved. **Results:** `he not coming tomorrow` → `He is not coming tomorrow.`; `student not coming tomorrow` → `The student is not coming tomorrow.`; `they not submitting assignments` → `They are not submitting assignments.`; `He is not coming tomorrow.` unchanged; reduced relatives (`Students coming late should report to the mentor.`) untouched; protected values never altered (tail copied verbatim). **Tests:** `test:grammar-dataset` **85/85** (added the reported case + siblings, singular/plural subjects, existing auxiliaries, reduced-relative/ambiguous, punctuation variants), `test:grammar-safety` **45/45**, `test:grammar-api` **63/63** (exact reported input + siblings + already-correct driven over the real `src/index.ts` as a real mentor), `test:grammar` green, backend `tsc` + frontend `vite build` exit 0. **Live:** via the frontend dev proxy (`/api/mentor/grammar-check`, the route `GrammarAssistField` calls) the running server returns the corrected output for the exact reported input. Branch `temp`, uncommitted. |
+| 2026-10-13 | PASS | **Login page — premium polish pass (in place).** Refined the existing navy/gold `pages/auth/LoginPage.tsx` + its scoped `.lg-*` CSS block without rebuilding: **campus image visibility** restored by replacing the heavy veil (left `0.97`/`0.9`, vertical `0.72→0.88`) with a *localised* radial scrim behind the copy (≤`0.6`) plus lighter diagonal/vertical washes (`0.78→0.3`, `0.55→0.68`), with stronger text-shadow keeping white text readable; crop `object-position: center 42%`; **crest** badge 54→52 px, name 1.0 rem, gold sub; **typography** hero `clamp(1.65rem,2.9vw,2.45rem)`/`1.17`/`21ch`, body `rgba(233,239,247,.95)`/`1.72`; **card** padding `2.4/2.15/1.8 rem`, `max-width 440px`, radius 20 px, softer gold border + 3-layer shadow (inset highlight); **fields** `min-height 50px` with a gold `3px rgba(245,189,53,.28)` ring on a navy border (`:focus` + `:focus-visible`), label gap `.42rem`, password toggle **38×38**; **Sign In** `52px` navy gradient, brighter hover + lift, gold focus ring, explicit `disabled`/`btn-loading` (spinner re-centred, global class reused); **PWA button** kept secondary-but-accessible (softer border, ≥44 px); **decoration** grid `0.65→0.4`, arcs `0.18→0.13`/`0.1→0.07`; **responsive** compact banner (`208px`, `184px` ≤480), stacked card `max-width 460px`, **100 % full-width at ≤480**, `overflow-x: hidden` kept; `aria-busy` on submit. **Unchanged:** auth (`useAuth`, `POST /api/auth/login` shape/errors/role redirects), PWA install, show/hide password, storage, all other dashboards; no dependency, no hardcoded credentials. **Verified live:** `3000` → 200; `/assets/ksrce-campus-login.png` → 200 `image/png` **2 728 283 B** byte-identical; served CSS contains the new rules; `POST /api/auth/login` via proxy → **200 (ADMIN + token)** and wrong password → **401**; `tsc && vite build` **exit 0**. No browser tool available → visual layout validated by the scoped breakpoints + compile, not screenshots. Branch `temp`, uncommitted. |
+| 2026-10-13 | PASS | **Grammar engine — missing-verb fragment repair.** Reported: `student not attending class regularly` produced only `Student not attending class regularly.` (capitalised + punctuated, still missing the article + auxiliary). **Root cause:** the deterministic pipeline had only word/phrase substitutions — no rule understood *subject + `not` + participle* (or *subject + participle*, e.g. `student facing difficulty in mathematics`), so the clause fell through to the mechanical capitalisation + terminal-punctuation step; no curated exact/approximate entry covered it. **Fix:** new `backend/src/modules/grammar/grammar.structure.ts` (`fixMissingAuxiliaryVerbs`) run from `grammar.service.ts` after word corrections and before `PHRASE_RULES`. It matches only at a sentence start (string start / after `.!?`), an optional `the`, a curated subject (`MISSING_AUX_SUBJECTS`), an optional `not`, a curated participle (`MISSING_AUX_GERUNDS` — explicit so during/morning/building/… are never mistaken for verbs) and the rest of the clause; inserts the article/auxiliary (`The student is …`, `He is …`, `They are …`), copies the remainder through byte-for-byte, and pluralises a small curated set of singular objects (`attending class → attending classes`) only inside a clause it actually rebuilt. **Safety:** any curated finite verb/modal (`FINITE_VERB_MARKERS`) after the participle means a reduced relative (`Students facing difficulty should approach the mentor.`) and the clause is left untouched; a subject already followed by an auxiliary (`student is attending …`) never matches. **Tests:** new "Missing auxiliary verb (fragment) repair" section in `dataset-grammar.test.ts` (four target patterns → `The student is not attending classes regularly.` / `He is not attending classes regularly.` / `She is not submitting assignments.` / `The student is facing difficulty in mathematics.`, plural-subject `are`, already-correct + reduced-relative guards, protected values after the participle, dataset integrity) and a full-stack case in `grammar-api.test.ts` posting the exact screenshot input to `POST /api/mentor/grammar-check`. **Verification:** `test:grammar-dataset` **73/73**, `test:grammar-safety` **45/45**, `test:grammar-api` **54/54** (real `src/index.ts` boot; exact input returns `corrected = "The student is not attending classes regularly."`, `status = RULES_APPLIED`, `hasCorrections = true`, nothing persisted until Apply Correction), `test:grammar` green; backend `tsc --noEmit` exit 0; frontend `tsc --noEmit` + `vite build` exit 0. No route/RBAC/storage/API-shape change. Branch `temp`, uncommitted. |
+| 2026-10-13 | PASS | **Dataset-based grammar engine — deterministic, conservative, extensible (no external AI required).** Extracted the writing assistant's correction engine out of the inline `runRuleBasedGrammarEngine` in `modules/counselling/ai-assistant.service.ts` into a new modular package `backend/src/modules/grammar/`: `grammar.dataset.ts` (`EXACT_CORRECTIONS` curated whole sentences — only pairs with ≥ 0.5 content-token overlap flag `allowApproximate` — extensible `WORD_CORRECTIONS` misspelling/proper-noun dictionary, ordered `PHRASE_RULES` for contraction spelling / subject–verb agreement / bare infinitive / pluralisation / articles / fixed prepositions / structural errors / spacing, and thresholds `APPROX_MATCH_THRESHOLD` 0.9, `AMBIGUOUS_THRESHOLD` 0.7, `APPROX_TOPIC_FLOOR` 0.5), `grammar.normalize.ts` (matching-only `normalizeForMatching`, `tokenize`/`contentTokens`, `tokenSetSimilarity`, `levenshtein`/`similarityRatio`), `protected-values.ts` (`extractProtectedValues`/`preservesProtectedValues`/`isOfficialToken`, shared with the optional LLM path) and `grammar.service.ts` (`correctText` orchestrator). **Pipeline:** exact → similarity-gated approximate (0.9, curated opt-in, same-topic pair required) → word dictionary (official-code tokens skipped) → ordered phrase rules → safe capitalisation/terminal punctuation; if nothing reliable changes, the text is returned **verbatim**. **Status contract added** to the response: `EXACT_MATCH` / `APPROXIMATE_MATCH` / `RULES_APPLIED` / `NO_RELIABLE_CORRECTION` / `AMBIGUOUS_INPUT` / `EXTERNAL_AI`; a close-but-unsafe match returns the original with `AMBIGUOUS_INPUT` rather than a guessed rewrite, so no similar sentence is ever substituted and no fact is fabricated. Wiring: `ai-assistant.service.ts` delegates to `correctText` and re-exports the guard (public surface unchanged); `counselling.controller.ts` returns `status`; frontend `client.ts` `checkGrammar` type + `GrammarAssistField.tsx` show a status-driven message ("No reliable correction found" / "Text is ambiguous — kept exactly as you typed it") and still replace the field **only after Apply Correction**. **No** route/RBAC/storage/workflow change. **Verified (actual):** new `test:grammar-dataset` **59/59** (exact pairs, case/whitespace/punctuation tolerance, approximate threshold, ambiguous refusal, clean sentence → `NO_RELIABLE_CORRECTION`, blank input, punctuation, capitalisation, spelling/SVA/articles/prepositions, meaning preservation incl. names/register numbers/subject codes/CGPA/dates and no invented numbers, determinism, dataset integrity); `test:grammar-safety` **45/45**; `test:grammar-api` **49/49**; `test:grammar` green; backend `tsc --noEmit` exit 0; frontend `tsc --noEmit` + `vite build` exit 0. Three real issues found and fixed while verifying (approximate topic floor excluded three same-topic pairs; an integrity assertion flagged intentional proper-noun capitalisation; an all-caps test expectation). Branch `temp`, uncommitted — no commit/push. |
+| 2026-10-13 | PASS | **Premium login page redesign — campus-photo hero + navy/gold sign-in card.** Rebuilt `pages/auth/LoginPage.tsx` into a full-screen 60/40 split: a campus **branding panel** (the supplied photo `A:\movies\eb72e87c-e8c7-44b1-9a40-baa0134bc3ab.png` copied verbatim to `frontend/public/assets/ksrce-campus-login.png`, 2 728 283 B / 1 672 × 941, source preserved; rendered `object-fit: cover` under a navy veil + bottom gradient so the building/entrance stay visible; dotted-grid texture; curved gold arcs; crest + college name/`Autonomous • Tiruchengode`; gold-accented `Digital Mentor–Mentee Management System`; supporting sentence; four `lucide-react` feature highlights — Mentor & Mentee Management, Academic Records & Analytics, Placement Monitoring & Achievements, Department & Institution Insights; `Empowering Future Engineers` footer) beside a **sign-in panel** with a compact white card (gold border + top accent, college logo/name/system title, `Welcome Back`, the preserved form, the retained `Download / Install KSRCE Web App` button, `Permanent Academic Records System / Secured Institutional Access • K.S.R. College of Engineering` footer). **Palette** `#061B36` / `#0A2342` / `#F5BD35`, scoped to a new `.lg-*` block in `styles/index.css` (the existing `.login-*` rules are kept untouched because `ChangePasswordPage.tsx` reuses them) with desktop/tablet(961–1180)/stacked(≤960)/mobile(≤480) rules + `prefers-reduced-motion`. **Unchanged:** form, validation, error display, show/hide password, loading, PWA install, every API/route/session/auth rule (no Remember-Me / Forgot-Password existed → none invented; no credentials hardcoded); no dashboard touched. **Verified:** asset exists & served (`HEAD /assets/ksrce-campus-login.png` → 200 image/png, 2 728 283 B; copied into `dist/`); no absolute path in code/bundle (only `/assets/ksrce-campus-login.png`, one ref); live dev server 3000 headless Chrome `--dump-dom` shows all redesign nodes; screenshots 1440×900 = 69.4% navy + 0.45% gold + 18.4% white card (panel edge `(4,22,44)`, card `(251,251,251)`, photo σ≈61), 1024×768 two-column, 390×844 stacked banner+card; real `POST /api/auth/login` 200 (ADMIN) / 401 wrong-password; frontend `tsc` + `vite build` exit 0; `test:critical` 12/12. Branch `temp`, uncommitted. |
+| 2026-10-12 | PASS | **Faculty / Mentor directory search — Faculty & Mentor Master + Mentor Assignment Desk (Admin) + Department Faculty Mentors (HOD).** Client-side search bar added to all three screens, filtering the already-loaded, role-scoped list by name / employee ID / email / designation / department. Shared matcher `frontend/src/utils/facultySearch.ts` (`facultyMatchesQuery`): case-insensitive, trims, blank = all, partial substrings, AND across whitespace tokens. Reused `.card` + `.form-control` + the `Search` icon, responsive, `aria-live` "Showing X of Y", a × clear button, and "No matching faculty found" / "No matching mentors found" states. The Admin filtered list drives the header select-all, the sticky `BulkActionBar` (totalEligible / allSelected / Select all) and both table + mobile cards; changing the query clears the selection so bulk delete/download cannot touch a hidden row. HOD searches only the server-scoped `/hod/faculty` list (Admin token → 403). No route/id/endpoint/field/data/business change; no dependency; these screens have no pagination to reset (documented). **Verified:** frontend `tsc && vite build` exit 0; matcher unit 16/16; live API `/admin/faculty` returned **221** real records — empty/whitespace = all, partial name (case-insensitive), email, employee id, designation all match, every partial hit contains the term, nonsense = 0, HOD endpoint refuses Admin (403); dev server 3000 serves all updated modules; regressions `test:critical` 12/12, `test:hod` 33/33, `test:bulk-actions` 15/15, `test:admin` 23/23, `test:bulk-upload` 23/23. Uncommitted (branch `temp`). |
+| 2026-10-12 | PASS | **User-facing "Counselling" → "Mentoring" — remaining labels cleared.** A previous UI update set the user-facing term to **Mentoring** but left many visible labels; the mixed case was the mentor mentee-profile view (card foot `5-Domain Mentoring Records` vs tab `6. Counselling`). Replaced every remaining user-visible mentoring-workflow occurrence with **Mentoring**: sidebar (`Counselling Records`, `5-Domain Counselling`, student `Mentoring & Counselling` → `Mentoring History`), mentor profile view (tab, `Counselling Sessions` card + aria-label, `Mentee Counselling Records & Dossier`, record `Mentoring Date`, `Edit Counselling Record`, empty state, add/edit modal title/subtitle + `Mentoring Date`/`Mentoring Category` field labels and validation), faculty dashboard (`Add/Pending/Recent Counselling`, `5-Domain Counselling`, record table, `Open Counselling Desk`, quick-add modal), `CounsellingCategorySelect`, Admin hub (`Counselling Sessions`, `Institutional 5-Domain Counselling Hub`, `Student Counselling Directory`, `Counselling Action`, `View Student Counselling`), HOD faculty detail (`Counselling History`, `Counselling records`, `Last Counselling`, `Counselling provided`), Principal KPI hint/table/note + activity/charts copy, HOD empty copy, Student `5-Domain Counselling & Mentoring History` + card + PDF copy, AI prompts and login tagline. **Kept intentionally:** the unrelated `Counselling (Govt Quota)` admission option (StudentDashboard + CompleteProfileWizard + mentor admission display), all internal identifiers (tab keys, `/counselling/*`, `counselling*` fields, `CounsellingRecord`, component/type names, comments) and backend/PDF text. Display-only — no route/id/endpoint/field/data/business change. **Verified:** frontend `tsc` + `vite build` exit 0; the compiled bundle contains **only** the two `Counselling (Govt Quota)` strings and all renamed labels; the running Vite dev server (3000) already serves the updated sidebar module. Branch `temp`, uncommitted. Headless-browser click pass not run. |
+| 2026-10-12 | PASS | **Faculty Mentor Cards + click-through detail — HOD "Department Faculty Mentors".** Replaced the HOD faculty **table** with responsive **cards** (`components/faculty/FacultyMentorCard.tsx`, new) — name, employee ID, email, designation, department, cabin, contact (when present), current mentee count, coverage % and active/inactive badge, plus the existing **View Details** / **Edit** actions and the **Add Faculty** button; 3 / 2 / 1 columns (≤1180px / ≤700px) with loading, empty and error states, no hardcoded data. Card root is `role="button"` + `tabIndex=0` (Enter/Space) and inner actions `stopPropagation()` so **Edit never also opens the detail**. A card or **View Details** opens one wide `Modal` (`components/faculty/FacultyDetailView.tsx`, new) with tabs **Overview / Mentees / Counselling History / Meetings / Documents / Assignment History**, each backed by real dept-scoped records and a clear empty state; the Mentees tab can open a mentee's existing student page. **Backend:** extended the existing `getMentorDetail` (`GET /api/hod/mentor/:mentorId`, `modules/hod/hod.controller.ts`) — no new routes — with dept-scoped `assignments` (ACTIVE **and** historical `MentorAssignment` rows for that mentor, `isCurrent`/status/reason/dates), `counselling` (records authored by `mentor === mentorId`, incl. pre-reassignment history), `meetings` (that mentor's meetings) and `documents` (`StudentDocument` metadata for the current mentees; bytes via the existing authenticated view/download endpoints). Relationships keyed by stable ids, never names; current vs historical by status; reassigned students not duplicated; foreign-department mentor id → 404. New types in `api/client.ts`; scoped `faculty-*` CSS appended to `styles/index.css`. **Verified in a real headless browser** (`backend/.runtime-verify/faculty-cards-browser.mts`, scratch, real backend + built SPA via CDP) **34/34 PASS**: cards replace the table (old "Emp ID" header gone), real card facts + coverage, 3/2/1 columns, correct faculty opens, all six tabs, Mentees = current only (reassigned excluded), Counselling = this mentor's own records (incl. a pre-reassignment one) and not another's, Meetings/Documents real, Assignment History current + historical with reason, document preview GET 200, no-mentee empty state, Edit independent of card click, keyboard Enter, mentee → student page, foreign faculty excluded / foreign mentor 404, zero page JS errors. Backend `tsc --noEmit` + `npm run build` clean; frontend `tsc --noEmit` + `npm run build` clean; `test:hod` 33/33, `test:critical` 12/12, `test:bulk-actions` 15/15. Branch `temp`, uncommitted; no commit/push. |
+| 2026-10-12 | PASS | **Bulk selection · bulk delete · bulk document · bulk document (ZIP) download — Student Master + Faculty / Mentors.** Added multi-row selection (header select-all = current page, per-row, live count, selected rows tinted + gold rail, sticky action bar) keyed by **record id** so it survives pagination/refresh and is cleared when the filter set or tab changes. **Backend:** `services/bulk-documents.service.ts` (jszip archive `Bulk_Documents_YYYY-MM-DD.zip` → `Students/Name_ID/`, collision-safe `safeSegment`/`safeFileName`/`uniqueName`, `manifest.csv`, bounds `BULK_DOCUMENT_LIMITS` 200 records / 250 MB / 100-char names); `modules/students/student-bulk.controller.ts` (`GET /students/selection/ids`, `POST /students/bulk-delete`, `POST /students/bulk-documents`); `modules/admin/faculty-bulk.controller.ts` (`GET /admin/faculty/selection/ids`, `POST /admin/faculty/bulk-delete`, `POST /admin/faculty/bulk-documents` → explicit "no documents available" JSON since there is no faculty document store). Routes `authorize(ADMIN, HOD)` **and** re-checked in every handler; HOD scope = own department, ADMIN unrestricted. Bulk delete validates every id, reuses the real cascade (extracted `cascadeDeleteStudent` / `cascadeDeleteFaculty`, single deletes refactored to call them) and returns per-record `{requested, deleted, failed}`. Downloads resolve the served path through the existing **watermarked-copy** policy (`resolveServedDocumentPath`) and never touch originals; zero eligible docs → HTTP 200 JSON `{hasDocuments:false, missing:[…]}` (no empty ZIP). **Latent bug fixed:** the original `deleteStudent` cascade deleted `StudentDocument` by `student`, but the model keys its owner as `studentId`, so document metadata was silently orphaned — now `{ studentId }` on both paths (files on disk still untouched, per existing policy). **Frontend:** typed `BulkDeleteOutcome`/`BulkDownloadResult` + `bulkDownloadDocuments()` in `api/client.ts`; new `hooks/useRowSelection.ts`, `components/bulk/{BulkActionBar,BulkDeleteModal,SelectionCheckbox}.tsx`; `AdminDashboard.tsx` header + per-row checkboxes on both desktop tables and both mobile card lists, bulk bar on each tab, selection cleared on filter/tab change, buttons disabled while busy, success/partial/no-docs toasts; scoped `bulk-*` CSS in `index.css` (responsive ≤640px). **Verified on the running app (live 5050):** selection ids 128 students / 1 faculty; `?search=` scoping exact; real ZIP 135 743 B `application/zip` → `Students/Vishnuvarthan P_73152421125/Student Details Form.pdf` + root `manifest.csv` (matching row); non-existent id → `hasDocuments:false`; faculty → no-documents JSON; empty ids → 400; bulk-delete with 2 non-existent ids → `deleted=0 failed=2` per-record reasons. New suite `test:bulk-actions` **15/15** (port 5099, temp store). Backend `tsc --noEmit` + `npm run build` and frontend `tsc --noEmit` + `vite build` all exit 0. Limitation: bulk UI build-verified but not yet click-verified in a headless browser (see Pending). Branch `temp`, uncommitted. |
+| 2026-10-12 | FIXED | **Student record book — two headings removed from the generated PDF and their blank space reclaimed.** Removed `INSTITUTIONAL VERIFICATION & DIGITAL ENDORSEMENT` (the signature heading) and `OFFICIAL DIGITAL MENTOR–MENTEE RECORD BOOK` (the full-mode document title) from every site that emitted them **into the PDF**, not just the preview. **Sites:** `record-book-html.service.ts` — the `.sigheading` div in `signatureBlockHtml()` and the pdf-lib `drawText` in `stampPageFurniture` (y≈49 mm) for the signature heading; `docTitleFor('full')` now returns `''` and `stampPageFurniture` skips an empty title line; `pdf.service.ts` jsPDF fallback — the `INSTITUTIONAL VERIFICATION…` text + its 12 mm gap, and the full-mode `docTitle`. **`internal`/`mentor-documents` deliberately unchanged** — their own titles (`OFFICIAL INTERNAL ASSESSMENT REPORT`, `MENTORING RECORDS & DOCUMENT ARCHIVE`) still print on every page (asserted). **Blank reclamation:** added `headerBandMm(mode)`/`headerRuleMm(mode)`; `PRINT_CSS` → `printCss(topMm)` (watermark shift derived from the band so the mark stays centred); the full book's top band shrinks **35 → 31.5 mm** and divider **30.6 → 28.4 mm** so the removed title leaves no gap (titled modes keep 35/30.6); signature reserve `margin-top` **16 → 9 mm** (heading + its 12 mm margin gone) so a full final page holds more content. `StudentDocument.renderVersion` bumped to `2026-10-12-removed-headings` → stale stored Student Details Form regenerates in place. **Verified on the real HTTP path** (`GET /api/pdf/student/73152421125?mode=full|internal|mentor-documents`): neither removed heading on any page; college name/logo header (ink 12.3 mm, body from 34.9 mm on `full`), `K S R C E` watermark, `Page X of Y`, four signing captions all intact; page counts unchanged (full 2 pp, internal 1 p, mentor-documents 1 p; 120-row synthetic still 9 pp). **Matrix:** record-book-header **74/74**, runtime **38/38**, critical **12/12**, document-watermark **44/44**, document-watermark-runtime **46/46**; `tsc --noEmit` + `npm run build` exit 0. Honest limitation: the signing block stays bottom-anchored, so a sparse final page still has empty space *between* content and signatures — inherent to short data, not the removed headings. Branch `temp`, uncommitted. |
+| 2026-10-11 | FIXED | **Student record book — signature block bottom-anchored; void below signatures closed.** Reproduced on the real HTTP path (admin login → `GET /api/pdf/student/73152421125?mode=full|internal|mentor-documents`, the route the download buttons call): `full` 2 pp, page 2 ended y≈593 (204 pt blank below signatures); `internal` 1 p, ended y≈394 (403 pt blank). Root cause: signatures emitted in normal flow, so on a short final page they floated up with the page's unused height below. **Fix** in `record-book-html.service.ts`: `signatureBlockHtml()` → invisible geometry-identical `.signatures.sig-reserve` placeholder (reserves height ⇒ pagination/page count unchanged, content can never reach the band), and `stampPageFurniture` draws the visible block once with pdf-lib at the bottom of the last Chrome page (heading y≈692, lines y≈757, captions y≈764–775; cols x≈34/169/304/439). After: `full` 2 pp last-page body y≈775, `internal` 1 p y≈775, `mentor-documents` 1 p y≈775, 120-row synthetic still 9 pp (signature on last). **Old-PDF vectors closed:** `pdf.controller.ts` now sends `Cache-Control: no-store`+`Pragma`/`Expires`; stale stored Student Details Form (201 893 B/200 479 B, 08–09 Oct, old layout) now self-heals — `StudentDocument.renderVersion` + `getStudentDocuments` regenerates the derived form in place when out of date (idempotent), served form now 136 463 B/137 350 B with signatures at the bottom. **Tests:** record-book-header 68/68, runtime 38/38, critical 12/12, document-watermark 44/44, document-watermark-runtime 46/46, tsc + build exit 0. Branch `temp`, uncommitted. |
+| 2026-10-11 | PASS | Clean server restart — one fresh backend + one fresh frontend on localhost, no data loss. **Inspection:** read PROJECT_PROGRESS.md, both package.json files, `frontend/vite.config.ts` (port 3000, `/api`→`localhost:5050`) and env (`backend/.env` PORT=5050, `frontend/.env` VITE_API_URL=localhost:5050); listed Node processes (full command lines) + listening ports. **Found:** backend tree `powershell` 13568 → npm 29692 → cmd 28004 (`tsx watch src/index.ts`) → watcher 25280 → server **21204** on **5050**; no frontend running (3000/5173/4173 free); the `chrome-devtools-mcp` Node processes + `opencode.exe serve` are harness, not project, and were left running. **Stop:** `taskkill /PID 13568 /T /F` (descendants only) → 21204/25280/28004/29692/13568 gone; port 5050 confirmed released, no project Node process left. **Start:** backend `npm run dev` (backend/) → **PID 19744** on 5050, `/api/health` `{"status":"ok","database":"connected"}`; frontend `npm run dev` (frontend/) → **Vite v6.4.3 PID 7688** on `http://localhost:3000/` (title `KSRCE Mentoring | K.S.R. College of Engineering`). **Verify:** direct health 200; frontend 200 + correct title/entry; proxy `/api/health` 200 (only backend = 19744); `POST /api/auth/login` via proxy 200 w/ token; `GET /api/pdf/student/73152421125` & `73152421002?mode=full` via proxy **200 application/pdf %PDF- ~137/136 KB**; both logs free of startup errors. No source/`.env`/`backend/data`/uploads/`node_modules`/Git/uncommitted changes touched; no commit/push. |
+| 2026-10-11 | PASS | Student record book — "content compressed at the top / big blank below the signature" fixed. **Reproduced on the real path** (login `Ksrce@admin` → `GET /api/pdf/student/73152421125?mode=full`), rendered each page to PNG and measured per-band ink + MuPDF line geometry. **Finding:** page 1 was already full (content to y≈737 pt); the problem was the **last page** — for the live short records page 2 used only ~44% of its height (sections 5–10 then a tiny signature block, heading y≈297 pt, captions y≈340–353 pt, ~440 pt blank below). **Root cause:** small/tight print type (body 9 pt/1.32; cells 8 pt @ 1.1 mm; bare signature underline) on top of a genuinely sparse final page — no `zoom`/`scale`, fixed height or print flag involved (all checked). **Fix (`backend/src/modules/pdf/record-book-html.service.ts`):** body → 10 pt/1.42; cells → 9 pt @ 1.5 mm (`th` 8.8 pt, section title 9.5 pt, `sub` 8.2 pt, table margin 3.2 mm); banner 9.5/11 pt + `break-inside:avoid`; photos frame 44 mm + 7.8 pt captions; annexure 10.5/8.3 pt; note 8.3 pt; **signature block rebuilt** with a `7.5 mm` `.sigline` + `8.3 pt` caption per column, 16 mm top margin, 10 pt heading + 12 mm gap, `break-inside:avoid`. Header band / pdf-lib per-page header+footer / `K S R C E` watermark (`translateY(-9.5mm) rotate(45deg)`, fixed z-index-0) / `thead` repetition left untouched. **Verified on real PDFs:** both live students stay **2 pages**, page 1 → ~776 pt, page 2 signature captions now at y≈582–593 pt (blank tail ~440 → ~200 pt, no third-page spill), nothing in the header band, nothing past the bottom margin, footer intact. Long synthetic 120-row book 7 → **9 pages**: column headers still repeat on all 8 subject-row pages, header in band on all 9, watermark centred on all 9, no clipping (max bottom 788 < 797 pt). Corrected the renderer's watermark-centring assertion to use the mark's own PDF geometry (the pixel-diff bbox is biased on sparse pages where opaque cells overpaint the background layer) — still fails if missing/off-centre > 20 pt. **Matrix green:** record-book-header **68/68**, runtime **38/38**, document-watermark **44/44**, document-watermark-runtime **46/46**, internal-marks **97/97**, critical **12/12**; `tsc --noEmit` + `npm run build` exit 0. Before/after PNGs + PDFs in `.runtime-verify/layout-before/`. Branch `temp`, uncommitted. |
+| 2026-10-11 | PASS | Student PDF "still broken in the actual app" — stale running process root-caused & closed; verified over the real HTTP path. **Symptom:** the layout fix + all renderer-level suites were green, yet the browser still showed the old broken record book. **Root cause:** the live backend on 5050 was the `tsx watch` **child** (PID 17128, watcher 32920) whose start time (21:36:53) equalled the last-write second of `record-book-html.service.ts` — it was running a snapshot taken at that write, so the browser was hitting code that never included the final fixes (start-time/mtime race; unprovable after the fact, hence the restart). **Action:** killed 32920+17128, restarted `npm run dev` on 5050 (health 200); drove the EXACT browser call chain `POST /api/auth/login` (Ksrce@admin) → `GET /api/pdf/student/:id?mode=full` for three real students (incl. 73152421125) — every page now has the college header, `Page X of Y` and `K S R C E`, body y0 102–107 pt (below the 30.6 mm rule), nothing clipped (saved `.runtime-verify/live-app/`). **Multi-page over the same endpoint** on an isolated scratch instance (5098, temp store, live data untouched) seeded with 120 IA rows, 40 meetings, evidence photos, JPEG scans + a real 3-page PDF annexure: full = **19 pages** — all 15 Chrome pages furnished (header in band, correct footnote, watermark, 0 intruders in the header band), long IA table repeated its column headings across 5 continuation pages, no clipping, uploaded files byte-identical afterwards; watermark pixel-diff vs an un-watermarked control: document ink unchanged (ink+ ≤0.81%) = true background, slope ≈ +0.95 = `\` diagonal, centre y≈424 vs 421 pt; `internal` (8 p) and `mentor-documents` (14 p) furnished with annexure tails preserved. Matrix re-run: record-book-header **56/56**, runtime **38/38**, document-watermark **44/44**, document-watermark-runtime **46/46**, internal-marks **97/97**, critical **12/12**; `tsc --noEmit` + `npm run build` exit 0. No product code changed (verification + restart only). Limitations unchanged: verbatim annexure pages keep their own layout; opaque full-page scans hide the underlaid mark; jsPDF fallback doesn't repeat table headers on autoTable breaks. Nothing committed (branch `temp`). |
+| 2026-10-11 | PASS | Student PDF — watermark, header and content overlap final pass (hardening the repeating-header fix + two real gaps closed). **Root cause:** (1) Chrome print supports neither `@page` margin boxes nor a space-reserving `position: fixed` header (measured: fixed header y≈107pt vs body y≈96pt at a 34mm margin), so the old code emitted the header once in normal flow → page 1 only, and long-table pages started body ink at the top; (2) the `.wm` layer was centred in the @page **content box** → ≈9.5mm below the physical page centre (ink bbox centre y≈451pt vs page centre 421pt); (3) long tables split with **no repeated column headers**. **Fixes (`backend/src/modules/pdf/record-book-html.service.ts`):** `@page{size:A4;margin:35mm 12mm 16mm}` reserves a top band for the pdf-lib-stamped repeating institutional header (`stampPageFurniture`: navy rule + verified `assets/ksrce-logo.png` + college name + autonomous/AICTE/Anna University line + Tiruchengode address + gold document title + divider at 30.6mm) and bottom band for the footer on every page; watermark now `transform: translateY(-9.5mm) rotate(45deg)` → centred on the physical A4 page along the required bottom-right → top-left `\` diagonal, still a `position: fixed` z-index-0 background layer under `.content`; `gridTable` + the photo montage now put section title + column headers in a real `<thead>` with `table.grid thead { display: table-header-group }` so Chrome repeats headers on every continuation page (rows keep `break-inside: avoid`). **Verified (real renders, pixel + geometry, not build-only):** `test:record-book-header` 50 → **56/56** on a 7-page/120-row record book — header inside the band + zero body/header overlap + correct footers + `K S R C E` on every page + logo per page on pages 1–7, column headers repeated on every continuation page, no body text clipped below the content box (min 5.5pt), and a pixel-diff watermark check (vs an un-watermarked control) proving the document ink is unchanged (≤0.4% edge-blend pixels ≤18/255 = true background), slope ≈ +0.95 (`\`), ink bbox centre y≈424pt vs 421pt page centre; `test:runtime` **38/38** (header on every footered page incl. the NSS-photo annexure), `test:document-watermark` **44/44**, `test:document-watermark-runtime` **46/46**, `test:internal-marks` **97/97**, `test:critical` **12/12**; backend `tsc --noEmit` + `npm run build` **exit 0**. Appended verbatim PDF annexures keep their native layout and the legacy jsPDF fallback (no browser) still doesn't repeat headers on autoTable page breaks — both pre-existing limitations documented; nothing committed (branch `temp`). |
+| 2026-10-11 | PASS | Repeating KSRCE institutional header on **every page** of the student documents (record book + `internal` + `mentor-documents`). **Mechanism (measured, not assumed):** Chrome's print engine supports neither `@page` margin boxes nor a space-reserving `position: fixed` header — a probe with `@page{margin:34mm 12mm 16mm}` put the fixed header text at y≈107pt while body text started at y≈96pt (overlap), which is why the old code emitted the header once in normal flow (page 1 only). **Fix (`backend/src/modules/pdf/record-book-html.service.ts`):** reserve a real top band with `@page{size:A4;margin:35mm 12mm 16mm}`; delete the one-off in-flow `headerHtml()` (+ its `.topbar`/`.insthead`/`.collegename`/`.autoline`/`.addrline`/`.doctitle`/`.instrule` CSS); replace `stampPageFooters()` with `stampPageFurniture()` which stamps the header (navy top rule, aspect-fitted `assets/ksrce-logo.png`, centred college name + AICTE/Anna University affiliation + Tiruchengode address, gold document title, subtle divider at 30.6mm) **and** the footer onto **every** Chrome-rendered page (`basePageCount`). Appended verbatim annexure pages and the legacy jsPDF fallback are unchanged; the `K S R C E` watermark is preserved. **Verified:** new `test:record-book-header` **50/50** — a real 7-page record book (120-row table; the long table spans 6 pages) with per-page MuPDF bounding-box checks proving the header is inside the reserved band (top y=35.0pt) and **zero body/header overlap**, correct "Page X of Y", `K S R C E` watermark on every page, and the 205×190 logo image object embedded per page; `sharp` pixel inspection of pages 1/4/7 (navy bar ~10–14mm, gold title, header ink ends ~28mm, blank gap, body ink starts exactly 35mm); `test:runtime` **38/38** (image-bearing book: header on every footered page incl. the NSS photo annexure page); full backend matrix **30/30 EXIT 0**; backend `npm run build` exit 0; frontend `tsc --noEmit` exit 0 (unaffected). Honest limitation: the no-browser jsPDF fallback is unchanged, so `autoTable`-paginated pages would lack the header there. PROJECT_PROGRESS.md updated; nothing committed (branch `temp`). |
 | 2026-10-11 | PASS | Full browser E2E verification (+ two confirmed UI defects fixed). **Method:** a real headless Chromium over the Chrome DevTools Protocol driven by Node 24's built-in global `WebSocket` (no new dependency), against a **disposable sandbox** — a second backend on port **5056** over a freshly re-seeded temp store (`E2E_SCRATCH=e2e-store`) and the SPA rebuilt with `VITE_API_URL=http://localhost:5056` served on 4174; the developer's live 5050/3000 servers were untouched and the sandbox source/store (gitignored) were removed afterwards. **Result: 42/42 PASS** across sections A–J — login render/error, Admin dashboard + logout, Student + RBAC (403s), HOD nav/scope/Class Management, the full HOD marks workflow (Excel template **200 xlsx**, valid workbook previews + imports one row, imported IA1 mark **persists** as 40, corrupt `.xlsx` rejected), ECE↔CSE department isolation, Faculty nav + RBAC, Principal forced first-login password change + read-only dashboard (reads 200 / writes 403), no horizontal overflow at 1440/1024/390, zero page exceptions / zero unexpected console errors. **Two confirmed defects found and fixed: (G)** failed login was silent — `AuthContext.login` toggled the global `isLoading` before its `await`, so `App`'s boot gate unmounted `LoginPage` and the 401 error never rendered (removed the global toggle; the submit button keeps its local `loading`). **(H)** any toast wiped the HOD Marks class/subject/semester selection — `useToast()` returned the non-memoized context value recreated on every render (it carried the live `toasts` array), so the `loadSubjects` effect listed `toast` in its deps and re-ran, resetting the selection (fixed at the root: `ToastContext` value memoized + actions-only; `toasts` is only read inside the provider). Full backend matrix re-run sequentially: **29/29 EXIT 0** (incl. `runtime` 38/38, `ai-assistant` 47/47, `security-hardening` 8/8); backend `npm run build` exit 0; frontend `npm run build` exit 0. PROJECT_PROGRESS.md updated; nothing committed (branch `temp` preserved). |
 | 2026-10-11 | PASS | Full security audit — follow-up pass: closed the last environment blocker and the last audit gap. **(E)** `test:ai-assistant` "could not complete" root-caused: the suite ships an **in-process mock Ollama** (no live host needed) and passed all 47 checks, then **hung at teardown** because the imported backend keeps the Node event loop alive (Express listener + 1-hour reminder interval) and the suite only ever called `process.exit(1)`. Added the explicit `process.exit(0)` used by every other suite that boots `src/index.js` → **47/47 EXIT 0, port freed**; AI module untouched. **(F)** Marks **bulk import** had no audit trail (manual saves audit; the HOD bulk path wrote nothing). `executeMarksImport` now writes one `IMPORT_MARKS_BULK` row per run (outcome summary + ≤50 register numbers + ≤20 subject codes, no secrets; fully-refused imports audited too) via the failure-tolerant `logAudit()`; new check 3b raised `test:security-hardening` to **8/8**. Full 28-suite matrix re-run sequentially: **28/28 EXIT 0** (incl. `test:runtime` 38/38, `test:faculty-dept-reassign` 18/18, `test:ai-assistant` 47/47). Static scans: no hardcoded secrets outside test fixtures; `JWT_SECRET` env-driven + prod fail-closed; upload path resolver rejects traversal; marks bulk-upload security path re-traced end to end. Backend `tsc --noEmit` + `npm run build` PASS; frontend `tsc --noEmit` + `vite build` PASS. PROJECT_PROGRESS.md updated; nothing committed (branch `temp` preserved). |
 | 2026-10-10 | PASS | Principal role end-to-end — read-only college-wide dashboard + forced first-login password change. **Provisioning (bootstrap 5b):** one `PRINCIPAL` account created only if none exists (default username `Principal`, email `Principal@ksrce.ac.in`, password = shipped bootstrap default, all env-overridable via `PRINCIPAL_USERNAME` / `PRINCIPAL_EMAIL` / `PRINCIPAL_PASSWORD`); bcrypt-hashed only, never logged; later boots never duplicate / re-hash / re-arm (restart ×3 → one account, byte-identical hash; idempotent). **Forced change:** signed JWT `mustChangePassword` claim + global `/api` middleware allow-listing `/health`, `/auth/login`, `/auth/me`, `/auth/change-password`; every protected route (dashboard, admin/HOD, settings, exports) 403 until a new password is set; `changePassword` validates current+new+confirmation (400 mismatch/short/same/wrong-current), persists fresh hash, returns fresh unflagged `{token, user}`; old flagged token inert; only the new password logs in (old fails). Frontend `ChangePasswordPage` enforces the identical flow right after login. **Read-only portal:** `/principal/*` → `PrincipalDashboard` reusing `AdminMentoringDashboard` over GET-only `/api/admin/overview/*` widened to `authorize(ADMIN, PRINCIPAL)`; sidebar PRINCIPAL nav; no write/manage/approve/settings/download surface. **Real gap closed:** `downloadStudentPdf` lacked an explicit PRINCIPAL rule and silently allowed — explicit PRINCIPAL deny added; suite asserts 403 by register number and by id. New `test:principal` **53/53**; regressions `test:admin` 23/23, `test:admin-routes` 8/8, `test:admin-auth` 13/13, `test:hod-admin` 22/22; backend `npm run build` PASS; frontend `tsc --noEmit` + `vite build` PASS. PROJECT_PROGRESS.md updated; no commit/push made. |
@@ -3052,3 +5942,121 @@ drives `setHodStatus` with no `deleteHod` route; `AdminStudentDocuments` viewer 
 | 2026-10-09 | PASS | BUG FIX — K S R C E watermark too prominent, wrong direction on image documents, and overlaying text/tables/signatures. **Root causes (both confirmed by rendering the real service output with MuPDF at 2x, not assumed):** (1) *prominence/overlap* — the 0.32-opacity graphite watermark was painted ON TOP of the page (its `pdf-lib` content stream was appended last), so the diagonal crossed body text, multi-column tables and signature lines (rendered stroke mean luminance ~203, contrast ~1.24:1). (2) *direction* — the `sharp`/SVG **image** path used `rotate(-45)` in SVG's y-DOWN space, which renders the OPPOSITE `/` diagonal (measured principal-axis slope −1.01); the **PDF** path (y-UP) was already the required `\` (bottom-right → top-left). **Fix (only `services/document-watermark.service.ts`):** opacity 0.32 → **0.12**, colour 0.35 → **0.40 light neutral grey**, watermark size 0.14 → **0.10** of the shorter page side (image font 0.12 → 0.10); new `placeWatermarkBehindContent()` moves the just-appended watermark stream to the FRONT of each page's `/Contents` array so every original operator (text, tables, images) paints on top — true background layering; new `WATERMARK_IMAGE_ROTATION_DEGREES = 45` so the SVG image path renders the SAME bottom-right → top-left `\` diagonal as the PDF. Controller/routes/model unchanged; separate watermarked copy, original-untouched guarantee, unsupported-format handling, evidence-photo exclusion and preview/download are all unchanged. **Verification (temp MuPDF sandbox, not committed):** representative 3-page PDF (headings, paragraphs, 4/5-column tables, 7pt text, signature lines, whitespace) — BEFORE mean stroke luminance ~203.4–204.3 / contrast ~1.24 / watermark stream LAST; AFTER mean stroke luminance ~237.9 / contrast ~1.07 / watermark stream index **0** (behind); diagonal measured `\` (slope ≈ +1.0) on every page, bbox centre ≈ page centre, original buffer byte-for-byte identical, every page watermarked. Image path: was `/` (slope −1.01, luminance 206.7) now `\` (slope +0.99, luminance 238.4). **Tests:** `test:document-watermark` **37/37** (new "painted BEHIND the content" assertion, subtle-but-present 0.08–0.15 alpha / 230–245 luminance bounds, new image backslash-direction pixel test); `test:document-watermark-runtime` **43/43**; regressions `test:critical` 12/12, `test:evidence-location` 33/33, `test:evidence-location-runtime` 74/74, `test:mentoring-evidence` 100/100, `test:runtime` 38/38; backend `tsc` + build clean; frontend `tsc` + `vite build` clean. **Honest limitation:** the model cannot visually view images, so direction/legibility were confirmed programmatically (PCA principal-axis + luminance/contrast), and before/after PNGs were produced for human review. Opacity is intentionally inside the requested 0.08–0.12 band (`WATERMARK_OPACITY`, one constant to tune). Committed + pushed to `temp`. |
 | 2026-10-09 | PASS | FOLLOW-UP to the K S R C E watermark fix — background-layering edge case. Rendering a PDF whose page is a single opaque full-page scan proved that a behind-layered watermark is **completely hidden** (0 changed pixels), which would violate "watermark every page, remain visible". Added a targeted hybrid in `services/document-watermark.service.ts`: `hasOpaqueFullPageBackground()` scans each page's existing content for a near-full-page `cm` transform (image/form XObject) or a near-full-page filled `re` rectangle; those scan pages keep the **subtle top overlay**, while normal vector pages still get the watermark **behind** the content (first in `/Contents` via `placeWatermarkBehindContent()`). Re-verified with MuPDF: the scan page now shows the watermark (16,309 changed pixels, max darkening 17) while every vector page remains behind (watermark stream index 0, `\` diagonal, mean luminance 237.9). New test section F asserts the scan page is watermarked, ON TOP and still subtle — `test:document-watermark` **42/42**; `test:document-watermark-runtime` **43/43**; backend `tsc` + build clean. Committed + pushed to `temp`. |
 | 2026-10-10 | PASS | BUG FIX — K S R C E watermark must be a true BACKGROUND layer on every page (was overlaying tables/headings/signatures). **Root cause (confirmed by rendering the real service output, not assumed):** the previous fix `8baa758` added `hasOpaqueFullPageBackground()` to keep the watermark visible on genuine scans, but it false-positived on ordinary vector pages — any near-full-page filled `re` rectangle (background fill / shaded panel / container rect) or full-page `cm` image transform matched — so those pages *skipped* `placeWatermarkBehindContent()` and the watermark stayed **on top**, darkening content. **Fix (`backend/src/services/document-watermark.service.ts` only):** removed the heuristic entirely (`hasOpaqueFullPageBackground`, helper `drawnContentText`, unused `pdf-lib` content-stream imports) and now **always** call `placeWatermarkBehindContent(page)` — the watermark stream is moved to index `0` of each page's `/Contents`, so all original operators paint over it; no top-overlay path remains for PDFs. Image (JPEG/PNG) path unchanged. **Accepted, documented tradeoff:** on a page that is one opaque full-page scan/fill the underlaid watermark is hidden behind that paint (present but not prominent) rather than covering content; the hard requirement is that it never sits in front of content. **Verification (programmatic MuPDF render + sharp pixel diff; model cannot view images):** form pages `contentChanged=0`, `contentMaxDiff=0.0` (original ink byte-identical; watermark only in white space); `styled` full-page-background page 0 content pixels darkened (was 30); `scantext` 0 text pixels darkened (was 281); direction `\` bottom-right → top-left PASS 5/5. Suites: `test:document-watermark` **44/44** (section F now asserts the scan page is behind; new section G asserts a full-page-background + dense-text page stays behind), `test:document-watermark-runtime` **46/46** (new `watermarkStreamIndex()` assertions on the served bytes for single-page, multi-page and regenerated pre-fix docs), regressions `test:runtime` 38/38 and `test:evidence-location-runtime` 74/74. Backend `tsc --noEmit` clean; `npm run build` exit 0. Exactly 3 files changed (1 service + 2 tests); original uploads never modified; PROJECT_PROGRESS.md updated. No commit/push made. |
+### ACHIEVEMENT LEADERBOARD AND APPLICATION-WIDE PERFORMANCE OPTIMISATION (2026-10-15)
+
+This pass audited the entire application (React + TypeScript + Vite frontend; Node + Express + TypeScript backend; local JSON storage), identified root causes, and implemented targeted, verifiably correct fixes. All existing uncommitted changes were preserved. No commit or push was made automatically. No MongoDB/external infra was introduced.
+
+**Key changes:**
+- **Backend (storage)**: added `LocalCollection.snapshot()` (no per-query deep clones) and restructured `LocalQuery.materialise()` to clone results before populate; updated `matchingRecords`, `loadPopulateData`, `countDocuments`, `exists`, `checkUnique`, `syncIndexes` to use snapshots.
+- **Backend (N+1)**: `admin.controller.getFacultyList` — single `MentorAssignment.find({mentor:{$in:ids}, status:'ACTIVE'})` pass; `getDepartments` and `getBatches` — single-pass tallies over students/faculty. `getAdminDashboardStats` — parallelised 12 independent reads with `Promise.all`.
+- **Backend (reports/export)**: `reports.controller.exportStudentsCsv` — bulk preload of assignments, academic records and completed meetings via `$in` maps (replaces per-student queries).
+- **Frontend (bundling)**: `App.tsx` uses `React.lazy()` + `Suspense` to split role dashboards and heavy views into separate chunks; shared `DashboardSkeleton` fallback.
+- **Frontend (rendering)**: `LeaderboardView` memoises derived presentation with `useMemo`.
+
+**Measured improvements (controlled):**
+- `/api/reports/export/csv`: **92.5 ms → 15.7 ms** (5.9× faster; 40-iter HTTP medians).
+- `getFacultyList` N+1: **123.2 ms → 0.072 ms** (~1700×).
+- Per-collection reads: **0.56–3.50 ms → 0.008–0.062 ms** (**42–121×**) using snapshot vs `all()` deep-clone.
+- Initial frontend JS: **1116.3 KB → 342.9 KB** (↓ **~66%**); dashboards/routes code-split.
+
+**Verification:** Full build passes (root `tsc` + backend + frontend). All major backend suites green (leaderboard 35/35, placement 48/48, internal-marks 97/97, security-hardening 8/8, critical-reassignment 12/12, student-directory-pagination 16/16, admin-dashboard-routes 8/8, admin-overview 23/23, principal-role 53/53, hod-scope 33/33, record-permission-state 137/137, faculty-notifications 21/21, admin-hod-management 22/22, overall-mentee-export 100%, runtime-verification 38/38, bulk-upload 23/23, bulk-actions 15/15, bulk-assignment 29/29, ai-assistant pass, document-watermark 44/44; total 513+ checks). One PDF "Discussion With" test (pre-existing, identical with baseline) failed — unrelated to these changes.
+
+**Notes:** Leaderboard points/ranking, tie-breakers, verification rules, role scopes and permissions unchanged. No new infrastructure, no cross-user cache. Uncommitted work preserved.
+
+### Kavitha Chatbot — `POST /api/api/ai/chat` 404 + Login "Page Not Found" — Fixed (2026-10-15)
+
+**Verified root cause (single defect, two symptoms).** `frontend/src/api/client.ts` builds every request as `fetch(API_BASE + endpoint)`. The project convention is:
+
+- `API_BASE = VITE_API_URL_origin + '/api'` (base supplies `/api` **once**), and
+- every endpoint path **omits** `/api` (e.g. `request('/auth/login')`, `request('/auth/me')`).
+
+63 of 67 `request(...)` calls followed this. The **4 AI endpoints were the sole exception**, hard-coding the `/api` prefix (`request('/api/ai/chat')`). With `VITE_API_URL=http://localhost:5050` this produced `http://localhost:5050/api` + `/api/ai/chat` = `http://localhost:5050/api/api/ai/chat` → the backend's catch-all returned `API endpoint 'POST /api/api/ai/chat' not found.`
+
+A prior attempted fix wrongly changed `API_BASE` itself to *strip* `/api` (origin only). That made the AI endpoints work but broke **all 63 other endpoints** — notably `/auth/login` and `/auth/me`, which then hit `http://localhost:5050/auth/...` and returned 404. A 404 on the login request is mapped by `formatApiError` to the "Page Not Found" copy (`"The page you're looking for doesn't exist or may have been moved."`) — exactly the red alert seen on the login page.
+
+**Correct fix (matches existing convention; no duplicate routes; no auth changes):**
+- Restored `API_BASE = (normalizedApiUrl || '') + '/api'` (origin + `/api`, as committed).
+- Removed the erroneous `/api` prefix from the 6 AI requests so they align with every other endpoint: `/ai/status`, `/ai/conversations` (GET/POST), `/ai/conversations/:id` (GET/DELETE), `/ai/chat`.
+
+Nothing else changed: backend routes were already correct (`app.use('/api/ai', aiAssistantRoutes)`; router defines `/status`, `/chat`, `/conversations`).
+
+**Files changed:** `frontend/src/api/client.ts` only (1 `API_BASE` line + 6 AI endpoint paths).
+
+**Verification against the RUNNING app (backend :5050, frontend :3000), authenticated as the seeded ADMIN (credentials read from `backend/.env`, never printed):**
+- `POST /api/auth/login` → `success:true` (login no longer 404s).
+- `GET /api/ai/status` → **200**, `{ available:false, model:"qwen3:8b", provider:"ollama", configured:true }` (route reached; provider chosen from env).
+- `POST /api/api/ai/chat` → **404** `API endpoint 'POST /api/api/ai/chat' not found.` (proves the old doubled path).
+- `POST /api/ai/chat` → routed to the handler; returned **503** `"Ollama server is unreachable."` (no fabricated answer). Correct URL is now `POST http://localhost:5050/api/ai/chat`.
+- Typechecks: frontend `tsc --noEmit` exit 0; backend `tsc --noEmit` exit 0. Production build: `npm run build` exit 0.
+- Tests unchanged and green: `ai-assistant` 47/47, `gemini-integration` 38/38.
+
+**Gemini status:** `GEMINI_API_KEY` in `backend/.env` is **empty**, so server-side provider selection falls back to Ollama (by design) and `status.provider = "ollama"`. A **live Gemini response could not be produced without a real key**; the key is read only server-side and never sent to the browser. With a key set, the provider becomes `gemini` and the same `/api/ai/chat` route is used. No mock/fake success is ever returned.
+
+**Notes:** Preserved authentication, role authorization, error handling, and all unrelated uncommitted work. No commit/push.
+
+### Kavitha Chatbot � "AI service unreachable" Root Cause Resolved with Real Gemini AI Integration (2026-10-15)
+
+**1. Verified Root Cause:**
+- ackend/.env had an empty GEMINI_API_KEY=, while a key had been placed in ackend/.env.example.
+- Because GEMINI_API_KEY was missing from ackend/.env, isGeminiConfigured() returned alse.
+- Without an explicit provider configuration, the system defaulted to ollama at http://127.0.0.1:11434.
+- Because Ollama was not installed or running locally, upstream chat requests failed with ECONNREFUSED.
+- i-provider.service.ts mapped the connection failure to AiProviderError('ollama', 'UNAVAILABLE') returning HTTP 503 "The AI service is currently unreachable. Please try again shortly.".
+- Furthermore, missing configuration was misattributed as service unreachability rather than a configuration error.
+
+**2. Files Changed:**
+- ackend/.env: Configured GEMINI_API_KEY securely in local environment; verified never committed or leaked to logs/frontend.
+- ackend/.env.example: Sanitized back to template placeholder (your_gemini_or_ai_api_key_here) to prevent secret leakage in git.
+- ackend/src/services/ai-provider.service.ts:
+  - Honest provider detection: When GEMINI_API_KEY is not configured and OLLAMA_BASE_URL is not set, ctiveAiProvider() reports configured: false with a clear message: "The AI assistant is not configured on the server. Please configure GEMINI_API_KEY in the backend environment.".
+  - Improved error messages for INVALID_KEY, NOT_CONFIGURED, QUOTA, and TIMEOUT so failures are never misleadingly masked as transport/server downtime.
+- PROJECT_PROGRESS.md: Documented diagnosis, code changes, and live E2E browser verification.
+
+**3. Verification & Live AI Responses:**
+- **Live Gemini Provider Check:** GET /api/ai/status returns **HTTP 200**, { available: true, model: "gemini-2.5-flash", provider: "gemini", configured: true }.
+- **Live Message Verification (Backend & E2E Browser Subagent against http://localhost:3000):**
+  1. Summarize the college mentoring dashboard: Returned real grounded AI response summarizing 15 departments, 221 faculty, 157 students, active mentors, and departmental breakdown.
+  2. Explain monthly mentoring coverage: Returned real AI response explaining monthly coverage formula and October 2026 metrics.
+  3. Compare department mentoring statistics: Returned comparative department mentoring statistics and student distribution.
+- **Retry Mechanism:** Successfully verified interactive Retry button and error handling in browser.
+- **Automated Test Suites:**
+  - 
+pm run test:gemini: **38/38 PASS**.
+  - 
+pm run test:ai-assistant: **47/47 PASS**.
+  - Backend typecheck (	sc --noEmit): **Exit 0**.
+  - Frontend typecheck (	sc --noEmit): **Exit 0**.
+  - Frontend production build (
+pm run build): **Exit 0** (15.42s).
+  - Backend production build (
+pm run build): **Exit 0**.
+- **Role-Based Authorization & Security:** All routes protected by JWT auth (uthenticate middleware); role-specific context preserved; API keys kept strictly server-side.
+
+### Admin Dashboard — Statistic-Card Drill-Downs and the "About Us" Search Result (2026-10-16)
+
+**Goal.** Make the seven Admin overview statistics cards interactive (clicking one shows the real records behind the number, without changing any statistic or record) and let the Mentor-Assignment search surface an "About Us" result that opens an About Us page (none existed, so one was created).
+
+**Backend.**
+- New ADMIN-only endpoints in `backend/src/modules/admin/admin-dashboard-details.controller.ts`, mounted in `admin.routes.ts` under `authorize(ROLES.ADMIN)`:
+  - `GET /api/admin/dashboard-details/active-arrears` — students carrying ≥1 active arrear, with per-subject `semester / subject_code / subject_name`; `totalActiveArrears` is the unfiltered sum (== the "Active Arrears" card).
+  - `GET /api/admin/dashboard-details/mentoring-sessions` — college-wide `CounsellingRecord` list with student + mentor names; `total` == the "Mentoring Sessions" card.
+  - `GET /api/admin/dashboard-details/documents` — college-wide `StudentDocument` list with student name, title, category, upload date and verification status; `total` == the "Uploaded Documents" card.
+  - All three support `search`, `page`, `limit` (≤100); documents also `verificationStatus`; each returns `total`, `pages`, `hasMore`.
+  - Rationale: the other four aggregates already have paginated list endpoints (`/api/students`, `/api/admin/faculty`); the three above had **no** college-wide list (mentoring records and documents were reachable only per student), so a detail view would otherwise have to fetch every student (N+1).
+- **Bug fixed while reusing `/api/students`:** the `assignmentStatus` query param was destructured but **never applied**, so `?assignmentStatus=assigned|unassigned` silently returned everyone. It is now resolved at the QUERY level (pre-fetch the ACTIVE-assignment student ids, then `$in`/`$nin`) so `total`, `pages` and the pager are correct. Backwards-compatible, and assigned + unassigned is now an exact partition of the active students.
+- Aggregate rules are unchanged and shared with the cards: `calculateArrearStatistics(records, clearedSubjects, arrearHistory).activeArrearsCount` (same `AcademicRecord` field selection as `getAdminDashboardStats`), `CounsellingRecord.countDocuments()`, `StudentDocument.countDocuments()`.
+
+**Frontend.**
+- `frontend/src/components/admin/StatDetailsModal.tsx` — one modal for all seven cards: navy/gold styling, correct title + official card value in the header, debounced search, pagination, skeleton loading, honest empty state, error state with Retry, Escape/backdrop close, scroll lock. `Total Faculty` is filtered to active + searched client-side and paged locally (that endpoint returns the whole roster and does not paginate); the rest are server-paginated.
+- `frontend/src/pages/admin/AdminDashboard.tsx` — the seven `<div className="stat-card">` blocks became a single data-driven map of focusable `role="button"` cards (`tabIndex=0`, Enter/Space handled, `aria-label`, chevron); `statCard` state + `statCardValue` derivation added; the modal is rendered once at the shell level.
+- `frontend/src/styles/index.css` — `.stat-card--clickable` (pointer, hover lift/glow, `:focus-visible` ring), `.stat-card-chevron`, reduced-motion guard.
+- `frontend/src/api/client.ts` — `api.admin.getActiveArrearsDetails / getMentoringSessionsDetails / getUploadedDocumentsDetails` + response types.
+- **About Us:** new standalone route `/about` (`frontend/src/pages/common/AboutUsPage.tsx`, lazy-loaded in `App.tsx`, mirroring `/students/:id`) built only from verified strings in `backend/src/modules/pdf/institutional-header.ts` (college name, AICTE/AU affiliation, address, website) and from real app capabilities — no invented institutional facts. The Mentor Assignment search (`mentorSearch`) shows an `About Us — View Page` result **only** for the exact trimmed phrase (case-insensitive); clicking it or pressing Enter navigates to `/about`. Ordinary mentor search is untouched.
+
+**Verification (all run, results as observed).**
+- `test:admin-stat-details` (new, real HTTP against `src/index.ts` + temp store) — **9/9 PASS**: each detail total reconciles with `/api/admin/dashboard-stats`; arrear rows carry `semester + code + name`; search → 1 / nonsense → 0; `limit=1` → `pages=2, hasMore=true`; assigned 2 + unassigned 2 == 4 active students; every detail endpoint returns HOD 403 and anonymous 401; `client.ts` ships the three routes.
+- `.runtime-verify/admin-stats/verify.mjs` (headless Chrome via CDP; scratch backend seeded from a **copy** of `backend/data`, vite dev frontend) — **10/10 PASS**: 7 focusable pointer cards; each opens the correctly-titled dialog with real rows (Total Students 25, Total Faculty 25, Assigned 25, Unassigned 25, Mentoring Sessions 8, Documents 6, Active Arrears empty-state as that dev store has none) and Escape closes it; Total Students card 157 == dialog 157; Assigned 103 + Unassigned 54 == Total 157; Enter opens a card; exact `About Us` shows the result and navigates to `/about` (affiliation text present) while `Abou` does not; Enter on the exact query navigates; a normal mentor name search still returns roster rows with no About Us result; 390px mobile opens a fits-the-screen dialog; 0 console errors, 0 exceptions.
+- Regressions: `test:admin-routes` 8/8, `test:directory` 16/16, `test:admin` (overview) 23/23.
+- Typechecks/builds: backend `tsc --noEmit` exit 0; frontend `tsc --noEmit` exit 0; frontend `npm run build` exit 0 (emits `dist/assets/AboutUsPage-*.js`).
+
+**Notes.** No statistic value, role permission, business rule or unrelated dashboard changed; real records are never modified by a modal (read-only). Preserved local JSON storage and all prior uncommitted work. No commit/push.

@@ -81,12 +81,15 @@ const NAV_BY_ROLE: Record<string, NavSection[]> = {
     },
     {
       label: 'ACADEMIC',
-      items: [{ key: 'internal-marks', label: 'Internal Marks', icon: ClipboardList }],
+      items: [
+        { key: 'internal-marks', label: 'Internal Marks', icon: ClipboardList },
+        { key: 'subjects', label: 'Subject Management', icon: BookOpen },
+      ],
     },
     {
       label: 'MENTORING',
       items: [
-        { key: 'counselling', label: 'Counselling Records', icon: FileText },
+        { key: 'counselling', label: 'Mentoring Records', icon: FileText },
         { key: 'meetings', label: 'Saturday Meetings', icon: CalendarCheck2 },
         { key: 'monthly-progress', label: 'Monthly Progress', icon: Award },
         { key: 'documents', label: 'Student Documents', icon: FileCheck },
@@ -170,7 +173,7 @@ const NAV_BY_ROLE: Record<string, NavSection[]> = {
       items: [
         { key: 'mentees', label: 'My Mentees', icon: Users },
         { key: 'meetings', label: 'Saturday Meetings', icon: CalendarCheck2 },
-        { key: 'counselling', label: '5-Domain Counselling', icon: BookOpen },
+        { key: 'counselling', label: '5-Domain Mentoring', icon: BookOpen },
       ],
     },
     {
@@ -208,7 +211,7 @@ const NAV_BY_ROLE: Record<string, NavSection[]> = {
       label: 'MENTORING',
       items: [
         { key: 'meetings', label: 'Saturday Meetings', icon: CalendarCheck2 },
-        { key: 'mentoring-history', label: 'Mentoring & Counselling', icon: History },
+        { key: 'mentoring-history', label: 'Mentoring History', icon: History },
         { key: 'my-progress', label: 'My Progress', icon: Award },
       ],
     },

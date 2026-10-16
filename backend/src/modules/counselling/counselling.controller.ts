@@ -1256,7 +1256,13 @@ export async function grammarCheckController(req: AuthRequest, res: Response) {
   }
 
   if (!text.trim()) {
-    return sendSuccess(res, { original: text, corrected: text, hasCorrections: false, source: 'INSTITUTIONAL_GRAMMAR_ENGINE' });
+    return sendSuccess(res, {
+      original: text,
+      corrected: text,
+      hasCorrections: false,
+      source: 'INSTITUTIONAL_GRAMMAR_ENGINE',
+      status: 'NO_RELIABLE_CORRECTION',
+    });
   }
 
   if (text.length > MAX_GRAMMAR_CHECK_CHARS) {
@@ -1265,13 +1271,14 @@ export async function grammarCheckController(req: AuthRequest, res: Response) {
 
   try {
     const result = await correctGrammarAndSpelling(text);
-    // Only the four documented fields are returned. Nothing derived from the
-    // request (key, model, provider error text) is echoed back to the client.
+    // Only the documented fields are returned. Nothing derived from the request
+    // (key, model, provider error text) is echoed back to the client.
     return sendSuccess(res, {
       original: result.original,
       corrected: result.corrected,
       hasCorrections: result.hasCorrections,
       source: result.source,
+      status: result.status,
     });
   } catch (err: any) {
     // The provider error is logged server-side only; the client receives a

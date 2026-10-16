@@ -63,7 +63,7 @@ export const CounsellingCategorySelect: React.FC<CounsellingCategorySelectProps>
           marginBottom: '0.45rem',
         }}
       >
-        Counselling Category {required && <span style={{ color: '#DC2626' }}>*</span>}
+        Mentoring Category {required && <span style={{ color: '#DC2626' }}>*</span>}
       </label>
 
       {/* Selected Categories Chips */}
@@ -120,7 +120,7 @@ export const CounsellingCategorySelect: React.FC<CounsellingCategorySelectProps>
         </div>
       ) : (
         <div style={{ fontSize: '0.78rem', color: '#DC2626', marginBottom: '0.4rem', fontWeight: 600 }}>
-          At least one counselling category must be selected.
+          At least one mentoring category must be selected.
         </div>
       )}
 
@@ -147,7 +147,7 @@ export const CounsellingCategorySelect: React.FC<CounsellingCategorySelectProps>
       >
         <span>
           {selectedCategories.length === 0
-            ? 'Choose Counselling Categories...'
+            ? 'Choose Mentoring Categories...'
             : `${selectedCategories.length} category${selectedCategories.length > 1 ? 'ies' : ''} selected`}
         </span>
         <ChevronDown

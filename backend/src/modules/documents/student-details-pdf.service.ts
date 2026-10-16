@@ -14,6 +14,14 @@ interface WatermarkedFormCopy {
 }
 
 /**
+ * Bump this whenever the record-book PDF renderer changes in a way that alters
+ * the stored Student Details Form. Existing forms stamped with a different value
+ * are regenerated (in place) on next access, so a stale PDF produced by an older
+ * backend is never served to the user.
+ */
+export const STUDENT_DETAILS_FORM_RENDER_VERSION = '2026-10-12-removed-headings';
+
+/**
  * Build a separate watermarked copy of the generated Student Details Form.
  *
  * The form is system-generated, so the "original" here is the unwatermarked
@@ -119,6 +127,7 @@ export async function syncStudentDetailsPdf(
       primaryDoc.watermarkStatus = watermark.watermarkStatus;
       primaryDoc.watermarkText = watermark.watermarkText;
       primaryDoc.watermarkAppliedAt = watermark.watermarkAppliedAt;
+      primaryDoc.renderVersion = STUDENT_DETAILS_FORM_RENDER_VERSION;
       primaryDoc.verificationStatus = 'Verified';
       primaryDoc.uploadedAt = new Date();
       if (uploadedByUserId && isValidId(uploadedByUserId)) {
@@ -142,6 +151,7 @@ export async function syncStudentDetailsPdf(
         watermarkStatus: watermark.watermarkStatus,
         watermarkText: watermark.watermarkText,
         watermarkAppliedAt: watermark.watermarkAppliedAt,
+        renderVersion: STUDENT_DETAILS_FORM_RENDER_VERSION,
         uploadedBy:
           uploadedByUserId && isValidId(uploadedByUserId)
             ? toLocalId(uploadedByUserId)

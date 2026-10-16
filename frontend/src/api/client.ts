@@ -366,6 +366,80 @@ export interface HodMenteeRow {
   sessionsThisMonth?: number;
 }
 
+/** One mentor-assignment transition (current or historical) for a faculty member. */
+export interface HodMentorAssignmentRow {
+  id: string;
+  studentId: string;
+  registerNumber: string;
+  studentName: string;
+  status: 'ACTIVE' | 'COMPLETED' | 'TRANSFERRED' | string;
+  assignedFrom: string | null;
+  assignedUntil: string | null;
+  changeReason: string;
+  /** True for the single ACTIVE assignment on this student. */
+  isCurrent: boolean;
+}
+
+/** A counselling record the faculty member authored, for one of their mentees. */
+export interface HodMentorCounsellingRow {
+  id: string;
+  studentId: string;
+  registerNumber: string;
+  studentName: string;
+  date: string | null;
+  categories: string[];
+  discussionWith: string[];
+  recordKind: string;
+  status: string;
+  followUpDate: string;
+  concernReason: string;
+  observation: string;
+  skillNeedingImprovement: string;
+  actionPlan: string;
+  expectedImprovement: string;
+  studentFeedback: string;
+  mentorRemarks: string;
+  evidenceCount: number;
+}
+
+/** A Saturday / individual meeting conducted by the faculty member. */
+export interface HodMentorMeetingRow {
+  id: string;
+  studentId: string;
+  registerNumber: string;
+  studentName: string;
+  meetingDate: string;
+  meetingTime: string;
+  location: string;
+  attendanceStatus: string;
+  meetingStatus: string;
+  challengesDiscussed: string;
+  studentFeedback: string;
+  counsellingProvided: string;
+  correctiveAction: string;
+  followUpRequired: boolean;
+  followUpDate: string;
+  mentorRemarks: string;
+  evidenceCount: number;
+}
+
+/** Metadata for a certificate/document owned by one of the mentor's mentees. */
+export interface HodMentorDocumentRow {
+  id: string;
+  studentId: string;
+  registerNumber: string;
+  studentName: string;
+  title: string;
+  fileName: string;
+  category: string;
+  documentType: string;
+  isPrimary: boolean;
+  fileType: string;
+  fileSize: number;
+  verificationStatus: string;
+  uploadedAt: string | null;
+}
+
 export interface HodMentorDetail {
   mentor: {
     id: string;
@@ -390,6 +464,14 @@ export interface HodMentorDetail {
     sessionsThisMonth: number;
     lastMentoringDate: string | null;
   };
+  /** Assignment transitions (current + historical) for this faculty member. */
+  assignments: HodMentorAssignmentRow[];
+  /** Counselling records this faculty member authored. */
+  counselling: HodMentorCounsellingRow[];
+  /** Meetings this faculty member conducted. */
+  meetings: HodMentorMeetingRow[];
+  /** Documents owned by this faculty member's current mentees. */
+  documents: HodMentorDocumentRow[];
   departmentScope: string;
 }
 
@@ -559,6 +641,9 @@ const rawApiUrl = (import.meta.env.VITE_API_URL || '').trim();
 const normalizedApiUrl = rawApiUrl
   ? (rawApiUrl.startsWith('http') ? rawApiUrl : `https://${rawApiUrl}`).replace(/\/$/, '')
   : '';
+// Project convention: VITE_API_URL is the server ORIGIN (e.g. http://localhost:5050)
+// and every request path already omits the `/api` prefix (e.g. '/auth/login'),
+// because this base adds it once, here.
 const API_BASE = (normalizedApiUrl || '') + '/api';
 
 import { ApiError, formatApiError } from './errorHandler';
@@ -676,6 +761,98 @@ async function request<T = any>(
   return data as ApiResponse<T>;
 }
 
+/* ------------------------------------------------------------ Bulk actions types */
+
+/** Per-record outcome of a bulk delete. */
+export interface BulkDeleteOutcome {
+  deleted: Array<{ id: string; registerNumber?: string; employeeId?: string; fullName?: string }>;
+  failed: Array<{ id: string; registerNumber?: string; employeeId?: string; fullName?: string; reason: string }>;
+  summary: { requested: number; deleted: number; failed: number };
+}
+
+/** Evidence row for a record that produced no downloadable document. */
+export interface BulkDownloadMissingRow {
+  recordType: string;
+  identifier: string;
+  name: string;
+  documentTitle: string;
+  fileName: string;
+  status: string;
+  note: string;
+}
+
+/** Result of a bulk document download. */
+export interface BulkDownloadResult {
+  /** True when a ZIP was produced and handed to the browser. */
+  hasDocuments: boolean;
+  /** Number of archive entries produced (0 when there was nothing to download). */
+  downloaded: number;
+  /** Records that could not contribute a file, with a reason. */
+  missing: BulkDownloadMissingRow[];
+  /** Name of the downloaded archive, when one was produced. */
+  fileName?: string;
+  /** Human-readable outcome (used when `hasDocuments` is false). */
+  message: string;
+}
+
+/**
+ * POST a list of ids to a bulk-documents endpoint.
+ *
+ * The endpoint answers either with a ZIP (streamed, correct content type and
+ * filename) or — when nothing is eligible — a JSON result describing why. This
+ * helper normalises both shapes so the UI never has to care which it got, and
+ * never triggers a download of an empty or misleading archive.
+ */
+async function bulkDownloadDocuments(
+  endpoint: string,
+  ids: string[]
+): Promise<BulkDownloadResult> {
+  const token = getAuthToken();
+  const res = await fetch(`${API_BASE}${endpoint}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ ids }),
+  });
+
+  if (!res.ok) {
+    if (res.status === 401) removeAuthToken();
+    const body = await res.json().catch(() => null);
+    throw new ApiError(res.status, body?.message || 'Bulk download failed.', endpoint);
+  }
+
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    const body = await res.json().catch(() => null as any);
+    return {
+      hasDocuments: !!body?.data?.hasDocuments,
+      downloaded: body?.data?.downloaded ?? 0,
+      missing: body?.data?.missing ?? [],
+      message: body?.message || 'Nothing to download.',
+    };
+  }
+
+  const fileName =
+    extractFilename(res.headers.get('content-disposition')) || 'Bulk_Documents.zip';
+  const url = window.URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+  return {
+    hasDocuments: true,
+    downloaded: ids.length,
+    missing: [],
+    fileName,
+    message: `${fileName} downloaded.`,
+  };
+}
+
 /* ------------------------------------------------------- Internal marks types */
 
 /** Server-computed state of the Admin-controlled mark-entry window. */
@@ -746,6 +923,95 @@ export interface MarkUpdateRequest {
 
 /** The three download modes served by `GET /api/pdf/student/:id`. */
 export type StudentPdfMode = 'full' | 'internal' | 'mentor-documents';
+
+/* ------------------------------------------------------- Subject catalogue types */
+
+/** Subject type — mirrors `SUBJECT_TYPE_LABEL` in Subject.model.ts. */
+export type SubjectType = 'THEORY' | 'PRACTICAL' | 'PROJECT' | 'ELECTIVE';
+export type SubjectStatus = 'ACTIVE' | 'INACTIVE';
+
+/** One row of the Admin subject catalogue. */
+export interface SubjectRow {
+  id: string;
+  code: string;
+  name: string;
+  /** Full multi-select scope. */
+  departmentIds: string[];
+  departments: Array<{ id: string; code: string; name: string }>;
+  semesters: number[];
+  academicYears: string[];
+  regulations: string[];
+  /** First-element mirrors (backward-compatible single-value shape). */
+  departmentId: string;
+  departmentCode: string;
+  departmentName: string;
+  semester: number | null;
+  academicYear: string;
+  regulation: string;
+  subjectType: SubjectType;
+  subjectTypeLabel: string;
+  maxMarks: number;
+  passMarks: number;
+  status: SubjectStatus;
+  /** InternalMark rows recorded against this subject+semester in this dept. */
+  marksRecordCount: number;
+  /** Distinct students with at least one mark for this subject. */
+  studentCount: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface SubjectListResponse {
+  subjects: SubjectRow[];
+  total: number;
+  page: number;
+  limit: number;
+  pageCount: number;
+}
+
+/** Filter vocabulary served by `GET /api/admin/subjects/meta`. */
+export interface SubjectMeta {
+  departments: Array<{ id: string; code: string; name: string }>;
+  regulations: string[];
+  academicYears: string[];
+  semesters: number[];
+  subjectTypes: Array<{ value: SubjectType; label: string }>;
+  statuses: SubjectStatus[];
+}
+
+/** Writable fields accepted by create/update. All scope fields are multi-select. */
+export interface SubjectInput {
+  code: string;
+  name: string;
+  departmentIds: string[];
+  semesters: number[];
+  academicYears: string[];
+  regulations: string[];
+  subjectType: SubjectType;
+  maxMarks: number;
+  passMarks: number;
+  status?: SubjectStatus;
+}
+
+/**
+ * One selectable subject in the HOD marks workflow. Extends the legacy
+ * `{ subjectCode, subjectName, semesterNumber }` shape with the catalogue
+ * fields so the upload form can show status and enforce max marks.
+ */
+export interface HodSubjectOption {
+  id: string | null;
+  subjectCode: string;
+  subjectName: string;
+  semesterNumber: number;
+  maxMarks: number | null;
+  passMarks: number | null;
+  subjectType: SubjectType | null;
+  subjectTypeLabel: string | null;
+  regulation: string;
+  status: SubjectStatus;
+  source: 'MASTER' | 'MARKS';
+  isActive: boolean;
+}
 
 /* ------------------------------------------------------- Placement monitoring */
 
@@ -1045,6 +1311,155 @@ export interface BulkImportResponse {
   results: BulkImportResultRow[];
 }
 
+/* -------------------------------------------- Bulk mentee assignment types */
+
+/** Per-row outcome of a bulk assignment validation. */
+export type BulkAssignStatus =
+  | 'VALID'
+  | 'WARNING'
+  | 'INVALID'
+  | 'DUPLICATE'
+  | 'ALREADY_ASSIGNED'
+  | 'REASSIGNMENT_REQUIRED';
+
+export interface BulkAssignPreviewRow {
+  rowNumber: number;
+  registerNumber: string;
+  studentId: string | null;
+  studentName: string;
+  employeeId: string;
+  mentorId: string | null;
+  mentorName: string;
+  currentMentorId: string | null;
+  currentMentorName: string | null;
+  proposedMentorName: string;
+  status: BulkAssignStatus;
+  message: string;
+}
+
+export interface BulkAssignSummary {
+  totalRows: number;
+  validAssignments: number;
+  warnings: number;
+  invalidRows: number;
+  duplicates: number;
+  alreadyAssigned: number;
+  reassignmentRequired: number;
+  readyForAssignment: number;
+  affectedMentors: number;
+}
+
+export interface BulkAssignValidationResponse {
+  summary: BulkAssignSummary;
+  rows: BulkAssignPreviewRow[];
+}
+
+export type BulkAssignResultStatus = 'ASSIGNED' | 'REASSIGNED' | 'SKIPPED' | 'FAILED';
+
+export interface BulkAssignResultRow {
+  rowNumber: number;
+  registerNumber: string;
+  studentName: string;
+  employeeId: string;
+  mentorName: string;
+  status: BulkAssignResultStatus;
+  reason: string;
+}
+
+export interface BulkAssignExecuteSummary {
+  totalRows: number;
+  assigned: number;
+  reassigned: number;
+  successful: number;
+  skipped: number;
+  failed: number;
+}
+
+export interface BulkAssignExecuteResponse {
+  summary: BulkAssignExecuteSummary;
+  results: BulkAssignResultRow[];
+}
+
+/**
+ * Admin overview statistics-card detail views. Each row is a real record behind
+ * the matching aggregate on the Admin dashboard — never a re-derived or
+ * fabricated value. `total` is the server-side count for the active filter, so
+ * the modal pager and the card reconcile.
+ */
+export interface ActiveArrearSubjectDetail {
+  semester: number | null;
+  subject_code: string;
+  subject_name: string;
+}
+export interface ActiveArrearStudentRow {
+  id: string;
+  student_id: string;
+  register_number: string;
+  full_name: string;
+  department_code: string;
+  department_name: string;
+  batch_name: string;
+  section: string;
+  active_arrears: number;
+  arrear_status_label: string;
+  subjects: ActiveArrearSubjectDetail[];
+}
+export interface ActiveArrearsDetailsResponse {
+  students: ActiveArrearStudentRow[];
+  /** Students with >= 1 active arrear (the length of the full filtered set). */
+  total: number;
+  /** Sum of active arrear subjects across the full filtered set. */
+  totalActiveArrears: number;
+  page: number;
+  limit: number;
+  pages: number;
+  hasMore: boolean;
+}
+
+export interface MentoringSessionRow {
+  id: string;
+  student_id: string;
+  student_name: string;
+  register_number: string;
+  mentor_name: string;
+  date: string;
+  categories: string[];
+  record_kind: string;
+  discussion_with: string[];
+  status: string;
+}
+export interface MentoringSessionsDetailsResponse {
+  records: MentoringSessionRow[];
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+  hasMore: boolean;
+}
+
+export interface UploadedDocumentRow {
+  id: string;
+  student_id: string;
+  student_name: string;
+  register_number: string;
+  title: string;
+  category: string;
+  document_type: string;
+  file_name: string;
+  file_type: string;
+  verification_status: string;
+  uploaded_at: string | null;
+  watermarked: boolean;
+}
+export interface UploadedDocumentsDetailsResponse {
+  documents: UploadedDocumentRow[];
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+  hasMore: boolean;
+}
+
 export const api = {
   // Authentication
   auth: {
@@ -1087,6 +1502,34 @@ export const api = {
     getBatches: () => request('/admin/batches'),
     createBatch: (batch: { name: string; startYear: number; endYear: number }) =>
       request('/admin/batches', { method: 'POST', body: JSON.stringify(batch) }),
+    /**
+     * Subject catalogue (Admin). ADMIN-only server-side; every route is guarded
+     * by `authorize(ROLES.ADMIN)` and each handler re-checks the role.
+     */
+    subjects: {
+      list: (params: Record<string, string | number> = {}) => {
+        const q = new URLSearchParams(
+          Object.entries(params).reduce((acc, [k, v]) => {
+            if (v !== undefined && v !== null && String(v) !== '') acc[k] = String(v);
+            return acc;
+          }, {} as Record<string, string>)
+        ).toString();
+        return request<SubjectListResponse>(`/admin/subjects${q ? `?${q}` : ''}`);
+      },
+      meta: () => request<SubjectMeta>('/admin/subjects/meta'),
+      getById: (subjectId: string) => request<SubjectRow>(`/admin/subjects/${subjectId}`),
+      create: (data: SubjectInput) =>
+        request<SubjectRow>('/admin/subjects', { method: 'POST', body: JSON.stringify(data) }),
+      update: (subjectId: string, data: SubjectInput) =>
+        request<SubjectRow>(`/admin/subjects/${subjectId}`, { method: 'PUT', body: JSON.stringify(data) }),
+      setStatus: (subjectId: string, status: SubjectStatus) =>
+        request<SubjectRow>(`/admin/subjects/${subjectId}/status`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status }),
+        }),
+      remove: (subjectId: string) =>
+        request<{ id: string }>(`/admin/subjects/${subjectId}`, { method: 'DELETE' }),
+    },
     getFaculty: () => request('/admin/faculty'),
     createFaculty: (fac: any) =>
       request('/admin/faculty', { method: 'POST', body: JSON.stringify(fac) }),
@@ -1102,6 +1545,19 @@ export const api = {
       }),
     deleteFaculty: (facultyId: string) =>
       request(`/admin/faculty/${facultyId}`, { method: 'DELETE' }),
+    /**
+     * Faculty / Mentor bulk actions. Faculty records ARE the mentor records in
+     * this data model, so one action covers both, exactly as the screen does.
+     */
+    facultySelectionIds: () =>
+      request<{ ids: string[]; total: number }>('/admin/faculty/selection/ids'),
+    bulkDeleteFaculty: (ids: string[]) =>
+      request<BulkDeleteOutcome>('/admin/faculty/bulk-delete', {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      }),
+    bulkDownloadFacultyDocuments: (ids: string[]) =>
+      bulkDownloadDocuments('/admin/faculty/bulk-documents', ids),
     getSettings: () => request('/admin/settings'),
     updateSettings: (settings: any) =>
       request('/admin/settings', { method: 'PUT', body: JSON.stringify(settings) }),
@@ -1124,6 +1580,32 @@ export const api = {
     // Global purge of the Student Document repository. Admin-only; the backend
     // rejects every other role with 403 independently of the UI.
     deleteAllDocuments: () => request('/admin/documents/all', { method: 'DELETE' }),
+    /**
+     * Overview statistics-card detail views (ADMIN-only).
+     *
+     * "Total Students", "Assigned Mentees", "Unassigned Students" and
+     * "Total Faculty" reuse the existing paginated directory endpoints
+     * (`api.students.list` / `api.admin.getFaculty`); only the three aggregates
+     * with no other college-wide list live here.
+     */
+    getActiveArrearsDetails: (params: Record<string, string> = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return request<ActiveArrearsDetailsResponse>(
+        `/admin/dashboard-details/active-arrears${q ? `?${q}` : ''}`
+      );
+    },
+    getMentoringSessionsDetails: (params: Record<string, string> = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return request<MentoringSessionsDetailsResponse>(
+        `/admin/dashboard-details/mentoring-sessions${q ? `?${q}` : ''}`
+      );
+    },
+    getUploadedDocumentsDetails: (params: Record<string, string> = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return request<UploadedDocumentsDetailsResponse>(
+        `/admin/dashboard-details/documents${q ? `?${q}` : ''}`
+      );
+    },
     getEditRequests: (status?: string) => {
       const q = status ? `?status=${status}` : '';
       return request(`/admin/identity-edit-requests${q}`);
@@ -1223,6 +1705,25 @@ export const api = {
       request(`/students/${id}/toggle-status`, { method: 'PATCH' }),
     delete: (id: string) =>
       request(`/students/${id}`, { method: 'DELETE' }),
+    /**
+     * Bulk actions (Student Master). `selectionIds` returns every id matching
+     * the current filter within the caller's scope, so "Select All" covers the
+     * whole eligible set rather than only the visible page. The server enforces
+     * ADMIN/HOD-with-department scope and re-validates every id.
+     */
+    selectionIds: (params: Record<string, string> = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return request<{ ids: string[]; total: number }>(
+        `/students/selection/ids${q ? `?${q}` : ''}`
+      );
+    },
+    bulkDelete: (ids: string[]) =>
+      request<BulkDeleteOutcome>('/students/bulk-delete', {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      }),
+    bulkDownloadDocuments: (ids: string[]) =>
+      bulkDownloadDocuments('/students/bulk-documents', ids),
     requestEdit: (data: { requestedChanges: { fullName?: string; registerNumber?: string; department?: string; batch?: string }; reason: string }) =>
       request('/students/identity-edit-request', { method: 'POST', body: JSON.stringify(data) }),
     getMyEditRequests: () =>
@@ -1467,6 +1968,7 @@ export const api = {
         corrected: string;
         hasCorrections: boolean;
         source: string;
+        status: string;
       }>('/mentor/grammar-check', {
         method: 'POST',
         body: JSON.stringify({ text }),
@@ -1893,7 +2395,7 @@ return { success: true, filename: fileName };
     marks: {
       getSubjects: (params: { academicYear: string; year: number; section: string }) => {
         const q = new URLSearchParams({ academicYear: params.academicYear, year: String(params.year), section: params.section }).toString();
-        return request<Array<{ subjectCode: string; subjectName: string; semesterNumber: number }>>(`/hod/marks/subjects${q ? `?${q}` : ''}`);
+        return request<HodSubjectOption[]>(`/hod/marks/subjects${q ? `?${q}` : ''}`);
       },
       getClasses: (params: { academicYear?: string; year?: number } = {}) => {
         const q = new URLSearchParams();
@@ -2211,10 +2713,83 @@ return { success: true, filename: fileName };
     },
   },
 
-  // Ollama-backed AI Assistant (role-scoped, advisory only)
+  // Bulk mentee assignment (ADMIN college-wide / HOD own department only).
+  bulkAssignment: {
+    downloadTemplate: async (format: 'xlsx' | 'csv') => {
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}/mentorship/bulk/template?format=${format}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error('Failed to download the assignment template.');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download =
+        format === 'csv'
+          ? 'KSRCE_Bulk_Mentee_Assignment_Template.csv'
+          : 'KSRCE_Bulk_Mentee_Assignment_Template.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    },
+    validate: (file: File): Promise<ApiResponse<BulkAssignValidationResponse>> => {
+      const form = new FormData();
+      form.append('file', file);
+      return request<BulkAssignValidationResponse>('/mentorship/bulk/validate', {
+        method: 'POST',
+        body: form,
+      });
+    },
+    assign: (payload: {
+      rows: Array<{ rowNumber: number; registerNumber: string; employeeId: string }>;
+      authorizeReassignments: boolean;
+      reason?: string;
+    }): Promise<ApiResponse<BulkAssignExecuteResponse>> =>
+      request<BulkAssignExecuteResponse>('/mentorship/bulk/assign', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    downloadReport: async (payload: {
+      type: 'VALIDATION' | 'RESULT';
+      format: 'CSV' | 'XLSX';
+      rows: any[];
+    }) => {
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}/mentorship/bulk/report`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error('Failed to download the report.');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().split('T')[0];
+      const ext = payload.format === 'XLSX' ? 'xlsx' : 'csv';
+      a.href = url;
+      a.download =
+        payload.type === 'VALIDATION'
+          ? `Bulk_Assignment_Validation_Report_${stamp}.${ext}`
+          : `Bulk_Assignment_Results_${stamp}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    },
+  },
+
+  // Ollama-backed AI Assistant (role-scoped, advisory only).
+  // NOTE: request paths omit the `/api` prefix — API_BASE already supplies it
+  // (backend mounts these at `/api/ai/*`). Including it here produced
+  // `/api/api/ai/*` and a 404.
   ai: {
-    status: (): Promise<ApiResponse<{ available: boolean; model: string; configured?: boolean }>> =>
-      request('/api/ai/status'),
+    status: (): Promise<ApiResponse<{ available: boolean; model: string; provider?: string; configured?: boolean }>> =>
+      request('/ai/status'),
     listConversations: (): Promise<ApiResponse<{ conversations: Array<{
       id: string;
       title: string;
@@ -2224,19 +2799,19 @@ return { success: true, filename: fileName };
       messageCount: number;
       lastMessage?: string;
     }> }>> =>
-      request('/api/ai/conversations'),
+      request('/ai/conversations'),
     getConversation: (id: string): Promise<ApiResponse<{ conversation: any }>> =>
-      request(`/api/ai/conversations/${id}`),
+      request(`/ai/conversations/${id}`),
     createConversation: (): Promise<ApiResponse<{ conversation: any }>> =>
-      request('/api/ai/conversations', { method: 'POST' }),
+      request('/ai/conversations', { method: 'POST' }),
     deleteConversation: (id: string): Promise<ApiResponse<{ deleted: boolean }>> =>
-      request(`/api/ai/conversations/${id}`, { method: 'DELETE' }),
+      request(`/ai/conversations/${id}`, { method: 'DELETE' }),
     chat: (payload: { conversationId?: string; message: string }): Promise<ApiResponse<{
       conversationId: string;
       answer: string;
       conversation?: any;
     }>> =>
-      request('/api/ai/chat', { method: 'POST', body: JSON.stringify(payload) }),
+      request('/ai/chat', { method: 'POST', body: JSON.stringify(payload) }),
   },
 };
 

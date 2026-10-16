@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api, ApiError, STUDENT_PAGE_SIZES } from '../../api/client';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
@@ -7,11 +8,19 @@ import { EmptyState } from '../../components/common/EmptyState';
 import { Skeleton } from '../../components/common/Skeleton';
 import { StudentDetailsView } from '../common/StudentDetailsView';
 import { PageHeader } from '../../components/common/PageHeader';
+import { StatDetailsModal, type StatCardKey } from '../../components/admin/StatDetailsModal';
 import { AdminMentoringDashboard } from './AdminMentoringDashboard';
 import { AdminHodManagement } from './AdminHodManagement';
 import { AdminInternalMarks } from './AdminInternalMarks';
+import { AdminSubjectManagement } from './AdminSubjectManagement';
 import { AdminStudentDocuments } from './AdminStudentDocuments';
 import { AdminBulkUpload } from './AdminBulkUpload';
+import { BulkAssignMentees } from '../../components/mentorship/BulkAssignMentees';
+import { useRowSelection } from '../../hooks/useRowSelection';
+import { BulkActionBar, type BulkBusyAction } from '../../components/bulk/BulkActionBar';
+import { BulkDeleteModal } from '../../components/bulk/BulkDeleteModal';
+import { SelectionCheckbox } from '../../components/bulk/SelectionCheckbox';
+import { facultyMatchesQuery } from '../../utils/facultySearch';
 import {
   DashboardSkeleton,
   StudentsSkeleton,
@@ -67,6 +76,7 @@ interface AdminDashboardProps {
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSelectTab }) => {
   const toast = useToast();
+  const navigate = useNavigate();
   const { user } = useAuth();
   // Server-side authorisation is the real gate (the endpoint returns 403 for any
   // non-admin). This flag only keeps the control out of the UI for other roles.
@@ -127,6 +137,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
   const [directoryBatch, setDirectoryBatch] = useState('');
   const [directoryLoading, setDirectoryLoading] = useState(false);
   const [directoryError, setDirectoryError] = useState<string | null>(null);
+
+  // ── Faculty / Mentors + Mentor Assignment Desk search ──────────────────────
+  // Client-side over the already-loaded, role-scoped `faculty` list (the API
+  // returns only what this account may see). Kept separate from the Student
+  // Master directory search above. Neither screen paginates: the whole eligible
+  // set arrives in one request, so there is no page to reset on a query change.
+  const [facultySearch, setFacultySearch] = useState('');
+  const [mentorSearch, setMentorSearch] = useState('');
 
   // Search and the department/batch filters are resolved by the API so that they
   // cover the whole dataset, not just the rows already on screen. The backend
@@ -208,6 +226,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
   const [assignMenteesTarget, setAssignMenteesTarget] = useState<any | null>(null);
   // View Mentees modal state
   const [viewMenteesTarget, setViewMenteesTarget] = useState<any | null>(null);
+  // Bulk Upload & Assign Mentees modal state
+  const [showBulkAssign, setShowBulkAssign] = useState(false);
+  // Overview statistics-card drill-down: which card's records are open (null = closed).
+  const [statCard, setStatCard] = useState<StatCardKey | null>(null);
 
   // Form states
   const [newStudentForm, setNewStudentForm] = useState({
@@ -257,6 +279,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
   const [deletingStudent, setDeletingStudent] = useState(false);
   const [deleteFacultyTarget, setDeleteFacultyTarget] = useState<any | null>(null);
   const [deletingFaculty, setDeletingFaculty] = useState(false);
+
+  // ── Bulk selection (Student Master + Faculty / Mentors) ────────────────────
+  // Selection is keyed by record id (see useRowSelection), so it survives
+  // pagination and a data refresh and never "jumps" to a different record when
+  // row positions change. It is cleared whenever the eligible population
+  // changes (a filter is applied, or the tab is switched).
+  const studentSelection = useRowSelection();
+  const facultySelection = useRowSelection();
+  const [bulkBusy, setBulkBusy] = useState<BulkBusyAction>(null);
+  const [bulkDeleteScope, setBulkDeleteScope] = useState<'students' | 'faculty' | null>(null);
+  // Total eligible records for the current student filter (from the API), so
+  // "Select all" can offer the whole set rather than only the visible page.
+  const [studentEligibleTotal, setStudentEligibleTotal] = useState<number | null>(null);
 
   // Faculty Department Reassignment — ADMIN only. The two-step dialog picks a
   // new department, then shows an explicit confirmation. The backend keeps
@@ -674,6 +709,151 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
     );
   };
 
+  // ── Bulk action handlers (Student Master + Faculty / Mentors) ──────────────
+
+  /** Current student filter as query params, matching the directory request. */
+  const currentStudentFilterParams = (): Record<string, string> => ({
+    ...(directorySearch ? { search: directorySearch } : {}),
+    ...(directoryDept ? { departmentId: directoryDept } : {}),
+    ...(directoryBatch ? { batchId: directoryBatch } : {}),
+  });
+
+  /**
+   * "Select all": ask the server for every id matching the current filter within
+   * this user's scope, so the whole eligible set is selected — not just the
+   * rows on the visible page.
+   */
+  const handleSelectAllStudents = async () => {
+    setBulkBusy('select-all');
+    try {
+      const res = await api.students.selectionIds(currentStudentFilterParams());
+      if (res.success) {
+        studentSelection.replaceWith(res.data.ids);
+        setStudentEligibleTotal(res.data.total);
+        if (res.data.ids.length === 0) toast.info('No students match the current filters.');
+      } else {
+        toast.error(res.message || 'Could not select all students.');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Could not select all students.');
+    } finally {
+      setBulkBusy(null);
+    }
+  };
+
+  const closeBulkDelete = () => {
+    if (bulkBusy === 'delete') return;
+    setBulkDeleteScope(null);
+  };
+
+  /** Confirm and run a bulk delete for whichever scope the dialog is showing. */
+  const handleConfirmBulkDelete = async () => {
+    if (!bulkDeleteScope) return;
+    const deletingStudents = bulkDeleteScope === 'students';
+    const ids = deletingStudents
+      ? Array.from(studentSelection.selected)
+      : Array.from(facultySelection.selected);
+    if (ids.length === 0) {
+      setBulkDeleteScope(null);
+      return;
+    }
+
+    setBulkBusy('delete');
+    try {
+      const res = deletingStudents
+        ? await api.students.bulkDelete(ids)
+        : await api.admin.bulkDeleteFaculty(ids);
+
+      if (res.success) {
+        const { summary, failed, deleted } = res.data;
+        if (summary.failed === 0) {
+          toast.success(res.message || `${summary.deleted} record(s) deleted permanently.`);
+        } else if (summary.deleted === 0) {
+          toast.error(res.message || 'No records could be deleted.', 'Bulk delete failed');
+        } else {
+          toast.warning(
+            res.message || `${summary.deleted} deleted, ${summary.failed} failed.`,
+            'Partial delete'
+          );
+        }
+        // Refresh the affected lists and drop exactly the records that were
+        // deleted; any that failed stay selected so they can be retried.
+        if (deletingStudents) {
+          await loadDirectory();
+          await loadData();
+          studentSelection.removeMany(deleted.map((d) => d.id));
+        } else {
+          await loadData();
+          facultySelection.removeMany(deleted.map((d) => d.id));
+        }
+      } else {
+        toast.error(res.message || 'Bulk delete failed.');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Bulk delete failed.');
+    } finally {
+      setBulkBusy(null);
+      setBulkDeleteScope(null);
+    }
+  };
+
+  /** Download the selected records' documents as a single ZIP. */
+  const handleBulkDownloadDocuments = async () => {
+    const onFacultyTab = currentTab === 'faculty';
+    const ids = onFacultyTab
+      ? Array.from(facultySelection.selected)
+      : Array.from(studentSelection.selected);
+    if (ids.length === 0) return;
+
+    setBulkBusy('download');
+    try {
+      const result = onFacultyTab
+        ? await api.admin.bulkDownloadFacultyDocuments(ids)
+        : await api.students.bulkDownloadDocuments(ids);
+      if (result.hasDocuments) {
+        toast.success(result.message || 'Documents downloaded.');
+      } else {
+        // No archive was produced; explain why rather than offering an empty ZIP.
+        toast.info(result.message, 'Nothing to download');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Bulk download failed.');
+    } finally {
+      setBulkBusy(null);
+    }
+  };
+
+  // A selected record's display fields, resolved from the loaded rosters so the
+  // confirmation dialog can name every record — including ones selected on a
+  // different page. Falls back to the raw id if a record is no longer loaded.
+  const bulkDeleteItems = (() => {
+    if (bulkDeleteScope === 'faculty') {
+      return Array.from(facultySelection.selected).map((id) => {
+        const f = faculty.find((x: any) => x.id === id);
+        return {
+          id,
+          primary: f?.full_name || f?.employee_id || id,
+          secondary: f
+            ? [f.employee_id ? `EMP ${f.employee_id}` : '', f.department_code]
+                .filter(Boolean)
+                .join(' · ')
+            : '',
+        };
+      });
+    }
+    const studentById = new Map(students.map((s: any) => [s.id, s]));
+    return Array.from(studentSelection.selected).map((id) => {
+      const s = studentById.get(id) || directoryRows.find((x: any) => x.id === id);
+      return {
+        id,
+        primary: s?.full_name || id,
+        secondary: s
+          ? [s.register_number, s.department_code].filter(Boolean).join(' · ')
+          : '',
+      };
+    });
+  })();
+
   // Apply the confirmed faculty department reassignment. Only the Admin may do
   // this (the backend rejects every other role), and existing mentee
   // assignments are deliberately preserved — mentees are reassigned manually
@@ -698,10 +878,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
     }
   };
 
-  // Reset student details view when sidebar tab changes
+  // A filter change swaps the eligible population, so any prior selection would
+  // refer to a different set of records: clear it. Page changes deliberately do
+  // NOT clear the selection (it accumulates across pages).
+  useEffect(() => {
+    studentSelection.clear();
+    setStudentEligibleTotal(null);
+  }, [directorySearch, directoryDept, directoryBatch]);
+
+  // The faculty / mentor search narrows the eligible population the same way, so
+  // any prior selection would refer to rows that are now hidden: clear it on
+  // every query change. This keeps "Select All" and bulk delete/download scoped
+  // strictly to the results the user can currently see.
+  useEffect(() => {
+    facultySelection.clear();
+  }, [facultySearch]);
+
+  // Reset student details view and both selections when the sidebar tab changes
   useEffect(() => {
     setSelectedStudentId(null);
     setDocumentsStudent(null);
+    setBulkDeleteScope(null);
+    studentSelection.clear();
+    facultySelection.clear();
     if (currentTab === 'identity-requests') {
       fetchEditRequests();
     }
@@ -730,6 +929,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
   // Internal Marks tab (mark-entry window + correction queue). Self-loading.
   if (currentTab === 'internal-marks') {
     return <AdminInternalMarks />;
+  }
+
+  // Subject Management (Admin subject catalogue). Self-loading, so it is rendered
+  // before the shared loading/error gates that the main dashboard tabs use.
+  if (currentTab === 'subjects') {
+    return <AdminSubjectManagement />;
   }
 
   // Bulk Upload (Admin only - Students & Faculty .xlsx). Self-loading.
@@ -778,6 +983,35 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
     return matchesSearch && matchesDept && matchesBatch;
   });
 
+  // Faculty / Mentor search: client-side over the already-loaded, role-scoped
+  // list. A blank query returns the full list, so the default view is unchanged.
+  // Both surfaces search the same vocabulary (name, employee ID, email,
+  // designation, department). There is no pagination on either screen — the
+  // whole eligible set arrives in one request — so nothing has to be reset.
+  const filteredFaculty = faculty.filter((f: any) => facultyMatchesQuery(f, facultySearch));
+  const filteredMentors = faculty.filter((f: any) => facultyMatchesQuery(f, mentorSearch));
+
+  // "About Us" shortcut in the Mentor Assignment search. Typing the exact phrase
+  // (case-insensitive, trimmed) surfaces an "About Us — View Page" result that
+  // opens the About Us page. An incomplete word ("Abou") must NOT trigger it, so
+  // this is an EXACT match; ordinary mentor search is completely unaffected.
+  const showAboutUsResult = mentorSearch.trim().toLowerCase() === 'about us';
+
+  // The official aggregate behind the clicked overview card, shown as the
+  // drill-down header. Values come straight from the stats endpoint, so the
+  // modal heading and the card can never disagree.
+  const statCardValue = statCard
+    ? ({
+        totalStudents: stats?.totalStudents,
+        totalFaculty: stats?.totalFaculty,
+        assignedMentees: stats?.assignedMentees,
+        unassignedStudents: stats?.unassignedStudents,
+        activeArrears: stats?.activeArrears,
+        mentoringSessions: stats?.counsellingSessions,
+        uploadedDocuments: stats?.uploadedDocuments,
+      }[statCard] ?? 0)
+    : 0;
+
   return (
     <div>
       {/* Overview Tab */}
@@ -788,77 +1022,52 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
             title="Admin Dashboard"
             subtitle="College-wide mentoring, faculty and compliance statistics at a glance."
           />
-          {/* Stat Cards - 7 Real MongoDB Aggregations */}
+          {/* Stat Cards — 7 real aggregations. Each card is a drill-down into the
+              records behind its number (see StatDetailsModal). */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem', marginBottom: '1.5rem' }}>
-            <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: 'var(--color-navy-50)', color: 'var(--color-navy-800)' }}>
-                <GraduationCap size={24} />
+            {(
+              [
+                { key: 'totalStudents', label: 'Total Students', value: stats?.totalStudents ?? 0, icon: <GraduationCap size={24} />, iconBg: 'var(--color-navy-50)', iconColor: 'var(--color-navy-800)' },
+                { key: 'totalFaculty', label: 'Total Faculty', value: stats?.totalFaculty ?? 0, icon: <Users size={24} />, iconBg: '#EFF6FF', iconColor: '#1D4ED8' },
+                { key: 'assignedMentees', label: 'Assigned Mentees', value: stats?.assignedMentees ?? 0, icon: <UserCheck size={24} />, iconBg: 'var(--color-success-50)', iconColor: '#059669' },
+                { key: 'unassignedStudents', label: 'Unassigned Students', value: stats?.unassignedStudents ?? 0, icon: <UserPlus size={24} />, iconBg: 'var(--color-warning-50)', iconColor: '#D97706' },
+                { key: 'activeArrears', label: 'Active Arrears', value: stats?.activeArrears ?? 0, icon: <AlertCircle size={24} />, iconBg: 'var(--color-danger-50)', iconColor: '#DC2626' },
+                { key: 'mentoringSessions', label: 'Mentoring Sessions', value: stats?.counsellingSessions ?? 0, icon: <BookOpen size={24} />, iconBg: '#F5F3FF', iconColor: '#7C3AED' },
+                { key: 'uploadedDocuments', label: 'Uploaded Documents', value: stats?.uploadedDocuments ?? 0, icon: <FileText size={24} />, iconBg: 'var(--color-warning-100)', iconColor: '#B45309' },
+              ] as {
+                key: StatCardKey;
+                label: string;
+                value: number;
+                icon: React.ReactNode;
+                iconBg: string;
+                iconColor: string;
+              }[]
+            ).map((card) => (
+              <div
+                key={card.key}
+                className="stat-card stat-card--clickable"
+                role="button"
+                tabIndex={0}
+                aria-label={`View ${card.label} records`}
+                title={`View ${card.label} records`}
+                onClick={() => setStatCard(card.key)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setStatCard(card.key);
+                  }
+                }}
+              >
+                <div className="stat-icon" style={{ backgroundColor: card.iconBg, color: card.iconColor }}>
+                  {card.icon}
+                </div>
+                <div className="stat-info">
+                  <h3>{card.label}</h3>
+                  <div className="stat-value">{card.value}</div>
+                </div>
+                <ChevronRight size={16} className="stat-card-chevron" aria-hidden="true" />
               </div>
-              <div className="stat-info">
-                <h3>Total Students</h3>
-                <div className="stat-value">{stats?.totalStudents ?? 0}</div>
-              </div>
-            </div>
-
-            <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#EFF6FF', color: '#1D4ED8' }}>
-                <Users size={24} />
-              </div>
-              <div className="stat-info">
-                <h3>Total Faculty</h3>
-                <div className="stat-value">{stats?.totalFaculty ?? 0}</div>
-              </div>
-            </div>
-
-            <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: 'var(--color-success-50)', color: '#059669' }}>
-                <UserCheck size={24} />
-              </div>
-              <div className="stat-info">
-                <h3>Assigned Mentees</h3>
-                <div className="stat-value">{stats?.assignedMentees ?? 0}</div>
-              </div>
-            </div>
-
-            <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: 'var(--color-warning-50)', color: '#D97706' }}>
-                <UserPlus size={24} />
-              </div>
-              <div className="stat-info">
-                <h3>Unassigned Students</h3>
-                <div className="stat-value">{stats?.unassignedStudents ?? 0}</div>
-              </div>
-            </div>
-
-            <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: 'var(--color-danger-50)', color: '#DC2626' }}>
-                <AlertCircle size={24} />
-              </div>
-              <div className="stat-info">
-                <h3>Active Arrears</h3>
-                <div className="stat-value">{stats?.activeArrears ?? 0}</div>
-              </div>
-            </div>
-
-            <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: '#F5F3FF', color: '#7C3AED' }}>
-                <BookOpen size={24} />
-              </div>
-              <div className="stat-info">
-                <h3>Counselling Sessions</h3>
-                <div className="stat-value">{stats?.counsellingSessions ?? 0}</div>
-              </div>
-            </div>
-
-            <div className="stat-card">
-              <div className="stat-icon" style={{ backgroundColor: 'var(--color-warning-100)', color: '#B45309' }}>
-                <FileText size={24} />
-              </div>
-              <div className="stat-info">
-                <h3>Uploaded Documents</h3>
-                <div className="stat-value">{stats?.uploadedDocuments ?? 0}</div>
-              </div>
-            </div>
+            ))}
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
@@ -1036,12 +1245,50 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
             </div>
           </div>
 
+          {/* Bulk actions for the current selection (shown only when ≥1 row is
+              selected). `Select all` resolves the whole eligible set server-side. */}
+          <BulkActionBar
+            count={studentSelection.count}
+            totalEligible={studentEligibleTotal ?? directoryTotal}
+            allSelected={
+              studentSelection.count > 0 &&
+              studentSelection.count === (studentEligibleTotal ?? directoryTotal)
+            }
+            itemNoun="student"
+            busy={bulkBusy}
+            onSelectAll={handleSelectAllStudents}
+            onClear={studentSelection.clear}
+            onDelete={() => setBulkDeleteScope('students')}
+            onDownload={handleBulkDownloadDocuments}
+          />
+
           {/* Students Table */}
           <div className="card" style={{ padding: 0 }}>
             <div className="table-responsive desktop-only">
               <table className="table">
                 <thead>
                   <tr>
+                    <th className="bulk-select-cell">
+                      <SelectionCheckbox
+                        checked={
+                          directoryRows.length > 0 &&
+                          directoryRows.every((s: any) => studentSelection.has(s.id))
+                        }
+                        indeterminate={studentSelection.isPartiallySelected(
+                          directoryRows.map((s: any) => s.id)
+                        )}
+                        onChange={() => {
+                          const pageIds = directoryRows.map((s: any) => s.id);
+                          if (studentSelection.isAllSelected(pageIds)) {
+                            studentSelection.removeMany(pageIds);
+                          } else {
+                            studentSelection.addMany(pageIds);
+                          }
+                        }}
+                        aria-label="Select all students on this page"
+                        disabled={directoryRows.length === 0}
+                      />
+                    </th>
                     <th>Register Number</th>
                     <th>Student Name & ID</th>
                     <th>Department & Batch</th>
@@ -1056,7 +1303,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                 <tbody>
                   {directoryRows.length === 0 ? (
                     <tr>
-                      <td colSpan={9} style={{ padding: '1.5rem', border: 'none' }}>
+                      <td colSpan={10} style={{ padding: '1.5rem', border: 'none' }}>
                         <EmptyState
                           icon={<GraduationCap size={28} />}
                           title={directoryLoading ? 'Loading Students...' : 'No Students Found'}
@@ -1075,7 +1322,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                     </tr>
                   ) : (
                     directoryRows.map((s) => (
-                    <tr key={s.id}>
+                    <tr key={s.id} className={studentSelection.has(s.id) ? 'row-selected' : undefined}>
+                      <td className="bulk-select-cell">
+                        <SelectionCheckbox
+                          checked={studentSelection.has(s.id)}
+                          onChange={() => studentSelection.toggle(s.id)}
+                          aria-label={`Select student ${s.full_name}`}
+                        />
+                      </td>
                       <td style={{ fontWeight: 700, color: 'var(--color-navy-800)' }}>{s.register_number}</td>
                       <td>
                         <strong>{s.full_name}</strong>
@@ -1213,13 +1467,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                     style={{
                       padding: '1rem',
                       borderRadius: '12px',
-                      border: '1px solid #E2E8F0',
+                      border: studentSelection.has(s.id) ? '1px solid var(--color-gold-500)' : '1px solid #E2E8F0',
                       boxShadow: '0 2px 6px rgba(0,0,0,0.04)',
-                      background: '#ffffff',
+                      background: studentSelection.has(s.id) ? '#FFFBEB' : '#ffffff',
                     }}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
-                      <div>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem', marginBottom: '0.5rem' }}>
+                      <SelectionCheckbox
+                        checked={studentSelection.has(s.id)}
+                        onChange={() => studentSelection.toggle(s.id)}
+                        aria-label={`Select student ${s.full_name}`}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--color-navy-800)', letterSpacing: '0.5px' }}>
                           {s.register_number}
                         </div>
@@ -1384,12 +1643,85 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
             }
           />
 
+          {/* Faculty / Mentors search — client-side over the already-loaded,
+              role-scoped list. Matches name, employee ID, email, designation
+              and department; partial and case-insensitive. */}
+          <div className="card" style={{ padding: '1rem', marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <div style={{ flex: 1, minWidth: '240px', position: 'relative' }}>
+                <Search size={16} style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--color-slate-400)' }} />
+                <input
+                  type="text"
+                  className="form-control"
+                  style={{ paddingLeft: '2rem', paddingRight: '2.25rem' }}
+                  placeholder="Search by name, employee ID, or email..."
+                  value={facultySearch}
+                  onChange={(e) => setFacultySearch(e.target.value)}
+                  aria-label="Search faculty by name, employee ID, email, designation or department"
+                />
+                {facultySearch.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setFacultySearch('')}
+                    aria-label="Clear faculty search"
+                    title="Clear search"
+                    style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', color: 'var(--color-slate-400)', lineHeight: 0 }}
+                  >
+                    <X size={15} />
+                  </button>
+                )}
+              </div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--color-slate-500)' }} aria-live="polite">
+                {facultySearch.trim().length > 0
+                  ? `Showing ${filteredFaculty.length} of ${faculty.length} faculty member${faculty.length === 1 ? '' : 's'}`
+                  : `${faculty.length} faculty member${faculty.length === 1 ? '' : 's'}`}
+              </div>
+            </div>
+          </div>
+
+          {/* Bulk actions for the selected faculty / mentor records. A Faculty
+              record IS the mentor record here, so one action covers both. */}
+          <BulkActionBar
+            count={facultySelection.count}
+            totalEligible={filteredFaculty.length}
+            allSelected={
+              facultySelection.count > 0 && facultySelection.count === filteredFaculty.length
+            }
+            itemNoun="faculty member"
+            busy={bulkBusy}
+            onSelectAll={() => facultySelection.replaceWith(filteredFaculty.map((f: any) => f.id))}
+            onClear={facultySelection.clear}
+            onDelete={() => setBulkDeleteScope('faculty')}
+            onDownload={handleBulkDownloadDocuments}
+          />
+
           <div className="card" style={{ padding: 0 }}>
             {/* Desktop Table View */}
             <div className="table-responsive desktop-only">
               <table className="table">
                 <thead>
                   <tr>
+                    <th className="bulk-select-cell">
+                      <SelectionCheckbox
+                        checked={
+                          filteredFaculty.length > 0 &&
+                          filteredFaculty.every((f: any) => facultySelection.has(f.id))
+                        }
+                        indeterminate={facultySelection.isPartiallySelected(
+                          filteredFaculty.map((f: any) => f.id)
+                        )}
+                        onChange={() => {
+                          const allIds = filteredFaculty.map((f: any) => f.id);
+                          if (facultySelection.isAllSelected(allIds)) {
+                            facultySelection.removeMany(allIds);
+                          } else {
+                            facultySelection.addMany(allIds);
+                          }
+                        }}
+                        aria-label="Select all faculty members in the current results"
+                        disabled={filteredFaculty.length === 0}
+                      />
+                    </th>
                     <th>Emp ID</th>
                     <th>Faculty Name</th>
                     <th>Department</th>
@@ -1401,15 +1733,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                   </tr>
                 </thead>
                 <tbody>
-                  {faculty.length === 0 ? (
+                  {filteredFaculty.length === 0 ? (
                     <tr>
-                      <td colSpan={8} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--color-slate-500)' }}>
-                        No faculty members available.
+                      <td colSpan={9} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--color-slate-500)' }}>
+                        {facultySearch.trim().length > 0
+                          ? 'No matching faculty found'
+                          : 'No faculty members available.'}
                       </td>
                     </tr>
                   ) : (
-                    faculty.map((f) => (
-                    <tr key={f.id}>
+                    filteredFaculty.map((f) => (
+                    <tr key={f.id} className={facultySelection.has(f.id) ? 'row-selected' : undefined}>
+                      <td className="bulk-select-cell">
+                        <SelectionCheckbox
+                          checked={facultySelection.has(f.id)}
+                          onChange={() => facultySelection.toggle(f.id)}
+                          aria-label={`Select faculty ${f.full_name}`}
+                        />
+                      </td>
                       <td style={{ fontWeight: 700 }}>{f.employee_id}</td>
                       <td>
                         <strong>{f.full_name}</strong>
@@ -1510,25 +1851,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
 
             {/* Mobile Cards View */}
             <div className="mobile-only" style={{ flexDirection: 'column', gap: '0.85rem', padding: '0.85rem' }}>
-              {faculty.length === 0 ? (
+              {filteredFaculty.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--color-slate-500)' }}>
-                  No faculty members available.
+                  {facultySearch.trim().length > 0
+                    ? 'No matching faculty found'
+                    : 'No faculty members available.'}
                 </div>
               ) : (
-                faculty.map((f) => (
+                filteredFaculty.map((f) => (
                   <div
                     key={f.id}
                     className="card"
                     style={{
                       padding: '1rem',
                       borderRadius: '12px',
-                      border: '1px solid #E2E8F0',
+                      border: facultySelection.has(f.id) ? '1px solid var(--color-gold-500)' : '1px solid #E2E8F0',
                       boxShadow: '0 2px 6px rgba(0,0,0,0.04)',
-                      background: '#ffffff',
+                      background: facultySelection.has(f.id) ? '#FFFBEB' : '#ffffff',
                     }}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
-                      <div>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem', marginBottom: '0.5rem' }}>
+                      <SelectionCheckbox
+                        checked={facultySelection.has(f.id)}
+                        onChange={() => facultySelection.toggle(f.id)}
+                        aria-label={`Select faculty ${f.full_name}`}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-slate-500)', letterSpacing: '0.5px' }}>
                           EMP: {f.employee_id}
                         </div>
@@ -1695,7 +2043,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
           <PageHeader
             eyebrow="Administration"
             title="Institutional Mentor Reassignment Desk"
-            subtitle={<>Enforces the Cardinal Rule: <strong>Student Data is Permanent</strong>. When Mentor A is changed to Mentor B, all academic, meeting, and counselling records are preserved.</>}
+            subtitle={<>Enforces the Cardinal Rule: <strong>Student Data is Permanent</strong>. When Mentor A is changed to Mentor B, all academic, meeting, and mentoring records are preserved.</>}
           />
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
@@ -1776,7 +2124,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
               <ul style={{ paddingLeft: '1.25rem', fontSize: '0.85rem', color: 'var(--color-slate-600)', lineHeight: 1.8 }}>
                 <li><strong>Permanent Student ID</strong>: Student retains the exact same ID and Register Number.</li>
                 <li><strong>Academic Persistence</strong>: 10th/12th, Cut-off, and Semesters 1-8 CGPA/arrears remain 100% untouched.</li>
-                <li><strong>Past Counselling Preservation</strong>: Prior counselling entries made by old mentors remain intact.</li>
+                <li><strong>Past Mentoring Preservation</strong>: Prior mentoring entries made by old mentors remain intact.</li>
                 <li><strong>Saturday Meetings Record</strong>: Past Saturday meeting records retain previous mentor references.</li>
                 <li><strong>Audited Transition</strong>: Old assignment status becomes <code>COMPLETED</code>; new assignment becomes <code>ACTIVE</code>.</li>
               </ul>
@@ -2021,7 +2369,128 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
           <PageHeader
             eyebrow="Administration"
             title="Mentor Assignment Desk"
+            actions={
+              <button
+                type="button"
+                className="btn btn-gold btn-sm"
+                onClick={() => setShowBulkAssign(true)}
+              >
+                <ArrowRightLeft size={16} /> Bulk Assign Mentees
+              </button>
+            }
           />
+
+          {/* Mentor search — same client-side matcher over the already-loaded,
+              role-scoped roster. Matches mentor name, employee ID, email,
+              designation and department. */}
+          <div className="card" style={{ padding: '1rem', marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <div style={{ flex: 1, minWidth: '240px', position: 'relative' }}>
+                <Search size={16} style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--color-slate-400)' }} />
+                <input
+                  type="text"
+                  className="form-control"
+                  style={{ paddingLeft: '2rem', paddingRight: '2.25rem' }}
+                  placeholder="Search by name, employee ID, or email... (try “About Us”)"
+                  value={mentorSearch}
+                  onChange={(e) => setMentorSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Enter on the exact "About Us" query opens the About Us page,
+                    // mirroring selecting the visible result below. An incomplete
+                    // query never triggers this.
+                    if (e.key === 'Enter' && showAboutUsResult) {
+                      e.preventDefault();
+                      navigate('/about');
+                    }
+                  }}
+                  aria-label="Search mentors by name, employee ID, email, designation or department. Type About Us to open the About Us page."
+                />
+                {mentorSearch.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setMentorSearch('')}
+                    aria-label="Clear mentor search"
+                    title="Clear search"
+                    style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', color: 'var(--color-slate-400)', lineHeight: 0 }}
+                  >
+                    <X size={15} />
+                  </button>
+                )}
+              </div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--color-slate-500)' }} aria-live="polite">
+                {mentorSearch.trim().length > 0
+                  ? `Showing ${filteredMentors.length} of ${faculty.length} mentor${faculty.length === 1 ? '' : 's'}`
+                  : `${faculty.length} mentor${faculty.length === 1 ? '' : 's'}`}
+              </div>
+            </div>
+          </div>
+
+          {/* "About Us" search result. Appears only for the exact query so it
+              never interferes with ordinary mentor search. */}
+          {showAboutUsResult && (
+            <div className="card" style={{ padding: '0.4rem', marginBottom: '1.25rem' }}>
+              <div
+                style={{
+                  fontSize: '0.72rem',
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                  color: 'var(--color-slate-400)',
+                  padding: '0.35rem 0.6rem 0.2rem',
+                }}
+              >
+                Pages
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate('/about')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.75rem',
+                  width: '100%',
+                  textAlign: 'left',
+                  background: 'none',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '0.6rem',
+                  cursor: 'pointer',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'var(--color-navy-50)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'none';
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '8px',
+                    backgroundColor: 'var(--color-navy-50)',
+                    color: 'var(--color-navy-800)',
+                    flexShrink: 0,
+                  }}
+                >
+                  <School size={18} />
+                </span>
+                <span style={{ flex: 1 }}>
+                  <span style={{ display: 'block', fontWeight: 700, color: 'var(--color-navy-800)' }}>
+                    About Us
+                  </span>
+                  <span style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-slate-500)' }}>
+                    View Page — institution and platform information
+                  </span>
+                </span>
+                <ChevronRight size={16} style={{ color: 'var(--color-slate-400)' }} aria-hidden="true" />
+              </button>
+            </div>
+          )}
 
           <div className="card" style={{ padding: '1.25rem', marginBottom: '1.25rem', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -2049,7 +2518,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                   </tr>
                 </thead>
                 <tbody>
-                  {faculty.map((f) => (
+                  {filteredMentors.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--color-slate-500)' }}>
+                        {mentorSearch.trim().length > 0
+                          ? showAboutUsResult
+                            ? 'No mentors match “About Us” — open the About Us result above.'
+                            : 'No matching mentors found'
+                          : 'No mentors available.'}
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredMentors.map((f) => (
                     <tr key={f.id}>
                       <td style={{ fontWeight: 600 }}>{f.full_name}</td>
                       <td>{f.employee_id}</td>
@@ -2077,13 +2557,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                         </div>
                       </td>
                     </tr>
-                  ))}
+                  ))
+                  )}
                 </tbody>
               </table>
             </div>
           </div>
         </div>
       )}
+
+      {/* Bulk Upload & Assign Mentees (Admin, college-wide) */}
+      <BulkAssignMentees
+        isOpen={showBulkAssign}
+        onClose={() => setShowBulkAssign(false)}
+        onCompleted={() => {
+          loadData();
+        }}
+      />
+
+      {/* Overview statistics-card drill-down. Renders only when a card is open. */}
+      <StatDetailsModal
+        cardKey={statCard}
+        cardValue={statCardValue}
+        onClose={() => setStatCard(null)}
+      />
 
       {/* Student Documents Tab */}
       {currentTab === 'documents' && (
@@ -2247,7 +2744,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
         <div>
           <PageHeader
             eyebrow="Administration"
-            title="Institutional 5-Domain Counselling Hub"
+            title="Institutional 5-Domain Mentoring Hub"
           />
 
           <div className="grid-cols-4" style={{ marginBottom: '1.5rem' }}>
@@ -2266,7 +2763,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
 
           <div className="card">
             <div className="card-header">
-              <h3 className="card-title"><FileText size={18} /> Student Counselling Directory</h3>
+              <h3 className="card-title"><FileText size={18} /> Student Mentoring Directory</h3>
             </div>
             <div className="table-responsive">
               <table className="table">
@@ -2277,7 +2774,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                     <th>Department</th>
                     <th>Arrears</th>
                     <th>Assigned Mentor</th>
-                    <th>Counselling Action</th>
+                    <th>Mentoring Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2297,7 +2794,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
                           className="btn btn-primary btn-sm"
                           onClick={() => setSelectedStudentId(s.id)}
                         >
-                          <FileText size={14} /> View Student Counselling
+                          <FileText size={14} /> View Student Mentoring
                         </button>
                       </td>
                     </tr>
@@ -2552,7 +3049,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
               Download Autonomous KSRCE 6-Page Student Mentoring Dossier
             </h3>
             <p style={{ fontSize: '0.85rem', color: 'var(--color-slate-500)', marginBottom: '1.25rem' }}>
-              Generate complete, official Anna University Autonomous compliant PDF records containing bio-data, feeder school history, 8-semester marks, arrears tracking, Saturday session logs, and 5-domain counselling summaries.
+              Generate complete, official Anna University Autonomous compliant PDF records containing bio-data, feeder school history, 8-semester marks, arrears tracking, Saturday session logs, and 5-domain mentoring summaries.
             </p>
 
             <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -3654,6 +4151,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
         </form>
       </Modal>
 
+      {/* MODAL: Bulk Delete Confirmation (students OR faculty/mentors) */}
+      <BulkDeleteModal
+        isOpen={bulkDeleteScope !== null}
+        entityLabel={bulkDeleteScope === 'faculty' ? 'faculty member' : 'student'}
+        items={bulkDeleteItems}
+        busy={bulkBusy === 'delete'}
+        onClose={closeBulkDelete}
+        onConfirm={handleConfirmBulkDelete}
+      />
+
       {/* MODAL: Delete Student Confirmation */}
       <Modal
         isOpen={!!deleteStudentTarget}
@@ -3679,7 +4186,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentTab, onSe
               <div>
                 <strong style={{ color: '#991B1B', fontSize: '0.95rem' }}>Irreversible Administrative Action</strong>
                 <p style={{ color: '#B91C1C', fontSize: '0.85rem', margin: '4px 0 0' }}>
-                  Are you sure you want to permanently delete this student record? This will delete the student profile, academic semester ledger, counselling history, meeting records, and portal login account.
+                  Are you sure you want to permanently delete this student record? This will delete the student profile, academic semester ledger, mentoring history, meeting records, and portal login account.
                 </p>
               </div>
             </div>
@@ -4365,7 +4872,7 @@ const ViewMenteesModal: React.FC<ViewMenteesModalProps> = ({ faculty, onClose, o
           <div style={{ padding: '0.875rem 1.5rem', background: '#FEF2F2', borderBottom: '1px solid #FECACA' }}>
             <p style={{ fontSize: '0.88rem', fontWeight: 600, color: '#991B1B', marginBottom: '0.6rem' }}>
               Remove <strong>{removeTarget.full_name}</strong> ({removeTarget.register_number}) from {faculty.full_name}?<br />
-              <span style={{ fontWeight: 400, color: '#B91C1C', fontSize: '0.8rem' }}>Student data, meetings, counselling records remain intact.</span>
+              <span style={{ fontWeight: 400, color: '#B91C1C', fontSize: '0.8rem' }}>Student data, meetings, mentoring records remain intact.</span>
             </p>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button className="btn btn-secondary btn-sm" onClick={() => setRemoveTarget(null)} disabled={removing}>Cancel</button>

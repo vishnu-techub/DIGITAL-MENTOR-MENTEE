@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Award,
@@ -142,6 +142,68 @@ export const LeaderboardView: React.FC<{
     void load();
   }, [load]);
 
+  /* ---------------------------------------------------- derived presentation */
+  // NOTE: every hook must run on EVERY render, so this `useMemo` is declared
+  // BEFORE the early returns below. Placing it after `if (error) …` / `if (!data) …`
+  // made the hook count change between the loading and loaded renders, which React
+  // rejects with "Rendered more hooks than during the previous render" at runtime.
+
+  const entries: LeaderboardEntry[] = data?.entries ?? [];
+
+  const derived = useMemo(() => {
+    const totalPointsAwarded = entries.reduce((sum, e) => sum + (Number(e.totalPoints) || 0), 0);
+    const scorers = entries.filter((e) => e.totalPoints > 0);
+    const podium = scorers.slice(0, 3);
+    const leaderPoints = podium[0]?.totalPoints ?? 0;
+    const maxPoints = Math.max(1, leaderPoints);
+    const hasStudents = entries.length > 0;
+    const hasVerifiedPoints = (data?.verifiedAchievements ?? 0) > 0;
+
+    // Distinct batch names present in the scope (server data, display only).
+    const batches: string[] = [];
+    for (const e of entries) {
+      const b = (e.batchName || '').trim();
+      if (b && !batches.includes(b)) batches.push(b);
+      if (batches.length >= 8) break;
+    }
+
+    // Verified points per achievement category, summed across the scope rows.
+    const catIndex = new Map<string, { category: string; points: number; count: number }>();
+    for (const e of entries) {
+      for (const [cat, pts] of Object.entries(e.categoryPoints ?? {})) {
+        let row = catIndex.get(cat);
+        if (!row) {
+          row = { category: cat, points: 0, count: 0 };
+          catIndex.set(cat, row);
+        }
+        row.points += Number(pts) || 0;
+        row.count += Number(e.categoryCounts?.[cat]) || 0;
+      }
+    }
+    const categoryTotals = [...catIndex.values()]
+      .filter((c) => c.points > 0 || c.count > 0)
+      .sort((a, b) => b.points - a.points || b.count - a.count || a.category.localeCompare(b.category));
+    const maxCategoryPoints = Math.max(1, ...categoryTotals.map((c) => c.points));
+
+    const meEntry = data?.me
+      ? entries.find((e) => e.studentId === data.me!.studentId) ?? null
+      : null;
+
+    return {
+      totalPointsAwarded,
+      scorers,
+      podium,
+      leaderPoints,
+      maxPoints,
+      hasStudents,
+      hasVerifiedPoints,
+      batches,
+      categoryTotals,
+      maxCategoryPoints,
+      meEntry,
+    };
+  }, [data, entries]);
+
   if (error) {
     return (
       <div className="card" role="alert">
@@ -167,45 +229,21 @@ export const LeaderboardView: React.FC<{
 
   if (!data) return <LeaderboardSkeleton />;
 
-  /* ---------------------------------------------------- derived presentation */
+  const {
+    totalPointsAwarded,
+    scorers,
+    podium,
+    leaderPoints,
+    maxPoints,
+    hasStudents,
+    hasVerifiedPoints,
+    batches,
+    categoryTotals,
+    maxCategoryPoints,
+    meEntry,
+  } = derived;
 
-  const entries: LeaderboardEntry[] = data.entries ?? [];
-  const totalPointsAwarded = entries.reduce((sum, e) => sum + (Number(e.totalPoints) || 0), 0);
-  const scorers = entries.filter((e) => e.totalPoints > 0);
-  const podium = scorers.slice(0, 3);
-  const leaderPoints = podium[0]?.totalPoints ?? 0;
-  const maxPoints = Math.max(1, leaderPoints);
-  const hasStudents = entries.length > 0;
-  const hasVerifiedPoints = data.verifiedAchievements > 0;
   const serverScopeNote: string | undefined = (data as any)?.definitions?.scope;
-
-  // Distinct batch names present in the scope (server data, display only).
-  const batches: string[] = [];
-  for (const e of entries) {
-    const b = (e.batchName || '').trim();
-    if (b && !batches.includes(b)) batches.push(b);
-    if (batches.length >= 8) break;
-  }
-
-  // Verified points per achievement category, summed across the scope rows.
-  const catIndex = new Map<string, { category: string; points: number; count: number }>();
-  for (const e of entries) {
-    for (const [cat, pts] of Object.entries(e.categoryPoints ?? {})) {
-      let row = catIndex.get(cat);
-      if (!row) {
-        row = { category: cat, points: 0, count: 0 };
-        catIndex.set(cat, row);
-      }
-      row.points += Number(pts) || 0;
-      row.count += Number(e.categoryCounts?.[cat]) || 0;
-    }
-  }
-  const categoryTotals = [...catIndex.values()]
-    .filter((c) => c.points > 0 || c.count > 0)
-    .sort((a, b) => b.points - a.points || b.count - a.count || a.category.localeCompare(b.category));
-  const maxCategoryPoints = Math.max(1, ...categoryTotals.map((c) => c.points));
-
-  const meEntry = data.me ? entries.find((e) => e.studentId === data.me!.studentId) ?? null : null;
 
   const nameNode = (entry: LeaderboardEntry, className: string) => {
     const label = entry.fullName || entry.registerNumber;

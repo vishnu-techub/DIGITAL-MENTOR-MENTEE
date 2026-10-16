@@ -11,8 +11,10 @@
  * Field names deliberately match the shapes the legacy jsPDF renderer already
  * destructures, so the fallback keeps working byte-for-byte.
  */
-import { Student, AcademicRecord, MentorAssignment, Meeting, CounsellingRecord, MonthlyProgress, InternalMark, StudentDocument } from '../../models/index.js';
+import path from 'path';
+import { Student, AcademicRecord, MentorAssignment, Meeting, CounsellingRecord, MonthlyProgress, InternalMark, StudentDocument, StudentProgress } from '../../models/index.js';
 import { calculateArrearStatistics } from '../../utils/arrears.util.js';
+import { normaliseStoredFileKey } from '../../utils/uploaded-file-key.util.js';
 import { isValidId } from '../../services/localId.js';
 import { buildEvidenceViews, normaliseEvidenceRefs } from '../counselling/evidence.service.js';
 
@@ -55,6 +57,160 @@ export function formatDocDate(value: any): string {
   const dt = value instanceof Date ? value : new Date(value);
   if (isNaN(dt.getTime())) return String(value);
   return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+/**
+ * One row of the printed "Student Documents & Certificates — Official Archive"
+ * table, and one candidate annexure (the real file pages, once resolved).
+ */
+export interface StudentDocumentArchiveEntry {
+  id: string;
+  /** Which existing collection this row came from. */
+  source: 'DOCUMENT' | 'PROGRESS';
+  title: string;
+  file_name: string;
+  document_type: string;
+  category: string;
+  event_details: string;
+  uploaded_on: string;
+  verification_status: string;
+  is_system_form: boolean;
+  file_type: string;
+  file_size: number;
+  /** Stored upload path, or `''` when the record has no file attached. */
+  file_url: string;
+}
+
+/**
+ * The ONE document archive the Record Book prints (section 11) and embeds
+ * (annexures).
+ *
+ * A student's certificates legitimately live in TWO existing collections, and
+ * both must appear in the record book:
+ *
+ *   - `StudentDocument` — files uploaded through **Student Documents**, plus the
+ *     system-generated Student Details Form (listed for completeness, never
+ *     embedded: it IS this dossier), and
+ *   - `StudentProgress` — certificates uploaded through **My Progress &
+ *     Achievements**.
+ *
+ * Reading only the first collection is precisely why uploaded certificates were
+ * missing from the generated PDF: on a real record every `StudentDocument` row
+ * is the system form (skipped by the embed loop so the dossier never embeds
+ * itself), while the actual certificate sat in `StudentProgress` — so the PDF
+ * printed "0 student-uploaded document(s) on record" and appended no annexure
+ * pages, even though the portal could display the file fine.
+ *
+ * De-duplication uses the SAME stored-file identity rule the My Documents /
+ * My Progress merge uses (`normaliseStoredFileKey`), so a certificate both
+ * collections reference is listed once and its pages reproduced once — never
+ * duplicated across two annexures. A record with no file attached is still
+ * listed (it is a real record; it simply has no page to reproduce) and carries
+ * an empty `file_url`, which callers must treat as "no file", never as "file
+ * missing".
+ *
+ * Scoped strictly to the given student id, so a record book can only ever carry
+ * the documents of the student it is generated for.
+ */
+export async function collectStudentDocumentArchive(
+  studentObjectId: any
+): Promise<StudentDocumentArchiveEntry[]> {
+  const studentId = String(studentObjectId);
+
+  const [documentRows, progressRows] = await Promise.all([
+    StudentDocument.find({ studentId }).sort({ isPrimary: -1, uploadedAt: -1 }),
+    // Certificate ledger rows, oldest first so annexure numbering follows the
+    // order the student actually earned them.
+    StudentProgress.find({ studentId }).sort({ createdAt: 1 }),
+  ]);
+
+  const archive: StudentDocumentArchiveEntry[] = [];
+  const listedByKey = new Map<string, StudentDocumentArchiveEntry>();
+
+  /** List a row; returns the already-listed entry when this file appears twice. */
+  const list = (entry: StudentDocumentArchiveEntry): StudentDocumentArchiveEntry | null => {
+    const fileKey = normaliseStoredFileKey(entry.file_url);
+    if (!fileKey) {
+      // No file attached: a real record with nothing to reproduce. It has no
+      // identity to de-duplicate against, so it is always listed.
+      archive.push(entry);
+      return null;
+    }
+    const alreadyListed = listedByKey.get(fileKey);
+    if (alreadyListed) return alreadyListed;
+    listedByKey.set(fileKey, entry);
+    archive.push(entry);
+    return null;
+  };
+
+  // 1. Student Documents first, so the system Student Details Form keeps its
+  //    place at the top of the printed table.
+  for (const d of documentRows as any[]) {
+    const isSystemForm = Boolean(d.isPrimary) || d.documentType === 'student_details_form';
+    const eventDetails = [d.eventName, d.organizer, d.eventDate].filter(Boolean).join(' | ');
+    list({
+      id: d._id.toString(),
+      source: 'DOCUMENT',
+      title: d.title || d.fileName || 'Document',
+      file_name: d.fileName || d.title || 'Document',
+      document_type: isSystemForm
+        ? 'Student Details Form'
+        : d.documentType === 'other'
+          ? 'Other Document'
+          : 'Certificate',
+      category: d.category || 'Other',
+      event_details: eventDetails || d.description || 'N/A',
+      uploaded_on: formatDocDate(d.uploadedAt),
+      verification_status: d.verificationStatus || 'Pending',
+      is_system_form: isSystemForm,
+      file_type: d.fileType || 'application/pdf',
+      file_size: d.fileSize || 0,
+      file_url: d.fileUrl || '',
+    });
+  }
+
+  // 2. Certificates uploaded through My Progress & Achievements.
+  for (const p of progressRows as any[]) {
+    const fileUrl = typeof p.certificateUrl === 'string' ? p.certificateUrl : '';
+    const fileName =
+      p.fileName || (fileUrl ? path.basename(fileUrl) : '') || p.activityName || 'Certificate';
+    const eventDetails = [p.eventName, p.organization, p.date].filter(Boolean).join(' | ');
+    const entry: StudentDocumentArchiveEntry = {
+      id: p._id.toString(),
+      source: 'PROGRESS',
+      title: p.activityName || fileName,
+      file_name: fileName,
+      document_type: 'Certificate',
+      category: p.category || 'Other',
+      event_details: eventDetails || p.description || 'N/A',
+      uploaded_on: formatDocDate(p.createdAt || p.uploadedAt),
+      // Reported as recorded. The record book never decides or changes a
+      // verification status; it only prints what the ledger already holds.
+      verification_status: p.status || 'Pending',
+      is_system_form: false,
+      file_type: p.fileType || 'application/pdf',
+      file_size: p.fileSize || 0,
+      file_url: fileUrl,
+    };
+
+    const alreadyListed = list(entry);
+    if (alreadyListed) {
+      // The same physical certificate is already listed from the document
+      // store: enrich that row instead of listing it (and reproducing it)
+      // twice. Status is deliberately left as the document store has it.
+      if (alreadyListed.title === 'Certificate' && entry.title !== 'Certificate') {
+        alreadyListed.title = entry.title;
+      }
+      if (alreadyListed.event_details === 'N/A' && entry.event_details !== 'N/A') {
+        alreadyListed.event_details = entry.event_details;
+      }
+      if (alreadyListed.category === 'Other' && entry.category !== 'Other') {
+        alreadyListed.category = entry.category;
+      }
+    }
+  }
+
+  return archive;
 }
 
 /**
@@ -281,33 +437,10 @@ export async function collectRecordBookData(
   });
 
   // 11. Student Documents (uploaded certificates + the system Student Details Form)
-  const documentDocs = await StudentDocument.find({ studentId: studentDoc._id }).sort({
-    isPrimary: -1,
-    uploadedAt: -1,
-  });
-
-  const studentDocuments = documentDocs.map((d: any) => {
-    const isSystemForm = Boolean(d.isPrimary) || d.documentType === 'student_details_form';
-    const eventDetails = [d.eventName, d.organizer, d.eventDate].filter(Boolean).join(' | ');
-    return {
-      id: d._id.toString(),
-      title: d.title || d.fileName || 'Document',
-      file_name: d.fileName || d.title || 'Document',
-      document_type: isSystemForm
-        ? 'Student Details Form'
-        : d.documentType === 'other'
-          ? 'Other Document'
-          : 'Certificate',
-      category: d.category || 'Other',
-      event_details: eventDetails || d.description || 'N/A',
-      uploaded_on: formatDocDate(d.uploadedAt),
-      verification_status: d.verificationStatus || 'Pending',
-      is_system_form: isSystemForm,
-      file_type: d.fileType || 'application/pdf',
-      file_size: d.fileSize || 0,
-      file_url: d.fileUrl || '',
-    };
-  });
+  //
+  // Assembled by the shared archive collector so the printed table and the
+  // appended annexures always agree on what the student has on record.
+  const studentDocuments = await collectStudentDocumentArchive(studentDoc._id);
 
   return {
     mode,

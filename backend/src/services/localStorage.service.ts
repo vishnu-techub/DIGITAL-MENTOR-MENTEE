@@ -302,6 +302,25 @@ export class LocalCollection {
     return Promise.resolve(this.ensureLoaded().map(cloneRecord));
   }
 
+  /**
+   * The live, in-memory records WITHOUT a defensive copy.
+   *
+   * Internal use only, by the model/query layer (`localModel.ts`). A `find`,
+   * `countDocuments`, `exists` or populate resolves against this so it does not
+   * deep-clone an entire collection (via `JSON.parse(JSON.stringify())` per
+   * record) just to filter or count it. Every record that actually leaves the
+   * query layer is still cloned in `materialise()` / `applyPopulate()`, so no
+   * external caller ever receives -- or can corrupt -- a live reference.
+   *
+   * The returned array and its records are strictly read-only and must not be
+   * retained past a synchronous caller: the write queue mutates them in place.
+   * Reading them synchronously inside one filter/count pass is safe because
+   * JavaScript never interleaves a write in the middle of that pass.
+   */
+  snapshot(): LocalRecord[] {
+    return this.ensureLoaded();
+  }
+
   byId(id: string): Promise<LocalRecord | null> {
     const target = String(id);
     const found = this.ensureLoaded().find((r) => String(r._id) === target);

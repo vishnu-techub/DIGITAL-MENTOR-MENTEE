@@ -27,6 +27,15 @@ interface SubjectOption {
   subjectCode: string;
   subjectName: string;
   semesterNumber: number;
+  /** Present once the department has a subject catalogue (Admin → Subject Management). */
+  id?: string | null;
+  maxMarks?: number | null;
+  passMarks?: number | null;
+  subjectTypeLabel?: string | null;
+  regulation?: string;
+  status?: 'ACTIVE' | 'INACTIVE';
+  source?: 'MASTER' | 'MARKS';
+  isActive?: boolean;
 }
 
 interface MarksData {
@@ -480,12 +489,26 @@ export const HodMarksManagement: React.FC = () => {
             <label className="form-label">Subject <span className="text-danger">*</span></label>
             <select className="form-control" value={subject} onChange={e => setSubject(e.target.value)} disabled={loadingSubjects || subjects.length === 0} required>
               <option value="">-- Select Subject --</option>
-              {subjects.map(s => (
-                <option key={`${s.subjectCode}|${s.semesterNumber}`} value={s.subjectCode}>
-                  {s.subjectCode} - {s.subjectName} (Sem {s.semesterNumber})
-                </option>
-              ))}
+              {subjects.map(s => {
+                const inactive = s.isActive === false;
+                return (
+                  <option
+                    key={`${s.subjectCode}|${s.semesterNumber}`}
+                    value={s.subjectCode}
+                    disabled={inactive}
+                  >
+                    {s.subjectCode} - {s.subjectName} (Sem {s.semesterNumber})
+                    {inactive ? ' — not available for new uploads' : ''}
+                  </option>
+                );
+              })}
             </select>
+            {selectedSubject && selectedSubject.isActive !== false && selectedSubject.maxMarks != null && (
+              <small className="form-hint">
+                Max marks: {selectedSubject.maxMarks} · Pass: {selectedSubject.passMarks ?? '—'}
+                {selectedSubject.subjectTypeLabel ? ` · ${selectedSubject.subjectTypeLabel}` : ''}
+              </small>
+            )}
           </div>
 
           <div className="form-group" style={{ flex: 1, minWidth: '100px' }}>

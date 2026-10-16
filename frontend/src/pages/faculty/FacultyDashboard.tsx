@@ -345,7 +345,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
               onClick={() => setShowQuickCounsellingModal(true)}
               style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
             >
-              <BookOpen size={14} /> Add Counselling
+              <BookOpen size={14} /> Add Mentoring
             </button>
             <button
               className="btn btn-outline btn-sm"
@@ -463,7 +463,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                 <AlertTriangle size={22} />
               </div>
               <div className="stat-info">
-                <h3>Pending Counselling</h3>
+                <h3>Pending Mentoring</h3>
                 <div className="stat-value">{pendingCounsellingCount}</div>
               </div>
             </div>
@@ -473,7 +473,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                 <BookOpen size={22} />
               </div>
               <div className="stat-info">
-                <h3>Recent Counselling</h3>
+                <h3>Recent Mentoring</h3>
                 <div className="stat-value">{totalCounsellingSessions}</div>
               </div>
             </div>
@@ -703,7 +703,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                 className="btn btn-outline btn-sm"
                 onClick={() => setShowQuickCounsellingModal(true)}
               >
-                <BookOpen size={14} /> Add Counselling
+                <BookOpen size={14} /> Add Mentoring
               </button>
               <button
                 className="btn btn-pdf btn-sm"
@@ -1043,7 +1043,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
 
                       <div>
                         <div style={{ fontSize: '0.68rem', color: 'var(--color-slate-500)', fontWeight: 600, textTransform: 'uppercase' }}>
-                          Counselling
+                          Mentoring
                         </div>
                         <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-slate-800)', marginTop: '2px' }}>
                           {m.counselling_count || 0} Sessions
@@ -1100,7 +1100,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                         setSelectedStudentId(m.id || m._id);
                       }}
                     >
-                      <BookOpen size={13} /> Counselling
+                      <BookOpen size={13} /> Mentoring
                     </button>
                     <button
                       className="btn btn-outline btn-sm"
@@ -1216,7 +1216,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
         <div>
           <PageHeader
             eyebrow="Mentor"
-            title="5-Domain Counselling"
+            title="5-Domain Mentoring"
             subtitle="Select any mentee from your roster to record interventions across Academic, Training & Placement, Extra-Curricular, Innovation, and Skill Development."
           />
 
@@ -1232,10 +1232,10 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
             >
               <BookOpen size={48} style={{ color: 'var(--color-slate-400)', margin: '0 auto 1rem' }} />
               <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-slate-800)', marginBottom: '0.25rem' }}>
-                No counselling records available.
+                No mentoring records available.
               </h3>
               <p style={{ fontSize: '0.85rem', color: 'var(--color-slate-500)', maxWidth: '420px', margin: '0 auto' }}>
-                Counselling records will be listed once students are assigned and sessions are conducted.
+                Mentoring records will be listed once students are assigned and sessions are conducted.
               </p>
             </div>
           ) : (
@@ -1247,7 +1247,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                       <th>Register Number</th>
                       <th>Mentee Name</th>
                       <th>Batch</th>
-                      <th>Total Counselling Sessions</th>
+                      <th>Total Mentoring Sessions</th>
                       <th>Action</th>
                     </tr>
                   </thead>
@@ -1268,7 +1268,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                               setSelectedStudentId(m.id);
                             }}
                           >
-                            Open Counselling Desk
+                            Open Mentoring Desk
                           </button>
                         </td>
                       </tr>
@@ -1503,7 +1503,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                 "How can I improve a student's communication skills?",
                 "What activities can help improve presentation skills?",
                 "How should I guide a student with repeated arrears?",
-                "Give me counselling discussion points for poor attendance.",
+                "Give me mentoring discussion points for poor attendance.",
                 "Suggest questions to ask during a mentor meeting.",
                 "How to motivate a student with semester 1 and 2 standing arrears?",
               ].map((prompt, idx) => (
@@ -1686,7 +1686,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
       >
         <div style={{ padding: '0.5rem 0' }}>
           <p style={{ fontSize: '0.875rem', color: 'var(--color-slate-500)', marginBottom: '1rem' }}>
-            Select any assigned mentee to download their complete institutional dossier PDF including profile, academic history, arrears, and counselling records.
+            Select any assigned mentee to download their complete institutional dossier PDF including profile, academic history, arrears, and mentoring records.
           </p>
 
           <div className="form-group" style={{ marginBottom: '1.5rem' }}>
@@ -1732,11 +1732,11 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
       <Modal
         isOpen={showQuickCounsellingModal}
         onClose={() => setShowQuickCounsellingModal(false)}
-        title="Add Mentee Counselling Session"
+        title="Add Mentee Mentoring Session"
       >
         <div style={{ padding: '0.5rem 0' }}>
           <p style={{ fontSize: '0.875rem', color: 'var(--color-slate-500)', marginBottom: '1rem' }}>
-            Select an assigned mentee to open their counselling record book and add an intervention record with multi-category classification and grammar assistance.
+            Select an assigned mentee to open their mentoring record book and add an intervention record with multi-category classification and grammar assistance.
           </p>
 
           <div className="form-group" style={{ marginBottom: '1.5rem' }}>
@@ -1772,7 +1772,7 @@ export const FacultyDashboard: React.FC<FacultyDashboardProps> = ({ currentTab, 
                 setSelectedStudentId(id);
               }}
             >
-              <BookOpen size={15} /> Open Counselling Desk
+              <BookOpen size={15} /> Open Mentoring Desk
             </button>
           </div>
         </div>

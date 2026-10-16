@@ -359,3 +359,266 @@ None required for login. If an operator wants `ADMIN_PASSWORD` to be authoritati
 `ADMIN_FORCE_PASSWORD_RESET=true` for a single boot.
 
 ---
+
+## ENTRY D-004 — Achievement Leaderboard (student view) shows "Something Went Wrong" — Rules-of-Hooks violation in `LeaderboardView`
+
+- **Timestamp:** 2026-10-15
+- **Status:** ROOT CAUSE IDENTIFIED — fix applied and verified in a real browser
+- **Severity:** High — the Achievement Leaderboard page was completely unusable for every role that renders it (the component is shared).
+
+### Reported symptom
+Opening **Achievement Leaderboard** rendered the KSRCE error boundary: **"Something Went Wrong — An unexpected error occurred."** The `/api/leaderboard` request itself returned **200** with real data, so the backend was healthy.
+
+### Root cause (FINAL)
+`frontend/src/components/leaderboard/LeaderboardView.tsx` — a React **Rules of Hooks** violation, introduced by the 2026-10-15 performance-optimisation pass that memoised the derived presentation with a `useMemo`. The new `useMemo` was placed **after** two early returns:
+
+```
+if (error)  return (…error card…);   // render 1 (no error) falls through
+if (!data)  return <LeaderboardSkeleton />;   // render 1 (data === null) returns here
+const derived = useMemo(() => { … }, [data, entries]);   // ← reached only on render 2+
+```
+
+Render sequence on mount: render 1 has `data === null` → returns the skeleton before reaching the `useMemo` → hooks = `useState×3, useCallback, useEffect` = **5**. After the fetch resolves, render 2 passes both early returns → `useMemo` runs → hooks = **6**. React rejects the count change:
+
+```
+React has detected a change in the order of Hooks called by LeaderboardView.
+5. useEffect → useEffect
+6. undefined → useMemo
+Error: Rendered more hooks than during the previous render.
+    at updateWorkInProgressHook … at LeaderboardView (LeaderboardView.tsx:244)
+```
+
+The thrown error propagated to the nearest `ErrorBoundary`, which rendered the "Something Went Wrong" screen. This is why the API was 200 but the page was dead. (No exceptions reached `window.onerror` — React reported them as console errors + the boundary.)
+
+### Why other components were NOT affected
+Every other recently-added `useMemo` in the app was declared **before** any early return (audited all 9 sites): `PrincipalDashboard`, `AdminMentoringDashboard`, `HodMarksManagement`, `AdminSubjectManagement`, `AdminBulkUpload`, `MarksEntryTable`, `ClassRosterPanel`, `MultiSelect`, `BulkAssignMentees`. `HodDashboard` already carried an explicit comment — *"Hooks must all run before any early return below, otherwise the hook count changes between the loading/error render and a normal render."* — so `LeaderboardView` was the single wrong site.
+
+### Exact change made
+Single file: `frontend/src/components/leaderboard/LeaderboardView.tsx`
+
+- Hoisted the `entries` line and the whole `derived = useMemo(…)` block to run **unconditionally**, immediately after the `load`/`useEffect` hooks and **before** the `if (error)` / `if (!data)` early returns.
+- Made the memo null-safe for the loading render: `data?.entries ?? []`, `(data?.verifiedAchievements ?? 0) > 0`, and `data?.me ? … : null`.
+- Removed the now-duplicated original block that sat after the early returns.
+- Added an explanatory comment stating why the hook must stay above the early returns.
+- Hook order is now stable: `useState×3, useCallback, useEffect, useMemo` on **every** render (5 → 6 total, always the same set).
+
+No backend, API, scoring, RBAC, styling or data-shape change. No dependency added.
+
+### Reproduced / verified
+| Check | Result |
+|---|---|
+| Pre-fix, real browser (headless Chrome, dev server :3000 + backend :5050, login `73152421125`) | **FAIL reproduced** — error boundary shown; console error `Rendered more hooks than during the previous render. at LeaderboardView (…:244)`; `/api/leaderboard` **200** |
+| Post-fix, same browser harness | **PASS 8/8** — `.lb-root` present, hero "Achievement Leaderboard", **157 students in scope**, 0 error-boundary, 0 exceptions, **0 console errors** |
+| Backend leaderboard suite | `test:leaderboard` **35/35 PASS** |
+| Frontend typecheck | `npx tsc --noEmit` **exit 0** |
+| Frontend build | `npm run build` **exit 0** (chunks incl. `LeaderboardView-DTxTesS2.js`) |
+
+Harness: `.runtime-verify/achv/verify.mjs` (drives real Chrome over CDP, logs in as a student, clicks the Achievement Leaderboard nav, records ErrorBoundary + console errors + `/api/leaderboard` status). Re-run it with:
+`node .runtime-verify/achv/verify.mjs 73152421125 "Password@123"`
+
+### Files changed
+| File | Change |
+|---|---|
+| `frontend/src/components/leaderboard/LeaderboardView.tsx` | `entries` + `derived = useMemo(...)` hoisted above the early returns; memo made null-safe; duplicate block removed; explanatory comment |
+| `PROJECT_PROGRESS.md` | Current Issue + Completed + Log row (2026-10-15) |
+| `DEBUG_NOTES.md` | this note |
+
+### Next action
+None required — fix is local and verified. Committing is only done when explicitly requested.
+
+---
+
+## ENTRY D-005 — Student "My Documents" showed no uploaded achievement certificates
+
+### Reported symptom
+A certificate uploaded through **My Progress & Achievements** appeared in My Progress, but the **My Documents** tab listed only the Student Details Form. The achievement points/leaderboard were working and had to stay untouched.
+
+### Root cause (FINAL)
+The certificate is stored in `StudentProgress` (the achievement/participation ledger that **My Progress** writes to), a *different collection* from the `StudentDocument` rows that `getStudentDocuments` returned. So the certificate had no row to appear from. Independently, `streamDocumentFile` (`/api/documents/:id/file|download`) resolved **only** `StudentDocument` ids, and the authenticated `/uploads/*` route resolves only through `StudentDocument` — so even the stored file could not be fetched (`404` with a token, `401` without). Data confirmed the split: `backend/data/student_progress.json` held the certificate row; `backend/data/student_documents.json` held only `student_details_form` rows.
+
+### Exact change made
+`backend/src/modules/documents/document.controller.ts`
+- `getStudentDocuments` merges the student's achievement certificates onto the document list by reusing the **one canonical** de-duplicating routine the mentor review screen already uses (`buildUnifiedProgressRecords`) and normalising them onto the document response shape (`documentType:'certificate'`, `source:'progress'`, real `verificationStatus`, `fileAvailable`, `title`=activity, category/event fields, and a deliberately **read-only** capability set so no action button points at the document endpoints). A file already represented by a `StudentDocument` is folded by the shared routine → listed **exactly once**, no copy written.
+- `streamDocumentFile` (serves `/file` and `/download`) now falls back to `StudentProgress` when the id is not a `StudentDocument`, applying the **same** `checkStudentAccess` ownership rule and serving the **original** stored bytes (progress certificates are not watermarked). Header handling extracted to one `sendStoredFile` helper.
+
+`frontend/src/components/documents/StudentDocumentsManager.tsx`
+- Tags achievement certificates "From My Progress"; when `fileAvailable === false` the View/Download buttons are disabled and a "File unavailable." note replaces a broken preview. The default `ALL` filter already renders them; `openPreview`/`handleDownload` already call with `doc.id`, which the backend now resolves.
+
+Also removed `backend/src/utils/certificate-achievement.util.ts` (unused dead code from a superseded plan; referenced nowhere).
+
+### Reproduced / verified
+| Check | Result |
+|---|---|
+| Pre-fix live API | `GET /api/documents/student/:id` returned **1** row (form only) while `GET /api/student/progress` had the certificate |
+| Real headless Chrome (CDP, dev :3000 → backend :5050) | **PASS 14/14** — certificate card shown, tagged "From My Progress", **exactly one**, View previews the **certificate** (`/api/documents/6acfbc56f975f18de9ebb8cb/file` → 200, iframe title `adobe.pdf`), 0 error boundary, 0 exceptions, 0 console errors |
+| Live API probes | My Documents **2** rows; owner preview/download 200 (`application/pdf`, 246 778 B, filename `adobe.pdf`); anonymous 401; another student 403; upload→appears→cleanup; no duplicate |
+| New suite | `test:certificate-visibility` **22/22 PASS** |
+| Regressions | `test:runtime` **38/38**, `test:document-watermark-runtime` **46/46**, `test:leaderboard` **35/35**, `test:state-machine` **137/137**, `test:security-hardening` **8/8** |
+| Types / build | backend `tsc --noEmit` 0; frontend `tsc --noEmit` 0; `npm run build` exit 0 |
+
+Harness: `.runtime-verify/cert/browser-docs.mjs` — `node .runtime-verify/cert/browser-docs.mjs 73152421125 "Password@123"`.
+
+### Files changed
+| File | Change |
+|---|---|
+| `backend/src/modules/documents/document.controller.ts` | merge achievement certificates into the student document list; resolve `StudentProgress` ids in the file endpoints |
+| `frontend/src/components/documents/StudentDocumentsManager.tsx` | "From My Progress" tag; missing-file state |
+| `backend/src/tests/certificate-visibility-runtime.test.ts` | new regression suite (22 checks) |
+| `backend/package.json` | `test:certificate-visibility` script |
+| `backend/src/utils/certificate-achievement.util.ts` | removed (unused) |
+| `PROJECT_PROGRESS.md` | Current Status + Completed + Last Change |
+| `DEBUG_NOTES.md` | this note |
+
+### Points system
+Untouched. No point value, eligibility rule, ranking, verification or scoring code changed; leaderboard totals verified identical before and after (rank 1, totalPoints 5, achievementCount 1).
+
+### Remaining issues
+- Orphaned pre-existing row: `StudentProgress` `6ac69edac00f5614c49174be` (KAVIN S, `731523205099`) points at a student id absent from `students.json` and its file `sih2026_cert.pdf` is absent from disk — unreachable from any My Documents, left untouched.
+- Pre-existing test artifact: `backend/data/achievements.json` contains an Approved `PROBE Workshop Attendance` (5 pts) from an earlier probe — left in place, as removing it would change the leaderboard.
+
+### Next action
+None required — fix is local and verified. Committing is only done when explicitly requested.
+
+---
+
+## ENTRY D-006 — Official Record Book (PDF) omitted uploaded achievement certificates
+
+### Reported symptom
+A certificate a student uploaded through **My Progress & Achievements** appeared in the portal (and, after D-005, in My Documents), but the downloaded **Official Record Book (PDF)** showed the documents section with only the system *Student Details Form*, printed "0 student-uploaded document(s) on record", and appended **no** certificate pages. Achievement points/leaderboard were working and had to stay untouched.
+
+### Root cause (FINAL)
+The same **collection split** as D-005, in a second, independent read path. The record-book data collector (`collectRecordBookData`) read **only** `StudentDocument`:
+
+```ts
+const documentDocs = await StudentDocument.find({ studentId: studentDoc._id })...
+```
+
+On a real record every `StudentDocument` row is the auto-generated `student_details_form` (`isPrimary: true` → `is_system_form`), which the embed loop deliberately skips so the dossier never embeds itself. The actual certificate lived in `StudentProgress`, which the collector never queried — so it was neither listed nor attached. Confirmed against live data: student `73152421125` had **1** `StudentDocument` row (the form) and **1** `StudentProgress` certificate (`adobe.pdf`, verified, file present on disk).
+
+The legacy jsPDF fallback (`pdf.service.ts`) had the *same* defect in its own inline `StudentDocument` query, so both renderers were affected.
+
+### Exact change made
+- **New shared util** `backend/src/utils/uploaded-file-key.util.ts` — `normaliseStoredFileKey(url)`, the single canonical stored-file identity rule (compares only the stable `uploads/...` logical path). `student-progress.controller.ts`'s local `normaliseFileKey` now delegates to it, so the My Documents merge and the PDF archive can never disagree about when two rows are the same physical file.
+- **New shared collector** `collectStudentDocumentArchive(studentObjectId)` in `backend/src/modules/pdf/record-book-html.data.ts` — reads **both** `StudentDocument` and `StudentProgress`, maps both onto the existing record-book document shape (adding a `source: 'DOCUMENT' | 'PROGRESS'` field), and de-duplicates by `normaliseStoredFileKey`. Used by **both** `collectRecordBookData` (primary HTML renderer) and the legacy `pdf.service.ts` path. A progress row that folds into an already-listed file only enriches generic metadata (title/event/category); it never changes the listed verification status.
+- **Clear no-file message** in both embed loops (`record-book-html.service.ts` `resolveDocumentFiles`, `pdf.service.ts`): a record with `file_url === ''` is a real listed record with nothing to reproduce, reported plainly — never as a lost file or "needs administrator repair".
+- **Accurate provenance** on the annexure cover sheet: "…uploaded by the student through **My Progress & Achievements**" vs "through Student Documents", driven by `source`.
+- **Consistency fix (related):** the HTML renderer appended PDF annexures even for `mode=internal`, although it renders no documents section for that mode. The legacy jsPDF renderer already guarded both together. The HTML `appendPdfAnnexures` is now guarded by `mode !== 'internal'` too — without this the unified archive would have leaked certificate pages into the marks-only internal report.
+
+Untouched: point values, scoring, eligibility, ranking, verification rules, watermarking, RBAC/ownership, and the `is_system_form` self-embed guard.
+
+### Reproduced / verified
+| Check | Result |
+|---|---|
+| Pre-fix live API (`mode=full`) | HTTP 200, 3 pages, documents section listed only the form, "**0 student-uploaded document(s) on record**", **0** annexure covers, certificate text absent |
+| Post-fix live API (`mode=full`) | HTTP 200, **5 pages**, cert listed (2 rows), **1** annexure cover, original `adobe.pdf` text **reproduced verbatim** on p5 |
+| Post-fix live API (`mode=mentor-documents`) | HTTP 200, **4 pages**, cert listed + reproduced (p4) |
+| Live upload → regenerate → delete round trip | **17/17 PASS** — uploading a second cert makes it 2 docs / 2 covers / both texts present; deleting the record restores the PDF **byte-identical**, removes the file, restores the row set, and leaves points (rank 1 / 5 pts / 1 achievement) unchanged |
+| New suite `test:record-book-certificates` | **27/27 PASS** — listing, verbatim PDF page, image embedded at real dimensions (240×160), form never self-embedded, cross-student isolation, both-store de-dup (listed + reproduced once), missing/unsupported/no-file clear reasons, internal mode document-free, read-only (file hashes + record fingerprints unchanged) |
+| Regressions | `test:record-book-header` **74/74**, `test:certificate-visibility` **22/22**, `test:runtime` **38/38**, `test:document-watermark-runtime` **46/46**, `test:leaderboard` **35/35**, `test:state-machine` **137/137**, `test:security-hardening` **8/8** |
+| Types / build | backend `tsc --noEmit` 0; frontend `tsc --noEmit` 0; backend `npm run build` 0; frontend `npm run build` 0 |
+
+Harnesses: `.runtime-verify/pdf/repro.mjs` (live before/after PDF probe), `.runtime-verify/pdf/probe-live-e2e.mjs` (live upload→regenerate→delete round trip), `.runtime-verify/pdf/dump.mjs` (page-by-page text dump).
+
+### Files changed
+| File | Change |
+|---|---|
+| `backend/src/utils/uploaded-file-key.util.ts` | **new** — one shared stored-file identity rule |
+| `backend/src/modules/pdf/record-book-html.data.ts` | **new** `collectStudentDocumentArchive`; `collectRecordBookData` uses it; `source` field |
+| `backend/src/modules/pdf/record-book-html.service.ts` | no-file guard; source-aware annexure provenance; `internal` mode no longer appends annexures |
+| `backend/src/modules/pdf/pdf.service.ts` | legacy path uses the shared collector (inline `StudentDocument` query removed); no-file guard |
+| `backend/src/modules/student-progress/student-progress.controller.ts` | `normaliseFileKey` delegates to the shared util |
+| `backend/src/tests/record-book-certificates.test.ts` | **new** regression suite (27 checks) |
+| `backend/package.json` | `test:record-book-certificates` script |
+| `PROJECT_PROGRESS.md` | Current Issue + Completed + Last Change |
+| `DEBUG_NOTES.md` | this note |
+
+### Points system
+Untouched. No point value, eligibility rule, ranking, verification or scoring code changed; leaderboard verified identical (rank 1, totalPoints 5, achievementCount 1) before and after.
+
+### Remaining issues
+- Pre-existing orphan (`StudentProgress` `6ac69edac00f5614c49174be`) and the pre-existing Approved `PROBE Workshop Attendance` achievement (5 pts) remain, unchanged (see D-005).
+- The record book prints the verification status the ledger already holds; it never re-verifies. A `Pending` progress certificate therefore appears as `Pending`.
+
+### Next action
+None required — fix is local and verified. Committing is only done when explicitly requested.
+
+---
+
+## ENTRY D-007 — College PDF header not a shared template + watermark ran the wrong way / too pale
+
+### Reported symptom
+The college heading was reported as missing or incorrectly positioned, and the diagonal `K S R C E` watermark was reported as too pale and running the wrong direction. Required: header correct on every applicable page, watermark running bottom-left → top-right, clearly visible but translucent, always behind the content.
+
+### Root cause (FINAL)
+Two independent defects in the PDF **generation** path:
+
+1. **The header was not one template.** It was drawn in **three** places with drifting geometry — the Chrome-rendered record book's per-page pdf-lib stamp (`stampPageFurniture`), the record-book annexure cover sheet (`appendPdfAnnexures`, jsPDF) and the legacy jsPDF fallback (`pdf.service.ts` `renderHeader`). Measured differences: logo box **15mm vs 17mm**, college-name size **13pt vs 14pt**, divider y **28.4 / 28.5 / 33mm**, side margin **12 vs 14mm**, and — most visibly — the **annexure cover omitted the affiliation subtitle and the address** entirely.
+2. **The watermark diagonal was inverted and effectively invisible.** The record-book CSS background layer was `rgba(128,128,128,0.08)` with `transform: rotate(45deg)`. CSS `rotate` is positive-**clockwise** with the y-axis pointing down, so `+45deg` produced a `\` (top-left → bottom-right) diagonal — the opposite of the required `/`. And `0.08` alpha over white composited to **≈245 luminance** (paper is 255), which reads as blank.
+
+### Exact change made
+- **New single source of truth** `backend/src/modules/pdf/institutional-header.ts`: header texts (`K.S.R. COLLEGE OF ENGINEERING`, the affiliation subtitle, the address), colours (navy/gold/grey/rule), geometry (all mm measured DOWN from the page top), `headerBandMm(hasTitle)` / `headerRuleMm(hasTitle)`, and two drawers — `drawInstitutionalHeaderPdfLib(page, deps, opts)` (y-up) and `drawInstitutionalHeaderJsPdf(doc, deps, opts)` (y-down). The drawers fit the 205×190 logo into a 15mm box **preserving aspect ratio** (the old jsPDF copy stretched it to 17×17).
+- `record-book-html.service.ts`: `headerBandMm`/`headerRuleMm` now delegate to the shared spec; `stampPageFurniture` calls `drawInstitutionalHeaderPdfLib`; the annexure cover calls `drawInstitutionalHeaderJsPdf` with `title: 'Annexure N'` (so the annexure label sits below the college name) and now prints the **full** header; cover margin aligned to the base pages (`sm` 14 → 12).
+- `pdf.service.ts`: `renderHeader` and its annexure sheet both call `drawInstitutionalHeaderJsPdf` (kept its own 14mm body margin, so the fallback dossier stays internally consistent).
+- **Watermark:** `.wm` changed to `rgba(102,102,102,0.26)` with `transform: translateY(…) rotate(-45deg)`. Composited on white ≈ **215**. Still `z-index: 0` beneath `.content { z-index: 1 }` — a true background layer.
+
+**Deliberately NOT changed:** `backend/src/services/document-watermark.service.ts` (upload-time watermarking of the Student Details Form + uploaded documents). It is a different subsystem whose subtle `.12`-alpha look and stored copies are covered by their own tests; changing it would leave already-stored watermarked copies inconsistent. The task's watermark typography (88pt bold, exact text `K S R C E`) is preserved.
+
+### Reproduced / verified
+| Check | Result |
+|---|---|
+| Live `mode=full` header (real backend `:5050`) | `K.S.R. COLLEGE OF ENGINEERING` y **12.3mm** `midOff=+0pt` (centred), subtitle 18.3mm, address 21.2mm; navy bar + 205×190 logo top-left; divider 28.4mm |
+| Live `mode=full` annexure cover | `Annexure 1` y **24.7mm** (below the college name), subtitle + address now present, divider 30.6mm; content heading 33.5mm; the verbatim certificate is the next page (landscape 841.9×595, **no** header — correct) |
+| Live `mode=mentor-documents` | its own title y 24.7mm repeated on every page + the same header |
+| Live watermark direction | pixel measurement `upper-half meanX=108mm → lower-half meanX=88mm` = **`/` (bottom-left → top-right)**; pixel-diff principal-axis slope ≈ **−0.95** |
+| Live watermark visibility | `minGray=216` (was 221); pixel-diff `maxMag≈117` (composited ≈215) — clearly visible, document ink unchanged (max 0.28% of content pixels touched) |
+| `test:record-book-header` | **75/75 PASS** (added a "clearly visible but translucent" assertion; slope assertion flipped to negative) |
+| Other suites | `test:record-book-certificates` 27/27, `test:runtime` 38/38, `test:certificate-visibility` 22/22, `test:document-watermark` 44/44, `test:document-watermark-runtime` 46/46, `test:leaderboard` 35/35, `test:state-machine` 137/137, `test:security-hardening` 8/8 |
+| Types / build | backend `tsc --noEmit` 0; frontend `tsc --noEmit` 0; backend `npm run build` 0; frontend `npm run build` 0 |
+
+Harnesses: `.runtime-verify/pdf/live-header-watermark.mjs` (fetch + save the real PDF), `.runtime-verify/pdf/analyze.mjs` (text bboxes + watermark direction/contrast), `.runtime-verify/pdf/zoom.mjs` (high-res ASCII of a page region).
+
+### Files changed
+| File | Change |
+|---|---|
+| `backend/src/modules/pdf/institutional-header.ts` | **new** — one header spec + pdf-lib and jsPDF drawers |
+| `backend/src/modules/pdf/record-book-html.service.ts` | shared header in `stampPageFurniture` + annexure cover; watermark `/` + more visible; band/rule delegate to the shared spec |
+| `backend/src/modules/pdf/pdf.service.ts` | legacy `renderHeader` + annexure sheet use the shared header |
+| `backend/src/tests/record-book-header.test.ts` | watermark direction `/`; new visibility assertion |
+| `PROJECT_PROGRESS.md` | Current Status + Last Change |
+| `DEBUG_NOTES.md` | this note |
+
+### Scope / remaining notes
+- The `K S R C E` direction in the **upload-time** document watermark service is still `\` by design (see "Deliberately NOT changed"). If the institution wants a single direction everywhere, flipping that service is a follow-up (it would also require regenerating already-stored watermarked copies, or accepting a mixed set).
+- Appended certificate/annexure pages remain **verbatim** and un-watermarked, exactly as before ("do not add the watermark to unrelated files").
+
+### Next action
+None required — fix is local and verified. Committing is only done when explicitly requested.
+
+---
+
+## ENTRY D-008 — Admin statistic-card drill-downs: `assignmentStatus` query param was silently ignored
+
+### Symptom / trigger
+Building the clickable Admin overview cards surfaced a latent bug in the Mentor-Assignment flow: the frontend passes `assignmentStatus=assigned|unassigned` to `GET /api/students` (AdminDashboard), but the filter had **no effect** — the "Assigned" and "Unassigned" views returned the same everyone-list.
+
+### Root cause
+In `backend/src/modules/students/student.controller.ts` → `getStudents`, `assignmentStatus` was destructured from the query and threaded into the response mapping (each row still reported its own `assignment_status`), but it was **never added to the Mongo filter**. So the query returned all students and only the per-row label differed.
+
+### Fix
+Resolve it at the QUERY level so `total`, `pages` and the pager are correct: before the find, fetch the ids of students with an ACTIVE `MentorAssignment`; then, in an `else if` branch after the existing `mentorId` branch, set `filter._id = { $in: ids }` (assigned) or `{ $nin: ids }` (unassigned). The shared local query engine supports `$nin` (localModel). Result: assigned + unassigned is now an exact partition of the active students.
+
+### Verification
+- New suite `test:admin-stat-details` **9/9** — includes "assigned 2 + unassigned 2 == 4 active students".
+- Browser run `.runtime-verify/admin-stats/verify.mjs` **10/10** — Assigned 103 + Unassigned 54 == Total 157 on the real dev copy.
+- Regressions `test:admin-routes` 8/8, `test:directory` 16/16, `test:admin` 23/23; backend + frontend `tsc` clean; frontend build clean.
+
+### Related, same session
+The seven Admin cards now open read-only drill-down modals (three new ADMIN-only `/api/admin/dashboard-details/*` endpoints for the aggregates that had no college-wide list); the Mentor-Assignment search shows an `About Us — View Page` result for the exact phrase and opens a new standalone `/about` page built only from verified institutional facts. Details in PROJECT_PROGRESS.md.
+
+### Deliberately NOT changed
+`getStudentsForAssignment` (`GET /api/admin/students`, `admin.controller.ts`) still filters `assignmentStatus` **after** pagination, so its `total` is wrong when that filter is used. Left as-is to keep this change scoped; flagged as a follow-up.
+
+### Next action
+None required — both changes are local and verified. Commit only when explicitly requested.
+
+---

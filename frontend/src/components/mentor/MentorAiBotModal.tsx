@@ -31,7 +31,7 @@ const SAMPLE_QUESTIONS = [
   "How can I improve a student's communication skills?",
   "What activities can help improve presentation skills?",
   "How should I guide a student with repeated arrears?",
-  "Give me counselling discussion points for poor attendance.",
+  "Give me mentoring discussion points for poor attendance.",
   "Suggest questions to ask during a mentor meeting.",
 ];
 
@@ -49,7 +49,7 @@ Ask me about student mentorship, study strategies, communication improvement act
 
 Every response includes a Copy button so you can reuse the advice anywhere.
 
-Important: answers are for your reference only and are never written to a student counselling record automatically.`,
+Important: answers are for your reference only and are never written to a student mentoring record automatically.`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
   ]);

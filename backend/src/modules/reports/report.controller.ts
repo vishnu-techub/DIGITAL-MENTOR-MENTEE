@@ -104,45 +104,76 @@ export async function exportStudentsCsv(req: AuthRequest, res: Response) {
       .populate('batch')
       .sort({ registerNumber: 1 });
 
-    const rows = await Promise.all(
-      students.map(async (s: any) => {
-        const dept = s.department || {};
-        const batch = s.batch || {};
+    // Preload every per-student lookup in a handful of bulk queries instead of
+    // 3-4 queries per student (which, for 150+ students, was the slowest
+    // endpoint in the app). The data produced is identical: the first ACTIVE
+    // assignment per student, that student's academic records, and the count of
+    // COMPLETED Saturday meetings.
+    const studentIds = (students as any[]).map((s: any) => String(s._id));
 
-        // Active mentor
-        const activeAsg = await MentorAssignment.findOne({
-          student: s._id,
-          status: 'ACTIVE',
-        }).populate({ path: 'mentor', populate: { path: 'user' } });
+    const [assignments, academicRecords, meetings] = await Promise.all([
+      studentIds.length
+        ? MentorAssignment.find({ student: { $in: studentIds }, status: 'ACTIVE' })
+            .populate({ path: 'mentor', populate: { path: 'user' } })
+            .lean()
+        : Promise.resolve([] as any[]),
+      studentIds.length
+        ? AcademicRecord.find({ student: { $in: studentIds } }).lean()
+        : Promise.resolve([] as any[]),
+      studentIds.length
+        ? Meeting.find({ student: { $in: studentIds }, meetingStatus: 'COMPLETED' })
+            .select('student')
+            .lean()
+        : Promise.resolve([] as any[]),
+    ]);
 
-        const mentorUser = (activeAsg?.mentor as any)?.user;
-        const mentorName = mentorUser?.fullName || 'Unassigned';
+    const mentorNameByStudent = new Map<string, string>();
+    for (const asg of assignments as any[]) {
+      const key = String(asg.student);
+      if (mentorNameByStudent.has(key)) continue; // first ACTIVE assignment wins
+      const mentorUser = (asg.mentor as any)?.user;
+      mentorNameByStudent.set(key, mentorUser?.fullName || 'Unassigned');
+    }
 
-        // Arrears count (Historical vs Active)
-        const academicRecords = await AcademicRecord.find({ student: s._id });
-        const arrearStats = calculateArrearStatistics(academicRecords, s.clearedSubjects || []);
+    const recordsByStudent = new Map<string, any[]>();
+    for (const r of academicRecords as any[]) {
+      const key = String(r.student);
+      if (!recordsByStudent.has(key)) recordsByStudent.set(key, []);
+      recordsByStudent.get(key)!.push(r);
+    }
 
-        // Meetings count
-        const completedMeetings = await Meeting.countDocuments({
-          student: s._id,
-          meetingStatus: 'COMPLETED',
-        });
+    const meetingCountByStudent = new Map<string, number>();
+    for (const m of meetings as any[]) {
+      const key = String(m.student);
+      meetingCountByStudent.set(key, (meetingCountByStudent.get(key) ?? 0) + 1);
+    }
 
-        return [
-          `"${s.registerNumber}"`,
-          `"${s.fullName}"`,
-          `"${dept.code || ''}"`,
-          `"${batch.name || ''}"`,
-          `"${s.residentialType || 'DAY_SCHOLAR'}"`,
-          `"${s.mobileNumber || ''}"`,
-          `"${s.email || ''}"`,
-          `"${mentorName}"`,
-          arrearStats.activeArrearsCount,
-          arrearStats.historicalArrearsCount,
-          completedMeetings,
-        ];
-      })
-    );
+    const rows = (students as any[]).map((s: any) => {
+      const dept = s.department || {};
+      const batch = s.batch || {};
+      const key = String(s._id);
+
+      const mentorName = mentorNameByStudent.get(key) || 'Unassigned';
+      const arrearStats = calculateArrearStatistics(
+        recordsByStudent.get(key) || [],
+        s.clearedSubjects || []
+      );
+      const completedMeetings = meetingCountByStudent.get(key) ?? 0;
+
+      return [
+        `"${s.registerNumber}"`,
+        `"${s.fullName}"`,
+        `"${dept.code || ''}"`,
+        `"${batch.name || ''}"`,
+        `"${s.residentialType || 'DAY_SCHOLAR'}"`,
+        `"${s.mobileNumber || ''}"`,
+        `"${s.email || ''}"`,
+        `"${mentorName}"`,
+        arrearStats.activeArrearsCount,
+        arrearStats.historicalArrearsCount,
+        completedMeetings,
+      ];
+    });
 
     const headers = [
       'Register Number',

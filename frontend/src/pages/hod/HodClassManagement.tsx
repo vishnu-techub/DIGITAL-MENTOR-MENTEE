@@ -134,7 +134,7 @@ export const HodClassManagement: React.FC = () => {
     const key = `${selectedClass.year}|${selectedClass.section}|${selectedClass.academicYear}`;
     if (autoSelectKeyRef.current === key) return;
     autoSelectKeyRef.current = key;
-    const first = classSubjects[0];
+    const first = classSubjects.find((s) => s.isActive !== false) || classSubjects[0];
     setSelectedSubject(first.subjectCode);
     setSelectedSemester(first.semesterNumber);
   }, [detailMode, classSubjects, selectedClass]);
@@ -523,11 +523,19 @@ export const HodClassManagement: React.FC = () => {
                     required
                   >
                     <option value="">-- Select Subject --</option>
-                    {classSubjects.map((s) => (
-                      <option key={`${s.subjectCode}|${s.semesterNumber}`} value={s.subjectCode}>
-                        {s.subjectCode} - {s.subjectName} (Sem {s.semesterNumber})
-                      </option>
-                    ))}
+                    {classSubjects.map((s) => {
+                      const inactive = s.isActive === false;
+                      return (
+                        <option
+                          key={`${s.subjectCode}|${s.semesterNumber}`}
+                          value={s.subjectCode}
+                          disabled={inactive}
+                        >
+                          {s.subjectCode} - {s.subjectName} (Sem {s.semesterNumber})
+                          {inactive ? ' — not available for new uploads' : ''}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
                 <div className="form-group" style={{ flex: 1, minWidth: '100px' }}>

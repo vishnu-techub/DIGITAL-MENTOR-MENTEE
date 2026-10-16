@@ -34,7 +34,7 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
   const [capturedOriginal, setCapturedOriginal] = useState<string>('');
   const [showSuggestion, setShowSuggestion] = useState(false);
   const [appliedFeedback, setAppliedFeedback] = useState(false);
-  const [noIssuesFeedback, setNoIssuesFeedback] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
 
   const lastCheckedValueRef = useRef<string>('');
@@ -97,6 +97,7 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
     if (!trimmed) return;
     setChecking(true);
     setCheckError(null);
+    setStatusMessage(null);
     try {
       const res = await api.counselling.checkGrammar(trimmed);
       lastCheckedValueRef.current = trimmed;
@@ -106,19 +107,25 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
           setCapturedOriginal(trimmed);
           setSuggestedCorrection(corrected);
           setShowSuggestion(true);
-          setNoIssuesFeedback(false);
+          setStatusMessage(null);
           onActiveFieldChange?.(fieldId);
         } else {
           setSuggestedCorrection(null);
           setShowSuggestion(false);
-          setNoIssuesFeedback(true);
-          setTimeout(() => setNoIssuesFeedback(false), 2500);
+          setStatusMessage('No reliable correction found');
+          setTimeout(() => setStatusMessage(null), 4000);
         }
       } else {
         setSuggestedCorrection(null);
         setShowSuggestion(false);
-        setNoIssuesFeedback(true);
-        setTimeout(() => setNoIssuesFeedback(false), 2500);
+        // A clear, honest status: nothing was rewritten or invented.
+        const status = res.data?.status;
+        setStatusMessage(
+          status === 'AMBIGUOUS_INPUT'
+            ? 'Text is ambiguous — kept exactly as you typed it'
+            : 'No reliable correction found'
+        );
+        setTimeout(() => setStatusMessage(null), 4000);
       }
     } catch {
       // The field is left exactly as typed. Only a short, non-technical message
@@ -204,9 +211,12 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
             </span>
           )}
 
-          {noIssuesFeedback && (
-            <span style={{ fontSize: '0.75rem', color: '#059669', fontWeight: 600 }}>
-              ✓ No grammar issues
+          {statusMessage && (
+            <span
+              style={{ fontSize: '0.75rem', color: '#B45309', fontWeight: 600 }}
+              data-testid="grammar-status"
+            >
+              {statusMessage}
             </span>
           )}
 
@@ -284,6 +294,7 @@ export const GrammarAssistField: React.FC<GrammarAssistFieldProps> = ({
         onChange={(e) => {
           setAppliedFeedback(false);
           setCheckError(null);
+          setStatusMessage(null);
           onChange(e.target.value);
         }}
         style={{

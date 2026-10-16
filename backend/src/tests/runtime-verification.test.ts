@@ -1098,6 +1098,22 @@ async function main() {
     const noticeHasPng = noticeIdx >= 0 && pageTexts[noticeIdx].includes('nss-activity-photo.png');
     assert(!noticeHasPng, 'a valid PNG was reported in the annexure embedding notice');
 
+    // Repeating institutional header: the footer is stamped per generated page,
+    // so every page carrying a footer must also carry the header. This document
+    // is multi-page and contains a real content image (the NSS photo annexure),
+    // so it directly exercises the "long tables AND images" requirement.
+    const footerPages = pageTexts.filter((t) => /Page \d+ of \d+/.test(t));
+    assert(footerPages.length > 0, 'no generated pages carry a footer');
+    assert(
+      footerPages.every((t) => /K\.S\.R\. COLLEGE OF ENGINEERING/i.test(t)),
+      `institutional header missing from a generated page (${footerPages.length} paged pages)`
+    );
+    const imageAnnexurePage = pageTexts.find((t) => /ANNEXURE IMAGE/i.test(t) && t.includes('NSS Activity Camp Photo'));
+    assert(
+      !!imageAnnexurePage && /K\.S\.R\. COLLEGE OF ENGINEERING/i.test(imageAnnexurePage),
+      'institutional header missing from the image annexure page'
+    );
+
     // Still a structurally valid PDF.
     const loaded = await PDFLib.load(buf);
     assert(loaded.getPageCount() > 0, 'generated record book has no pages');
@@ -1110,7 +1126,7 @@ async function main() {
     assert(delOk.status === 200, `admin housekeeping delete -> ${delOk.status}`);
 
     return { status: 'PASS',
-      evidence: `upload nss-activity-photo.png (genuine ${W}x${H} PNG) -> ${up.status}; record book -> 200 ${buf.length} B containing a /Subtype/Image XObject of exactly ${W}x${H} (inlined by the HTML/CSS renderer), plus the documents-section caption "NSS Activity Camp Photo"; annexure embedding notice ${noticeIdx >= 0 ? 'present (for pre-existing malformed stub PDFs) and does not list the PNG' : 'absent'}; ${loaded.getPageCount()} pages, valid PDF; student delete of the PENDING record correctly refused (${studentDel.status}), admin housekeeping delete (${delOk.status})`,
+      evidence: `upload nss-activity-photo.png (genuine ${W}x${H} PNG) -> ${up.status}; record book -> 200 ${buf.length} B containing a /Subtype/Image XObject of exactly ${W}x${H} (inlined by the HTML/CSS renderer), plus the documents-section caption "NSS Activity Camp Photo"; institutional header "K.S.R. COLLEGE OF ENGINEERING" present on every footered page (${footerPages.length}) including the image annexure page; annexure embedding notice ${noticeIdx >= 0 ? 'present (for pre-existing malformed stub PDFs) and does not list the PNG' : 'absent'}; ${loaded.getPageCount()} pages, valid PDF; student delete of the PENDING record correctly refused (${studentDel.status}), admin housekeeping delete (${delOk.status})`,
       fix: 'generateStudentPdf inlines uploaded image documents into the record book (data URI in the HTML/CSS render; doc.addImage on the jsPDF fallback), aspect-fitted, and only reports the annexure notice for files it genuinely could not embed' };
   });
 

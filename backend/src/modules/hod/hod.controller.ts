@@ -12,6 +12,7 @@ import {
   Notification,
   CounsellingRecord,
   InternalMark,
+  StudentDocument,
 } from '../../models/index.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { AuthRequest } from '../../middleware/auth.middleware.js';
@@ -40,6 +41,8 @@ import {
   exportMarksExcel,
   type MarksBulkPreviewRow,
 } from './marks-bulk-upload.service.js';
+import { loadDepartmentSubjects } from '../subjects/subject.controller.js';
+import { subjectRegulations, subjectSemesters } from '../../models/Subject.model.js';
 
 /**
  * ============================================================================
@@ -329,6 +332,146 @@ export async function getMentorDetail(req: AuthRequest, res: Response): Promise<
       }
     }
 
+    // ------------------------------------------------------------------
+    // Dossier sections behind the faculty detail view.
+    //
+    // Every section is derived from stored rows and scoped to THIS
+    // department. The mentor is already proven to be in scope; each
+    // record's student is additionally cross-checked against the
+    // department's student set, so even a stale cross-department reference
+    // can never leak another department's data.
+    // ------------------------------------------------------------------
+
+    const deptStudentIds = new Set<string>(scope.studentIds);
+    const studentById = new Map<string, any>();
+    for (const s of scope.students) studentById.set(String(s._id), s);
+
+    const studentRef = (sid: string) => {
+      const s = studentById.get(sid);
+      return {
+        studentId: sid,
+        registerNumber: s?.registerNumber || '',
+        studentName: s?.fullName || '',
+      };
+    };
+    const ts = (v: any): number => (v ? new Date(v).getTime() || 0 : 0);
+
+    // (1) Assignment history — current AND historical rows for this mentor.
+    // Distinct students are represented by distinct transition rows; rows are
+    // de-duplicated by id so a replayed/duplicated store entry shows once.
+    const assignmentRaw = await MentorAssignment.find({
+      mentor: mentorId,
+      department: scope.departmentId,
+    }).lean();
+
+    const seenAssignments = new Set<string>();
+    const assignments = (assignmentRaw as any[])
+      .filter((a) => {
+        const key = String(a._id);
+        if (seenAssignments.has(key)) return false;
+        seenAssignments.add(key);
+        return true;
+      })
+      .map((a) => {
+        const sid = idOf(a.student);
+        return {
+          id: String(a._id),
+          ...studentRef(sid),
+          status: a.status || 'ACTIVE',
+          assignedFrom: a.assignedFrom || null,
+          assignedUntil: a.assignedUntil || null,
+          changeReason: a.changeReason || '',
+          isCurrent: a.status === 'ACTIVE',
+        };
+      })
+      .sort((x, y) => ts(y.assignedFrom) - ts(x.assignedFrom));
+
+    // (2) Counselling records AUTHORED by this mentor. Scoping by author (not
+    // by current mentee) keeps a reassigned student's earlier sessions with
+    // this faculty member in their history, while the student's later
+    // sessions correctly appear under the new mentor.
+    const counsellingRaw = await CounsellingRecord.find({
+      $or: [{ mentor: mentorId }, { mentorId: mentorId }],
+    }).lean();
+
+    const counselling = (counsellingRaw as any[])
+      .map((r) => ({ r, sid: idOf(r.student) || idOf(r.studentId) }))
+      .filter(({ sid }) => deptStudentIds.has(sid))
+      .map(({ r, sid }) => ({
+        id: String(r._id),
+        ...studentRef(sid),
+        date: toDay(r.sessionDate || r.date || r.createdAt) || null,
+        categories:
+          Array.isArray(r.categories) && r.categories.length > 0
+            ? r.categories
+            : r.category
+              ? [r.category]
+              : [],
+        discussionWith: Array.isArray(r.discussionWith) ? r.discussionWith : [],
+        recordKind: r.recordKind || 'INDIVIDUAL',
+        status: r.status || '',
+        followUpDate: r.followUpDate || '',
+        concernReason: r.concernReason || '',
+        observation: r.discussionObservation || r.challengeObserved || '',
+        skillNeedingImprovement: r.skillNeedingImprovement || '',
+        actionPlan: r.actionPlan || r.correctiveAction || '',
+        expectedImprovement: r.expectedImprovement || '',
+        studentFeedback: r.studentFeedback || '',
+        mentorRemarks: r.mentorRemarks || '',
+        evidenceCount: Array.isArray(r.evidence) ? r.evidence.length : 0,
+      }))
+      .sort((x, y) => String(y.date || '').localeCompare(String(x.date || '')));
+
+    // (3) Saturday / individual meetings conducted by this mentor.
+    const meetingRaw = await Meeting.find({ mentor: mentorId }).lean();
+
+    const meetings = (meetingRaw as any[])
+      .map((m) => ({ m, sid: idOf(m.student) }))
+      .filter(({ sid }) => deptStudentIds.has(sid))
+      .map(({ m, sid }) => ({
+        id: String(m._id),
+        ...studentRef(sid),
+        meetingDate: m.meetingDate || '',
+        meetingTime: m.meetingTime || '',
+        location: m.location || '',
+        attendanceStatus: m.attendanceStatus || '',
+        meetingStatus: m.meetingStatus || '',
+        challengesDiscussed: m.challengesDiscussed || '',
+        studentFeedback: m.studentFeedback || '',
+        counsellingProvided: m.counsellingProvided || '',
+        correctiveAction: m.correctiveAction || '',
+        followUpRequired: Boolean(m.followUpRequired),
+        followUpDate: m.followUpDate || '',
+        mentorRemarks: m.mentorRemarks || '',
+        evidenceCount: Array.isArray(m.evidence) ? m.evidence.length : 0,
+      }))
+      .sort((x, y) => String(y.meetingDate || '').localeCompare(String(x.meetingDate || '')));
+
+    // (4) Certificates / supporting documents belonging to the mentor's
+    // CURRENT mentees. Documents belong to students, so this is the set the
+    // faculty member is presently accountable for.
+    const menteeIds = Array.from(myStudentIds);
+    const documentRaw =
+      menteeIds.length > 0
+        ? await StudentDocument.find({ studentId: { $in: menteeIds } }).lean()
+        : [];
+
+    const documents = (documentRaw as any[])
+      .map((d) => ({
+        id: String(d._id),
+        ...studentRef(idOf(d.studentId)),
+        title: d.title || d.fileName || 'Document',
+        fileName: d.fileName || '',
+        category: d.category || 'Other',
+        documentType: d.documentType || (d.isPrimary ? 'student_details_form' : 'certificate'),
+        isPrimary: Boolean(d.isPrimary),
+        fileType: d.fileType || 'application/pdf',
+        fileSize: d.fileSize || 0,
+        verificationStatus: d.verificationStatus || 'Pending',
+        uploadedAt: d.uploadedAt || null,
+      }))
+      .sort((x, y) => ts(y.uploadedAt) - ts(x.uploadedAt));
+
     const user: any = mentor.user || {};
     return sendSuccess(res, {
       mentor: {
@@ -353,6 +496,10 @@ export async function getMentorDetail(req: AuthRequest, res: Response): Promise<
         sessionsThisMonth,
         lastMentoringDate,
       },
+      assignments,
+      counselling,
+      meetings,
+      documents,
       departmentScope: scope.departmentId,
     });
   } catch (err: any) {
@@ -1160,26 +1307,88 @@ export async function getSubjectsForClass(req: AuthRequest, res: Response): Prom
       return sendSuccess(res, []);
     }
 
-    // Get unique subjects from internal marks for these students
-    const marks = await InternalMark.find({
-      student: { $in: studentIds },
-    }).select('subjectCode subjectName semesterNumber').lean();
+    // The Admin-managed subject catalogue for this department + cohort. The
+    // study year maps to two semesters (year 1 -> 1/2, year 4 -> 7/8), so a
+    // class sees exactly the subjects taught across its two semesters.
+    const semesters = [year * 2 - 1, year * 2];
+    const catalogue = await loadDepartmentSubjects(scope.departmentId, { academicYear, semesters });
 
-    const subjectMap = new Map<string, { subjectCode: string; subjectName: string; semesterNumber: number }>();
-    for (const m of marks as any[]) {
-      const key = `${m.subjectCode}|${m.semesterNumber}`;
-      if (!subjectMap.has(key)) {
+    type SubjectOption = {
+      id: string | null;
+      subjectCode: string;
+      subjectName: string;
+      semesterNumber: number;
+      maxMarks: number | null;
+      passMarks: number | null;
+      subjectType: string | null;
+      subjectTypeLabel: string | null;
+      regulation: string;
+      status: 'ACTIVE' | 'INACTIVE';
+      source: 'MASTER' | 'MARKS';
+      isActive: boolean;
+    };
+
+    const subjectMap = new Map<string, SubjectOption>();
+    for (const s of catalogue as any[]) {
+      // A subject may apply to several semesters; the class sees one option per
+      // semester it actually covers (year 1 -> semesters 1 and 2, …).
+      const subjectSemesterList = subjectSemesters(s).filter((n) => semesters.includes(n));
+      const regulation = subjectRegulations(s)[0] ?? '';
+      for (const semesterNumber of subjectSemesterList) {
+        const key = `${String(s.code).toUpperCase()}|${semesterNumber}`;
         subjectMap.set(key, {
-          subjectCode: m.subjectCode,
-          subjectName: m.subjectName,
-          semesterNumber: m.semesterNumber,
+          id: String(s._id),
+          subjectCode: s.code,
+          subjectName: s.name,
+          semesterNumber,
+          maxMarks: s.maxMarks ?? null,
+          passMarks: s.passMarks ?? null,
+          subjectType: s.subjectType ?? null,
+          subjectTypeLabel: s.subjectTypeLabel ?? null,
+          regulation,
+          status: s.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
+          source: 'MASTER',
+          isActive: s.status !== 'INACTIVE',
         });
       }
     }
 
+    // Legacy subjects: derived from marks already on record. Unioned in so an
+    // existing department that has not been onboarded onto the catalogue keeps
+    // working, and so historical subjects stay listed (viewable in reports).
+    //
+    // Once the department HAS a catalogue, enforcement is on, so a legacy code
+    // that is not in the catalogue can no longer be uploaded to — it is listed
+    // as view-only (isActive:false) rather than offered as a selectable subject
+    // the server would then reject. Departments with no catalogue stay legacy
+    // and their derived subjects remain fully selectable.
+    const catalogueEnforced = catalogue.length > 0;
+    const marks = await InternalMark.find({
+      student: { $in: studentIds },
+    }).select('subjectCode subjectName semesterNumber').lean();
+
+    for (const m of marks as any[]) {
+      const key = `${String(m.subjectCode).toUpperCase()}|${m.semesterNumber}`;
+      if (subjectMap.has(key)) continue;
+      subjectMap.set(key, {
+        id: null,
+        subjectCode: m.subjectCode,
+        subjectName: m.subjectName,
+        semesterNumber: m.semesterNumber,
+        maxMarks: null,
+        passMarks: null,
+        subjectType: null,
+        subjectTypeLabel: null,
+        regulation: '',
+        status: 'ACTIVE',
+        source: 'MARKS',
+        isActive: !catalogueEnforced,
+      });
+    }
+
     const subjects = Array.from(subjectMap.values()).sort((a, b) => {
       if (a.semesterNumber !== b.semesterNumber) return a.semesterNumber - b.semesterNumber;
-      return a.subjectCode.localeCompare(b.subjectCode);
+      return String(a.subjectCode).localeCompare(String(b.subjectCode));
     });
 
     return sendSuccess(res, subjects);
@@ -1988,7 +2197,13 @@ export async function importMarksUpload(req: AuthRequest, res: Response): Promis
       return sendError(res, 'No marks rows provided for import.', 400);
     }
 
-    const result = await executeMarksImport(rowsToImport, req.user!.id, scope.departmentId, req);
+    const result = await executeMarksImport(
+      rowsToImport,
+      req.user!.id,
+      scope.departmentId,
+      req,
+      String(req.body.academicYear || '').trim() || undefined
+    );
     return sendSuccess(res, result, 'Marks bulk import executed successfully.');
   } catch (err: any) {
     console.error('importMarksUpload error:', err);

@@ -23,6 +23,7 @@ import {
   type RecordPermissions,
 } from '../../utils/record-permission.util.js';
 import { resolveStoredUploadPath, resolveWritableUploadsDir } from '../../config/storage.js';
+import { normaliseStoredFileKey } from '../../utils/uploaded-file-key.util.js';
 import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
 
 // Setup a Writable Uploads Directory for Progress Certificates
@@ -147,15 +148,14 @@ export function toProgressCategory(category: string | undefined | null): Progres
   return DOCUMENT_CATEGORY_TO_PROGRESS_CATEGORY[key] || 'Other approved achievements/activities';
 }
 
-/** Normalise a stored upload URL for identity comparison between collections. */
-function normaliseFileKey(url: string | undefined | null): string | null {
-  if (!url || typeof url !== 'string') return null;
-  const trimmed = url.trim();
-  if (!trimmed) return null;
-  // Compare only the stable logical path, ignoring any base URL prefix.
-  const idx = trimmed.indexOf('uploads/');
-  return idx >= 0 ? trimmed.slice(idx) : trimmed;
-}
+/**
+ * Normalise a stored upload URL for identity comparison between collections.
+ *
+ * Delegates to the single shared implementation in `uploaded-file-key.util` so
+ * this merge and the Record Book PDF archive can never disagree about when two
+ * rows describe the same physical certificate.
+ */
+const normaliseFileKey = normaliseStoredFileKey;
 
 export interface UnifiedProgressRecord {
   _id: string;

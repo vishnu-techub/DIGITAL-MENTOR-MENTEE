@@ -10,7 +10,6 @@ import {
   Meeting,
   CounsellingRecord,
   MonthlyProgress,
-  StudentDocument,
   InternalMark,
 } from '../../models/index.js';
 import { calculateArrearStatistics } from '../../utils/arrears.util.js';
@@ -28,7 +27,8 @@ import {
 import { isValidId, toLocalId, type LocalId } from '../../services/localId.js';
 import { buildEvidenceViews, normaliseEvidenceRefs } from '../counselling/evidence.service.js';
 import { renderRecordBookHtmlToPdf } from './record-book-html.service.js';
-import { collectRecordBookData } from './record-book-html.data.js';
+import { drawInstitutionalHeaderJsPdf } from './institutional-header.js';
+import { collectRecordBookData, collectStudentDocumentArchive } from './record-book-html.data.js';
 
 let logoBase64: string | null = null;
 try {
@@ -324,10 +324,10 @@ export async function generateStudentPdf(
   // appeared in the portal but never in the Official Institutional Record Book.
   // Scoped strictly by this student's id, so a record book can only ever contain
   // the documents of the student it was generated for.
-  const documentDocs = await StudentDocument.find({ studentId: studentDoc._id }).sort({
-    isPrimary: -1,
-    uploadedAt: -1,
-  });
+  //
+  // Read through the SAME collector the primary HTML renderer uses, so this
+  // fallback also includes certificates uploaded through My Progress &
+  // Achievements and prints exactly the same archive and annexures.
 
   const formatDocDate = (value: any): string => {
     if (!value) return '';
@@ -336,33 +336,12 @@ export async function generateStudentPdf(
     return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   };
 
-  const studentDocuments = documentDocs.map((d: any) => {
-    // The system-generated Student Details Form IS this very dossier: it is
-    // written to disk by syncStudentDetailsPdf() as the output of
-    // generateStudentPdf(). It is listed for completeness but must never be
-    // embedded, or each regeneration would embed the previous one and grow
-    // without bound.
-    const isSystemForm = Boolean(d.isPrimary) || d.documentType === 'student_details_form';
-    const eventDetails = [d.eventName, d.organizer, d.eventDate].filter(Boolean).join(' | ');
-    return {
-      id: d._id.toString(),
-      title: d.title || d.fileName || 'Document',
-      file_name: d.fileName || d.title || 'Document',
-      document_type: isSystemForm
-        ? 'Student Details Form'
-        : d.documentType === 'other'
-          ? 'Other Document'
-          : 'Certificate',
-      category: d.category || 'Other',
-      event_details: eventDetails || d.description || 'N/A',
-      uploaded_on: formatDocDate(d.uploadedAt),
-      verification_status: d.verificationStatus || 'Pending',
-      is_system_form: isSystemForm,
-      file_type: d.fileType || 'application/pdf',
-      file_size: d.fileSize || 0,
-      file_url: d.fileUrl || '',
-    };
-  });
+  // The system-generated Student Details Form IS this very dossier: it is
+  // written to disk by syncStudentDetailsPdf() as the output of
+  // generateStudentPdf(). It is listed for completeness but marked
+  // `is_system_form` by the collector so it is never embedded, or each
+  // regeneration would embed the previous one and grow without bound.
+  const studentDocuments = await collectStudentDocumentArchive(studentDoc._id);
 
   // Initialize jsPDF (Portrait, A4, millimeters)
   const doc = new jsPDF({
@@ -381,53 +360,31 @@ export async function generateStudentPdf(
   const margin = 14;
 
   // The banner title differs per download mode; the rest of the institutional
-  // header is identical across the three reports.
+  // header is identical across the three reports. The full Record Book prints NO
+  // title (the "OFFICIAL DIGITAL MENTOR–MENTEE RECORD BOOK" heading was removed
+  // by request), so an empty title both skips the line and tightens the band.
   const docTitle =
     mode === 'internal'
       ? 'OFFICIAL INTERNAL ASSESSMENT REPORT'
       : mode === 'mentor-documents'
         ? 'MENTORING RECORDS & DOCUMENT ARCHIVE'
-        : 'OFFICIAL DIGITAL MENTOR–MENTEE RECORD BOOK';
+        : '';
+  const hasDocTitle = docTitle.length > 0;
 
-  const renderHeader = (isFirstPage: boolean = false) => {
-    // Institutional Top Header
-    doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-    doc.rect(margin, 10, pageWidth - margin * 2, 2.5, 'F');
-
-    if (logoBase64) {
-      try {
-        doc.addImage(logoBase64, 'PNG', margin + 2, 13.5, 17, 17);
-      } catch (err) {
-        // Continue if image rendering fails
-      }
-    }
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(14);
-    doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-    doc.text('K.S.R. COLLEGE OF ENGINEERING', pageWidth / 2, 17, { align: 'center' });
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(80, 80, 80);
-    doc.text('(An Autonomous Institution, Approved by AICTE, New Delhi & Affiliated to Anna University, Chennai)', pageWidth / 2, 21, { align: 'center' });
-    doc.text('K.S.R. Kalvi Nagar, Tiruchengode – 637 215, Namakkal District, Tamil Nadu | www.ksrce.ac.in', pageWidth / 2, 25, { align: 'center' });
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10.5);
-    doc.setTextColor(goldColor[0], goldColor[1], goldColor[2]);
-    doc.text(docTitle, pageWidth / 2, 30.5, { align: 'center' });
-
-    doc.setDrawColor(200, 200, 200);
-    doc.setLineWidth(0.5);
-    doc.line(margin, 33, pageWidth - margin, 33);
+  const renderHeader = (_isFirstPage: boolean = false) => {
+    // Repeating institutional header, drawn from the ONE shared spec
+    // (institutional-header.ts) so this legacy fallback prints the exact same
+    // header as the Chrome-rendered record book and its annexure cover sheets.
+    // `hasDocTitle` is false for the full Record Book, which prints no title
+    // line, tightening the reserved band.
+    drawInstitutionalHeaderJsPdf(doc, { logoBase64 }, { sideMm: margin, hasTitle: hasDocTitle, title: docTitle });
   };
 
   // Render First Page Header
   renderHeader(true);
 
   // Student Primary Dossier Banner
-  let currentY = 37;
+  let currentY = hasDocTitle ? 37 : 32.5;
   doc.setFillColor(lightBg[0], lightBg[1], lightBg[2]);
   doc.roundedRect(margin, currentY, pageWidth - margin * 2, 22, 2, 2, 'F');
   doc.setDrawColor(primaryColor[0], primaryColor[1], primaryColor[2]);
@@ -1193,6 +1150,19 @@ export async function generateStudentPdf(
     for (const d of studentDocuments) {
       if (d.is_system_form) continue; // never self-embed this dossier
 
+      // A record with no file attached (an achievement recorded without a scan)
+      // is still a real, listed record — it simply has nothing to reproduce.
+      // Saying so plainly is not the same as claiming a stored file was lost, so
+      // it must never be reported as needing administrator repair.
+      if (!d.file_url) {
+        notEmbedded.push({
+          name: d.file_name,
+          reason:
+            'This record has no certificate file attached, so there is no page to reproduce. The metadata listed in the documents section is the complete official entry.',
+        });
+        continue;
+      }
+
       // Resolve through the ONE existing uploads helper -- the same
       // `locateStoredUpload` the Student Documents view/download endpoints use, so
       // a file that the portal can display is never reported as missing here. It
@@ -1367,19 +1337,16 @@ export async function generateStudentPdf(
     );
   }
 
-  // INSTITUTIONAL SIGNATURE BLOCK (Ensure it fits or create new page)
+  // INSTITUTIONAL SIGNATURE BLOCK (Ensure it fits or create new page).
+  // The "INSTITUTIONAL VERIFICATION & DIGITAL ENDORSEMENT" heading was removed
+  // by request; only the signing lines + captions remain.
   if (currentY > pageHeight - 45) {
     doc.addPage();
     renderHeader(false);
     currentY = 45;
   }
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
-  doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-  doc.text('INSTITUTIONAL VERIFICATION & DIGITAL ENDORSEMENT', margin, currentY);
-
-  currentY += 12;
+  currentY += 4;
   const colW = (pageWidth - margin * 2) / 4;
 
   doc.setFont('helvetica', 'normal');
@@ -1436,28 +1403,11 @@ export async function generateStudentPdf(
       const sh = sheet.internal.pageSize.getHeight();
       const sm = 14;
 
-      sheet.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-      sheet.rect(sm, 10, sw - sm * 2, 2.5, 'F');
-      if (logoBase64) {
-        try {
-          sheet.addImage(logoBase64, 'PNG', sm + 2, 13.5, 17, 17);
-        } catch {
-          /* logo optional */
-        }
-      }
-      sheet.setFont('helvetica', 'bold');
-      sheet.setFontSize(14);
-      sheet.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-      sheet.text('K.S.R. COLLEGE OF ENGINEERING', sw / 2, 17, { align: 'center' });
-      sheet.setFont('helvetica', 'normal');
-      sheet.setFontSize(8);
-      sheet.setTextColor(80, 80, 80);
-      sheet.text(`Annexure ${idx + 1}`, sw / 2, 30.5, { align: 'center' });
-      sheet.setDrawColor(200, 200, 200);
-      sheet.setLineWidth(0.5);
-      sheet.line(sm, 33, sw - sm, 33);
+      // Institutional header from the shared spec, with the annexure label as
+      // the header's title line (the annexure label sits below the college name).
+      drawInstitutionalHeaderJsPdf(sheet, { logoBase64 }, { sideMm: sm, hasTitle: true, title: `Annexure ${idx + 1}` });
 
-      let y = 44;
+      let y = 38;
       sheet.setFont('helvetica', 'bold');
       sheet.setFontSize(11);
       sheet.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);

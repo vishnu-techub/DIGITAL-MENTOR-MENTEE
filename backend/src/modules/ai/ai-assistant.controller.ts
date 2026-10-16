@@ -3,7 +3,12 @@ import { AuthRequest } from '../../middleware/auth.middleware.js';
 import { sendSuccess, sendError } from '../../utils/response.js';
 import { AiConversation } from '../../models/AiConversation.model.js';
 import { isValidId, toLocalId } from '../../services/localId.js';
-import { chatWithOllama, checkOllamaAvailability, OllamaServiceError } from '../../services/ollama.service.js';
+import {
+  generateAiReply,
+  getAiProviderStatus,
+  aiErrorStatus,
+  AiProviderError,
+} from '../../services/ai-provider.service.js';
 import { buildAiRoleContext } from './ai-context.service.js';
 import { logAudit } from '../../middleware/audit.middleware.js';
 
@@ -88,16 +93,17 @@ function deriveTitle(message: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/ai/status  — provider availability probe
+// GET /api/ai/status  — active-provider availability probe
 // ---------------------------------------------------------------------------
 export async function getAiStatus(_req: Request, res: Response) {
-  const status = await checkOllamaAvailability();
+  const status = await getAiProviderStatus();
   return sendSuccess(
     res,
     {
       available: status.available,
       model: status.model,
-      configured: true,
+      provider: status.provider,
+      configured: status.configured,
     },
     status.available ? 'AI service is available.' : 'AI service is currently unreachable.'
   );
@@ -272,14 +278,14 @@ export async function sendChatMessage(req: AuthRequest, res: Response) {
         .slice(-HISTORY_WINDOW)
         .map((m: any) => ({ role: m.role, content: String(m.content) }));
 
-      const ollamaMessages = [
+      const providerMessages = [
         { role: 'system' as const, content: systemPrompt },
         ...history,
         { role: 'user' as const, content: cleanMessage },
       ];
 
-      // ---- Ask Ollama (never blocking unrelated requests) ------------------
-      const result = await chatWithOllama(ollamaMessages);
+      // ---- Ask the active provider (Gemini when configured, else Ollama) ----
+      const result = await generateAiReply(providerMessages);
 
       // ---- Persist both turns ----------------------------------------------
       const userTurn = { role: 'user', content: cleanMessage, createdAt: new Date() };
@@ -334,9 +340,8 @@ export async function sendChatMessage(req: AuthRequest, res: Response) {
       throw err;
     }
   } catch (err: any) {
-    if (err instanceof OllamaServiceError) {
-      const status = err.kind === 'TIMEOUT' ? 504 : err.kind === 'HTTP' ? 502 : 503;
-      return sendError(res, err.message, status);
+    if (err instanceof AiProviderError) {
+      return sendError(res, err.message, aiErrorStatus(err.kind));
     }
     console.error('sendChatMessage error:', err);
     return sendError(res, 'Failed to generate a reply. Please try again.', 500);
